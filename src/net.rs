@@ -33,18 +33,21 @@ use std::time::{Duration, Instant};
 /// quelle couleur (`r,g,b`, son « skin »).
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerState {
-    pub id: u8, // identifiant du joueur (1 octet : jusqu'à 255 joueurs)
-    pub x: f32, // position gauche/droite
-    pub y: f32, // position haut/bas (hauteur)
-    pub z: f32, // position avant/arrière
-    pub r: f32, // couleur du skin : rouge
-    pub g: f32, // couleur du skin : vert
-    pub b: f32, // couleur du skin : bleu
+    pub id: u8,    // identifiant du joueur (1 octet : jusqu'à 255 joueurs)
+    pub x: f32,    // position gauche/droite
+    pub y: f32,    // position haut/bas (hauteur)
+    pub z: f32,    // position avant/arrière
+    pub yaw: f32,  // orientation du corps gauche/droite (radians)
+    pub pitch: f32, // inclinaison de la tête haut/bas (radians)
+    pub r: f32,    // couleur du skin : rouge
+    pub g: f32,    // couleur du skin : vert
+    pub b: f32,    // couleur du skin : bleu
 }
 
 // Taille exacte d'un paquet, calculée à la main pour bien comprendre :
-//   1 octet (id) + 6 nombres f32 de 4 octets (x,y,z,r,g,b) = 1 + 24 = 25 octets.
-const PACKET_SIZE: usize = 1 + 4 * 6;
+//   1 octet (id) + 8 nombres f32 de 4 octets (x,y,z,yaw,pitch,r,g,b)
+//   = 1 + 32 = 33 octets.
+const PACKET_SIZE: usize = 1 + 4 * 8;
 
 /// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
 /// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
@@ -55,9 +58,11 @@ fn encode(p: &PlayerState) -> [u8; PACKET_SIZE] {
     buf[1..5].copy_from_slice(&p.x.to_le_bytes());
     buf[5..9].copy_from_slice(&p.y.to_le_bytes());
     buf[9..13].copy_from_slice(&p.z.to_le_bytes());
-    buf[13..17].copy_from_slice(&p.r.to_le_bytes());
-    buf[17..21].copy_from_slice(&p.g.to_le_bytes());
-    buf[21..25].copy_from_slice(&p.b.to_le_bytes());
+    buf[13..17].copy_from_slice(&p.yaw.to_le_bytes());
+    buf[17..21].copy_from_slice(&p.pitch.to_le_bytes());
+    buf[21..25].copy_from_slice(&p.r.to_le_bytes());
+    buf[25..29].copy_from_slice(&p.g.to_le_bytes());
+    buf[29..33].copy_from_slice(&p.b.to_le_bytes());
     buf
 }
 
@@ -73,10 +78,12 @@ fn decode(buf: &[u8]) -> Option<PlayerState> {
     let x = f32::from_le_bytes(buf[1..5].try_into().ok()?);
     let y = f32::from_le_bytes(buf[5..9].try_into().ok()?);
     let z = f32::from_le_bytes(buf[9..13].try_into().ok()?);
-    let r = f32::from_le_bytes(buf[13..17].try_into().ok()?);
-    let g = f32::from_le_bytes(buf[17..21].try_into().ok()?);
-    let b = f32::from_le_bytes(buf[21..25].try_into().ok()?);
-    Some(PlayerState { id, x, y, z, r, g, b })
+    let yaw = f32::from_le_bytes(buf[13..17].try_into().ok()?);
+    let pitch = f32::from_le_bytes(buf[17..21].try_into().ok()?);
+    let r = f32::from_le_bytes(buf[21..25].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[25..29].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[29..33].try_into().ok()?);
+    Some(PlayerState { id, x, y, z, yaw, pitch, r, g, b })
 }
 
 // ============================================================================
@@ -194,7 +201,8 @@ pub fn run_demo(role: &str) {
     let start = Instant::now();
     loop {
         let t = start.elapsed().as_secs_f32();
-        let me = PlayerState { id, x: t.cos() * 2.0, y: 0.7, z: t.sin() * 2.0, r, g, b };
+        let me =
+            PlayerState { id, x: t.cos() * 2.0, y: 0.7, z: t.sin() * 2.0, yaw: t, pitch: 0.0, r, g, b };
         if let Err(e) = peer.send(&me) {
             eprintln!("Envoi raté : {e}");
         }
@@ -240,31 +248,57 @@ impl NetLink {
     }
 }
 
-/// Mémorise quel avatar (entité Bevy) correspond à quel joueur distant, pour
-/// le retrouver et déplacer le bon quand un nouveau paquet arrive.
-#[derive(Resource, Default)]
-pub struct RemoteAvatars {
-    map: std::collections::HashMap<u8, Entity>,
+/// Les deux entités qui composent un avatar distant : le corps (qui porte la
+/// position + le lacet) et la tête (qui porte le tangage haut/bas).
+#[derive(Clone, Copy)]
+struct AvatarParts {
+    body: Entity,
+    head: Entity,
 }
 
-/// Marque une entité comme étant l'avatar d'un joueur DISTANT.
+/// Mémorise quel avatar correspond à quel joueur distant, pour retrouver et
+/// mettre à jour le bon (corps ET tête) quand un nouveau paquet arrive.
+#[derive(Resource, Default)]
+pub struct RemoteAvatars {
+    map: std::collections::HashMap<u8, AvatarParts>,
+}
+
+/// Marque le CORPS d'un joueur distant (position + orientation gauche/droite).
 #[derive(Component)]
 pub struct RemoteAvatar {
     pub id: u8,
 }
 
+/// Marque le pivot de la TÊTE d'un joueur distant (inclinaison haut/bas).
+#[derive(Component)]
+pub struct RemoteHead;
+
 /// Système : envoie NOTRE position (et couleur) à l'autre joueur, chaque frame.
 /// (À 60 images/s ça fait 60 petits paquets/s — on lissera/ralentira plus tard.)
-pub fn net_send(link: Res<NetLink>, player: Query<&Transform, With<crate::player::Player>>) {
+pub fn net_send(
+    link: Res<NetLink>,
+    player: Query<&Transform, With<crate::player::Player>>,
+    camera: Query<&Transform, With<crate::player::PlayerCamera>>,
+) {
     let Ok(transform) = player.single() else {
         return;
     };
+    // L'orientation gauche/droite vit sur le corps (lacet = rotation autour de Y).
+    let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
+    // L'inclinaison haut/bas vit sur la tête/caméra (tangage = rotation autour de X).
+    let pitch = camera
+        .single()
+        .map(|cam| cam.rotation.to_euler(EulerRot::XYZ).0)
+        .unwrap_or(0.0);
+
     let (r, g, b) = link.my_color;
     let me = PlayerState {
         id: link.my_id,
         x: transform.translation.x,
         y: transform.translation.y,
         z: transform.translation.z,
+        yaw,
+        pitch,
         r,
         g,
         b,
@@ -280,50 +314,112 @@ pub fn net_receive(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut transforms: Query<&mut Transform, With<RemoteAvatar>>,
+    // Deux requêtes disjointes : le corps et la tête sont chacun un `Transform`,
+    // donc on les sépare avec `Without` pour que Bevy accepte les deux `&mut`.
+    mut bodies: Query<&mut Transform, (With<RemoteAvatar>, Without<RemoteHead>)>,
+    mut heads: Query<&mut Transform, (With<RemoteHead>, Without<RemoteAvatar>)>,
 ) {
     for state in link.peer.poll() {
         if state.id == link.my_id {
             continue; // on ignore les paquets venant de soi-même
         }
 
-        if let Some(&entity) = avatars.map.get(&state.id) {
-            // Avatar déjà connu : on déplace seulement son corps.
-            if let Ok(mut transform) = transforms.get_mut(entity) {
-                transform.translation = Vec3::new(state.x, state.y, state.z);
+        if let Some(parts) = avatars.map.get(&state.id).copied() {
+            // Avatar déjà connu : on remet à jour sa position + son orientation.
+            if let Ok(mut t) = bodies.get_mut(parts.body) {
+                t.translation = Vec3::new(state.x, state.y, state.z);
+                // Lacet : le corps tourne autour de l'axe vertical.
+                t.rotation = Quat::from_rotation_y(state.yaw);
+            }
+            if let Ok(mut t) = heads.get_mut(parts.head) {
+                // Tangage : la tête s'incline haut/bas (sans bouger sa position).
+                t.rotation = Quat::from_rotation_x(state.pitch);
             }
         } else {
             // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
             let torso = meshes.add(Capsule3d::new(0.17, 0.45));
             let head = meshes.add(Sphere::new(0.14));
-            let skin = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.02, 0.02, 0.03),
-                emissive: LinearRgba::rgb(state.r, state.g, state.b),
-                ..default()
-            });
+            let limb = meshes.add(Capsule3d::new(0.07, 0.40));
+            // Un petit « nez » (boîte plate) collé à l'avant de la tête : c'est lui
+            // qui rend l'orientation lisible à distance.
+            let nose = meshes.add(Cuboid::new(0.07, 0.05, 0.14));
 
-            let entity = commands
+            let skin = materials.add(body_skin(state.r, state.g, state.b));
+            // Tête + nez un peu plus vifs pour bien ressortir.
+            let skin_bright =
+                materials.add(body_skin(state.r * 1.3, state.g * 1.3, state.b * 1.3));
+
+            // On capture l'entité « tête » créée dans la fermeture des enfants.
+            let mut head_entity = Entity::PLACEHOLDER;
+
+            let body = commands
                 .spawn((
                     RemoteAvatar { id: state.id },
-                    Transform::from_xyz(state.x, state.y, state.z),
+                    Transform::from_xyz(state.x, state.y, state.z)
+                        .with_rotation(Quat::from_rotation_y(state.yaw)),
                     Visibility::default(),
                 ))
                 .with_children(|p| {
+                    // Torse
                     p.spawn((
                         Mesh3d(torso),
                         MeshMaterial3d(skin.clone()),
                         Transform::from_xyz(0.0, 0.10, 0.0),
                     ));
-                    p.spawn((
-                        Mesh3d(head),
-                        MeshMaterial3d(skin.clone()),
-                        Transform::from_xyz(0.0, 0.62, 0.0),
-                    ));
+                    // Bras (gauche / droit)
+                    for x in [-0.30, 0.30] {
+                        p.spawn((
+                            Mesh3d(limb.clone()),
+                            MeshMaterial3d(skin.clone()),
+                            Transform::from_xyz(x, 0.08, 0.0),
+                        ));
+                    }
+                    // Jambes (gauche / droite)
+                    for x in [-0.11, 0.11] {
+                        p.spawn((
+                            Mesh3d(limb.clone()),
+                            MeshMaterial3d(skin.clone()),
+                            Transform::from_xyz(x, -0.45, 0.0),
+                        ));
+                    }
+                    // Pivot de la tête : porté par le corps, à hauteur du cou. C'est
+                    // CETTE entité qu'on incline (tangage) ; elle contient la boule
+                    // et le nez, qui tournent donc ensemble.
+                    head_entity = p
+                        .spawn((
+                            RemoteHead,
+                            Transform::from_xyz(0.0, 0.62, 0.0),
+                            Visibility::default(),
+                        ))
+                        .with_children(|h| {
+                            h.spawn((
+                                Mesh3d(head),
+                                MeshMaterial3d(skin_bright.clone()),
+                                Transform::default(),
+                            ));
+                            // Le nez pointe vers l'avant (−Z = « devant » dans Bevy).
+                            h.spawn((
+                                Mesh3d(nose),
+                                MeshMaterial3d(skin_bright.clone()),
+                                Transform::from_xyz(0.0, 0.0, -0.14),
+                            ));
+                        })
+                        .id();
                 })
                 .id();
 
-            avatars.map.insert(state.id, entity);
+            avatars.map.insert(state.id, AvatarParts { body, head: head_entity });
             println!("Nouveau joueur {} apparu.", state.id);
         }
+    }
+}
+
+/// Matériau de skin émissif (glow néon) pour les avatars distants.
+fn body_skin(r: f32, g: f32, b: f32) -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::srgb(0.02, 0.02, 0.03),
+        emissive: LinearRgba::rgb(r, g, b),
+        perceptual_roughness: 0.5,
+        ..default()
     }
 }
