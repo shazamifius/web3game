@@ -38,11 +38,15 @@ pub fn setup_room(
     });
 
     // --- Matériaux néon (émissif > 1 -> « glow » avec le bloom de la caméra) ---
-    let neon_cyan = materials.add(emissive(0.0, 1.0, 1.3)); // grille du sol (cyan adouci)
-    let neon_magenta = materials.add(emissive(1.3, 0.0, 0.95)); // arêtes
-    let neon_wall = materials.add(emissive(1.3, 0.12, 0.5)); // grille des murs (rose chaud, adouci)
-    let neon_ceil = materials.add(emissive(0.0, 0.7, 0.95)); // grille du plafond (cyan plus doux)
-    let fixture_mat = materials.add(emissive(2.0, 1.6, 1.35)); // plafonnier (blanc chaud)
+    // Palette TIRÉE AU HASARD à chaque lancement : une teinte de base + deux
+    // teintes contrastées. Ça donne de la diversité, et ça distingue chaque
+    // fenêtre/instance d'un coup d'œil (chacune a sa couleur de salle).
+    let (grid, grid_soft, wall_c, edge_c) = random_neon_palette();
+    let neon_cyan = materials.add(emissive(grid.0, grid.1, grid.2)); // grille du sol
+    let neon_magenta = materials.add(emissive(edge_c.0, edge_c.1, edge_c.2)); // arêtes (accent)
+    let neon_wall = materials.add(emissive(wall_c.0, wall_c.1, wall_c.2)); // grille des murs
+    let neon_ceil = materials.add(emissive(grid_soft.0, grid_soft.1, grid_soft.2)); // grille du plafond
+    let fixture_mat = materials.add(emissive(2.0, 1.6, 1.35)); // plafonnier (blanc chaud, fixe)
 
     let t = 0.1; // épaisseur des parois
 
@@ -141,6 +145,49 @@ fn emissive(r: f32, g: f32, b: f32) -> StandardMaterial {
         emissive: LinearRgba::rgb(r, g, b),
         ..default()
     }
+}
+
+/// Tire une palette néon au hasard, une fois au lancement. Renvoie 4 couleurs
+/// (r,g,b) : grille du sol, grille du plafond (plus douce), grille des murs,
+/// arêtes (accent). Teinte de base aléatoire, déclinée pour rester harmonieuse.
+fn random_neon_palette() -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32), (f32, f32, f32)) {
+    // Graine = nanosecondes ^ identifiant du processus (deux fenêtres lancées au
+    // même instant ont des palettes différentes). Petit xorshift maison.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let mut x = nanos ^ std::process::id().wrapping_mul(2_654_435_761);
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    let base = (x % 360) as f32; // teinte de base au hasard
+
+    // Sol/plafond suivent la teinte de base ; murs et arêtes prennent des teintes
+    // décalées (≈ +140° et +210°) pour un contraste agréable.
+    let grid = hsv(base, 1.0, 1.3);
+    let grid_soft = hsv(base, 0.85, 0.95);
+    let wall_c = hsv((base + 140.0) % 360.0, 1.0, 1.2);
+    let edge_c = hsv((base + 210.0) % 360.0, 1.0, 1.25);
+    (grid, grid_soft, wall_c, edge_c)
+}
+
+/// Convertit Teinte/Saturation/Valeur en Rouge/Vert/Bleu (valeur > 1 autorisée
+/// pour le « glow » néon).
+fn hsv(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let c = v * s;
+    let h2 = h / 60.0;
+    let x = c * (1.0 - ((h2 % 2.0) - 1.0).abs());
+    let (r, g, b) = match h2 as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    (r + m, g + m, b + m)
 }
 
 /// Spawn un pavé : le cube unitaire, translaté puis mis à l'échelle voulue.
