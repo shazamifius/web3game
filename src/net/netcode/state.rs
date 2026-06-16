@@ -19,6 +19,8 @@ pub(super) const SMOOTH_TIME: f32 = 0.08;
 pub(super) const CATCHUP_GAIN: f32 = 1.5;
 /// Accélère/ralentit la lecture de ±10 % max (invisible à l'œil).
 pub(super) const MAX_WARP: f32 = 0.10;
+/// Sans nouvel état d'un joueur depuis ce délai (s), on retire son avatar.
+pub(super) const REMOTE_TIMEOUT: f32 = 5.0;
 
 /// Un « instantané » reçu : où était le joueur distant, à quelle VITESSE il allait,
 /// et À QUEL MOMENT on l'a reçu. On en garde plusieurs pour glisser entre eux.

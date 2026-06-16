@@ -1,23 +1,25 @@
-//! LE MODE DÉMO : observer les paquets en texte, sans la 3D.
+//! LE MODE DÉMO : observer les paquets en texte, sans la 3D ni le rendez-vous.
 //!
-//! `cargo run -- net-demo a` (ou `b`) : deux sessions s'envoient une position qui
-//! tourne en cercle et affichent ce qu'elles reçoivent. Utile pour voir le réseau
-//! tout seul. (Le vrai jeu, lui, se lance avec `cargo run -- a` / `b`.)
+//! `cargo run -- net-demo a` (ou `b`) : deux sessions à ports fixes s'envoient une
+//! position qui tourne en cercle et affichent ce qu'elles reçoivent. C'est resté
+//! volontairement simple (2 pairs codés en dur) pour observer le transport seul.
 
-use super::message::PlayerState;
+use super::message::{decode, encode, PlayerState};
 use super::skin::random_color;
-use super::transport::{ports_for_role, NetPeer};
+use super::transport::Socket;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 pub fn run_demo(role: &str) {
     let (local_port, remote_port, id) = ports_for_role(role);
-    let peer = match NetPeer::bind(local_port, remote_port) {
-        Ok(p) => p,
+    let socket = match Socket::bind(local_port) {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("Impossible d'ouvrir le port {local_port} : {e}");
             return;
         }
     };
+    let remote = SocketAddr::from(([127, 0, 0, 1], remote_port));
     let (r, g, b) = random_color();
     println!("Démo '{role}' : écoute {local_port}, parle à {remote_port}, joueur {id}.\n");
 
@@ -39,15 +41,25 @@ pub fn run_demo(role: &str) {
             g,
             b,
         };
-        if let Err(e) = peer.send(&me) {
+        if let Err(e) = socket.send_to(remote, &encode(&me)) {
             eprintln!("Envoi raté : {e}");
         }
-        for other in peer.poll() {
-            println!(
-                "  ← reçu du joueur {} : x={:.2}  y={:.2}  z={:.2}",
-                other.id, other.x, other.y, other.z
-            );
+        for (_from, bytes) in socket.poll() {
+            if let Some(other) = decode(&bytes) {
+                println!(
+                    "  ← reçu du joueur {} : x={:.2}  y={:.2}  z={:.2}",
+                    other.id, other.x, other.y, other.z
+                );
+            }
         }
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Selon le rôle ('a' ou 'b'), choisit les ports et l'identifiant (démo seulement).
+fn ports_for_role(role: &str) -> (u16, u16, u8) {
+    match role {
+        "b" | "B" => (5001, 5000, 2),
+        _ => (5000, 5001, 1), // 'a' par défaut
     }
 }

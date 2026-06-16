@@ -27,12 +27,19 @@ cd "/home/shaza/Documents/projet web 3"
 nix-shell --run "cargo run"
 ```
 
-**Jouer à deux fenêtres sur le même PC** (multijoueur local) :
+**Jouer à plusieurs sur le même PC** (multijoueur local). On lance d'abord le
+**serveur de rendez-vous** (l'annuaire), puis autant de clients qu'on veut :
 
 ```fish
-nix-shell --run "cargo run -- a"     # terminal 1  (joueur 1)
-nix-shell --run "cargo run -- b"     # terminal 2  (joueur 2)
+nix-shell --run "cargo run -- rendezvous"   # terminal 1  (l'annuaire — à lancer en premier)
+nix-shell --run "cargo run -- a"            # terminal 2  (un joueur)
+nix-shell --run "cargo run -- b"            # terminal 3  (un autre)
+nix-shell --run "cargo run -- play"         # terminal 4  (… et autant qu'on veut)
 ```
+
+Les identifiants sont attribués par le rendez-vous (plus de rôle codé en dur) ;
+chaque client prend un port libre tout seul. `a`, `b`, `play`, `client` font
+tous la même chose : lancer un client.
 
 **Voir le réseau seul, en texte** (sans la 3D, pour observer les paquets) :
 
@@ -45,8 +52,9 @@ nix-shell --run "cargo run -- net-demo b"
 chaque sauvegarde — confort de dev, via `cargo-watch`) :
 
 ```fish
-nix-shell --run "cargo watch -x 'run -- a'"     # terminal 1
-nix-shell --run "cargo watch -x 'run -- b'"     # terminal 2
+nix-shell --run "cargo watch -x 'run -- rendezvous'"  # terminal 1 (annuaire)
+nix-shell --run "cargo watch -x 'run -- a'"           # terminal 2
+nix-shell --run "cargo watch -x 'run -- b'"           # terminal 3
 ```
 
 > La fenêtre se ferme/rouvre à chaque reload (la position est donc remise à
@@ -135,9 +143,14 @@ anti-triche).
       > l'historique), pas par réseau de neurones — la physique de l'inertie
       > humaine suffit sur 100 ms, c'est déterministe, lisible et gratuit en CPU.
       > L'IA serait pertinente pour prédire la *pose du corps*, pas la position.
-- [ ] **Chapitre 3 — Topologie & passage à l'échelle**
-      NAT, STUN, hole-punching (se connecter sans serveur). **Area of Interest**
-      (AoI) : ne parler qu'aux joueurs proches → passer de O(N²) à O(N).
+- [~] **Chapitre 3 — Topologie & passage à l'échelle** *(en cours)*
+      - [x] **N pairs + rendez-vous** : un serveur d'annuaire (`net/rendezvous.rs`)
+        présente les joueurs ; chacun s'inscrit (HELLO), reçoit la liste (WELCOME)
+        et envoie son état directement à tous les pairs. Plus de « 2 pairs codés
+        en dur » → autant de joueurs qu'on veut.
+      - [ ] NAT, STUN, hole-punching (se connecter entre vraies machines).
+      - [ ] **Area of Interest** (AoI) : ne parler qu'aux joueurs proches →
+        passer de O(N²) à O(N).
 - [ ] **Chapitre 4 — Autorité & migration d'hôte**
       Modèle **Own + Shields** (1 hôte + 3 vérificateurs = BFT 3f+1). Élection,
       détection de panne, migration sans coupure (problème du *split-brain*).

@@ -28,6 +28,12 @@ fn main() {
         return;
     }
 
+    // `cargo run -- rendezvous`  lance le serveur d'annuaire (à lancer en premier).
+    if mode == Some("rendezvous") {
+        net::run_rendezvous();
+        return;
+    }
+
     // Couleur de skin aléatoire de CETTE session : le perso et le réseau
     // utiliseront la même. Choisie une fois, au démarrage.
     let my_color = net::random_color();
@@ -60,11 +66,12 @@ fn main() {
         ),
     );
 
-    // Mode multijoueur : `cargo run -- a` (ou `b`) sur le même PC.
-    // Sans argument, le jeu reste solo (aucun réseau).
-    if mode == Some("a") || mode == Some("b") {
-        let role = mode.unwrap();
-        match net::NetLink::new(role, my_color) {
+    // Mode multijoueur : `cargo run -- a` (ou `b`, `play`…) sur le même PC.
+    // Tous ces arguments lancent un CLIENT (l'identifiant vient du rendez-vous,
+    // plus de rôle codé en dur). Sans argument, le jeu reste solo (aucun réseau).
+    let is_client = matches!(mode, Some("a") | Some("b") | Some("play") | Some("client"));
+    if is_client {
+        match net::NetLink::new(my_color) {
             Ok(link) => {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()
