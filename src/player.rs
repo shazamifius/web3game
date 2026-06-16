@@ -13,7 +13,7 @@ use std::f32::consts::FRAC_PI_2;
 const MOVE_SPEED: f32 = 4.0; // mètres par seconde
 const MOUSE_SENSITIVITY: f32 = 0.0015;
 const BODY_RADIUS: f32 = 0.25; // demi-largeur du corps (pour rester dans la salle)
-const EYE_HEIGHT: f32 = 0.9; // hauteur des yeux au-dessus du centre du corps
+const EYE_HEIGHT: f32 = 0.7; // hauteur des yeux au-dessus du centre du corps (~niveau de la tête)
 
 /// Joueur : porte la position et la rotation gauche/droite (lacet).
 #[derive(Component)]
