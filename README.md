@@ -65,15 +65,33 @@ nix-shell --run "cargo watch -x 'run -- b'"     # terminal 2
 
 ## Organisation du code (`src/`)
 
-| Fichier      | Rôle                                                                 |
-|--------------|---------------------------------------------------------------------|
-| `main.rs`    | point d'entrée, aiguillage des modes (solo / a / b / net-demo)       |
-| `world.rs`   | la salle (sol, murs, plafond néon, lumière)                          |
-| `player.rs`  | le personnage, la caméra première personne, les contrôles           |
-| `net.rs`     | **le réseau, fait main** : encode/décode des paquets UDP + 3D        |
+Principe : **un fichier = une responsabilité** (plein de petits fichiers plutôt
+qu'un gros).
 
-Dans `net.rs`, un paquet de joueur fait aujourd'hui **45 octets** :
-`id` (1) + `x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets).
+```
+src/
+├── main.rs              point d'entrée, aiguillage des modes (solo / a / b / net-demo)
+├── world.rs             la salle (sol, murs, plafond néon, lumière)
+├── player.rs            le personnage, la caméra 1re personne, les contrôles
+└── net/                 LE RÉSEAU, fait main
+    ├── mod.rs           assemble le module et expose l'API publique
+    ├── message.rs       le format d'un paquet (PlayerState, encode/decode)
+    ├── transport.rs     la prise UDP brute (NetPeer) — la « connexion »
+    ├── skin.rs          la couleur de skin aléatoire
+    ├── demo.rs          le mode texte net-demo (observer les paquets)
+    ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
+    └── netcode/         LE RATTRAPAGE DE LATENCE
+        ├── mod.rs       assemble le sous-module
+        ├── state.rs     instantanés, file par joueur, RÉGLAGES (constantes)
+        ├── send.rs      émettre notre état (débit limité + vraie vitesse)
+        ├── receive.rs   ranger les paquets reçus (et créer l'avatar)
+        ├── interpolate.rs   animer chaque image (horloge adaptative + ressort)
+        ├── predict.rs   calculer l'état voulu (interpolation ou prédiction)
+        └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
+```
+
+Un paquet de joueur fait aujourd'hui **45 octets** : `id` (1) + `x,y,z` +
+`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets). Voir `net/message.rs`.
 
 ---
 
