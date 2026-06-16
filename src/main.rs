@@ -36,6 +36,9 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Salle arcade — vue première personne".into(),
+            // app-id Wayland (et classe X11) : sert au compositeur (niri) à
+            // reconnaître nos fenêtres, par ex. pour les ouvrir sur un bureau précis.
+            name: Some("web3game".into()),
             ..default()
         }),
         ..default()
