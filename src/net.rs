@@ -22,6 +22,8 @@
 //!   sudo tc qdisc del dev lo root                              # remet normal
 
 use bevy::prelude::*;
+use std::collections::VecDeque;
+use std::f32::consts::{PI, TAU};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -248,19 +250,38 @@ impl NetLink {
     }
 }
 
-/// Les deux entités qui composent un avatar distant : le corps (qui porte la
-/// position + le lacet) et la tête (qui porte le tangage haut/bas).
+// ----------------------------------------------------------------------------
+// Réglages du « netcode » (chapitre 2 — fluidité)
+// ----------------------------------------------------------------------------
+// On envoie moins souvent que 60/s : 20 instantanés/s suffisent, car on REMPLIT
+// les trous par interpolation. Et on dessine toujours un peu dans le passé (le
+// « retard d'interpolation ») pour avoir TOUJOURS deux instantanés autour du
+// moment qu'on veut afficher — même si un paquet arrive en retard ou se perd.
+const SEND_HZ: f32 = 20.0; // paquets envoyés par seconde
+const INTERP_DELAY: f32 = 0.10; // on dessine 100 ms dans le passé
+
+/// Un « instantané » reçu : où était le joueur distant, et À QUEL MOMENT on l'a
+/// reçu (horloge interne du jeu). On en garde plusieurs pour glisser entre eux.
 #[derive(Clone, Copy)]
-struct AvatarParts {
-    body: Entity,
-    head: Entity,
+struct Snapshot {
+    t: f32, // instant de réception (secondes)
+    pos: Vec3,
+    yaw: f32,
+    pitch: f32,
 }
 
-/// Mémorise quel avatar correspond à quel joueur distant, pour retrouver et
-/// mettre à jour le bon (corps ET tête) quand un nouveau paquet arrive.
+/// Tout ce qu'on retient d'un joueur distant : ses deux entités 3D (corps + tête)
+/// et la file de ses derniers instantanés, qu'on interpole image par image.
+struct RemotePlayer {
+    body: Entity,
+    head: Entity,
+    buffer: VecDeque<Snapshot>,
+}
+
+/// Mémorise tous les joueurs distants connus, par identifiant.
 #[derive(Resource, Default)]
 pub struct RemoteAvatars {
-    map: std::collections::HashMap<u8, AvatarParts>,
+    map: std::collections::HashMap<u8, RemotePlayer>,
 }
 
 /// Marque le CORPS d'un joueur distant (position + orientation gauche/droite).
@@ -276,10 +297,21 @@ pub struct RemoteHead;
 /// Système : envoie NOTRE position (et couleur) à l'autre joueur, chaque frame.
 /// (À 60 images/s ça fait 60 petits paquets/s — on lissera/ralentira plus tard.)
 pub fn net_send(
+    time: Res<Time>,
+    mut accumulator: Local<f32>,
     link: Res<NetLink>,
     player: Query<&Transform, With<crate::player::Player>>,
     camera: Query<&Transform, With<crate::player::PlayerCamera>>,
 ) {
+    // On n'envoie pas à chaque image (60/s) mais SEND_HZ fois/s : on accumule le
+    // temps écoulé, et on n'envoie un paquet que quand l'intervalle est atteint.
+    *accumulator += time.delta_secs();
+    let interval = 1.0 / SEND_HZ;
+    if *accumulator < interval {
+        return;
+    }
+    *accumulator = 0.0;
+
     let Ok(transform) = player.single() else {
         return;
     };
@@ -310,30 +342,32 @@ pub fn net_send(
 /// joueur distant correspondant.
 pub fn net_receive(
     link: Res<NetLink>,
+    time: Res<Time>,
     mut avatars: ResMut<RemoteAvatars>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    // Deux requêtes disjointes : le corps et la tête sont chacun un `Transform`,
-    // donc on les sépare avec `Without` pour que Bevy accepte les deux `&mut`.
-    mut bodies: Query<&mut Transform, (With<RemoteAvatar>, Without<RemoteHead>)>,
-    mut heads: Query<&mut Transform, (With<RemoteHead>, Without<RemoteAvatar>)>,
 ) {
+    let now = time.elapsed_secs();
     for state in link.peer.poll() {
         if state.id == link.my_id {
             continue; // on ignore les paquets venant de soi-même
         }
 
-        if let Some(parts) = avatars.map.get(&state.id).copied() {
-            // Avatar déjà connu : on remet à jour sa position + son orientation.
-            if let Ok(mut t) = bodies.get_mut(parts.body) {
-                t.translation = Vec3::new(state.x, state.y, state.z);
-                // Lacet : le corps tourne autour de l'axe vertical.
-                t.rotation = Quat::from_rotation_y(state.yaw);
-            }
-            if let Ok(mut t) = heads.get_mut(parts.head) {
-                // Tangage : la tête s'incline haut/bas (sans bouger sa position).
-                t.rotation = Quat::from_rotation_x(state.pitch);
+        // L'instantané qu'on vient de recevoir, horodaté à MAINTENANT.
+        let snap = Snapshot {
+            t: now,
+            pos: Vec3::new(state.x, state.y, state.z),
+            yaw: state.yaw,
+            pitch: state.pitch,
+        };
+
+        if let Some(player) = avatars.map.get_mut(&state.id) {
+            // Avatar déjà connu : on empile l'instantané (sans bouger l'avatar ;
+            // c'est `net_interpolate` qui l'animera). On garde ~1 s d'historique.
+            player.buffer.push_back(snap);
+            while player.buffer.len() > 2 && now - player.buffer.front().unwrap().t > 1.0 {
+                player.buffer.pop_front();
             }
         } else {
             // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
@@ -408,10 +442,83 @@ pub fn net_receive(
                 })
                 .id();
 
-            avatars.map.insert(state.id, AvatarParts { body, head: head_entity });
+            let mut buffer = VecDeque::new();
+            buffer.push_back(snap);
+            avatars
+                .map
+                .insert(state.id, RemotePlayer { body, head: head_entity, buffer });
             println!("Nouveau joueur {} apparu.", state.id);
         }
     }
+}
+
+/// Système : à CHAQUE image, place chaque avatar distant à l'état interpolé
+/// entre ses deux instantanés qui entourent « maintenant − retard ». C'est lui
+/// qui transforme des paquets espacés et saccadés en un mouvement fluide.
+pub fn net_interpolate(
+    time: Res<Time>,
+    avatars: Res<RemoteAvatars>,
+    // Corps et tête sont deux `Transform` : on sépare les requêtes avec `Without`.
+    mut bodies: Query<&mut Transform, (With<RemoteAvatar>, Without<RemoteHead>)>,
+    mut heads: Query<&mut Transform, (With<RemoteHead>, Without<RemoteAvatar>)>,
+) {
+    // Le moment qu'on veut dessiner : un peu dans le passé, pour avoir de la marge.
+    let render_t = time.elapsed_secs() - INTERP_DELAY;
+
+    for player in avatars.map.values() {
+        if player.buffer.is_empty() {
+            continue;
+        }
+        let (pos, yaw, pitch) = sample(&player.buffer, render_t);
+
+        if let Ok(mut t) = bodies.get_mut(player.body) {
+            t.translation = pos;
+            t.rotation = Quat::from_rotation_y(yaw);
+        }
+        if let Ok(mut t) = heads.get_mut(player.head) {
+            t.rotation = Quat::from_rotation_x(pitch);
+        }
+    }
+}
+
+/// Donne l'état interpolé à l'instant `t` à partir de la file d'instantanés.
+/// On cherche la paire (a, b) qui encadre `t` et on glisse de a vers b.
+fn sample(buf: &VecDeque<Snapshot>, t: f32) -> (Vec3, f32, f32) {
+    // Avant le plus ancien instantané connu : on tient sa position (rien à interpoler).
+    let first = buf.front().unwrap();
+    if t <= first.t {
+        return (first.pos, first.yaw, first.pitch);
+    }
+    // On parcourt les paires successives jusqu'à trouver celle qui encadre `t`.
+    for i in 0..buf.len() - 1 {
+        let a = buf[i];
+        let b = buf[i + 1];
+        if t <= b.t {
+            // `alpha` = où se trouve `t` entre a.t et b.t, ramené dans [0, 1].
+            let span = (b.t - a.t).max(1e-6); // évite la division par zéro
+            let alpha = ((t - a.t) / span).clamp(0.0, 1.0);
+            let pos = a.pos.lerp(b.pos, alpha);
+            let yaw = lerp_angle(a.yaw, b.yaw, alpha);
+            let pitch = a.pitch + (b.pitch - a.pitch) * alpha;
+            return (pos, yaw, pitch);
+        }
+    }
+    // Après le dernier instantané (on a « rattrapé » le réseau, ou un paquet
+    // manque) : on tient la dernière position connue en attendant la suite.
+    let last = buf.back().unwrap();
+    (last.pos, last.yaw, last.pitch)
+}
+
+/// Interpole entre deux angles par le plus court chemin (gère le passage par
+/// ±180° : sinon, en tournant, le corps ferait brièvement un tour à l'envers).
+fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    let mut diff = (b - a) % TAU;
+    if diff > PI {
+        diff -= TAU;
+    } else if diff < -PI {
+        diff += TAU;
+    }
+    a + diff * t
 }
 
 /// Matériau de skin émissif (glow néon) pour les avatars distants.

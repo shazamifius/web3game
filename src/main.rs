@@ -65,7 +65,10 @@ fn main() {
             Ok(link) => {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()
-                    .add_systems(Update, (net::net_send, net::net_receive));
+                    .add_systems(
+                        Update,
+                        (net::net_send, net::net_receive, net::net_interpolate),
+                    );
             }
             Err(e) => eprintln!("Réseau désactivé ({e}) — le jeu démarre en solo."),
         }

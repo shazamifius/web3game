@@ -77,11 +77,12 @@ anti-triche).
       UDP fait main : encoder une position en octets, l'envoyer, la recevoir.
       Deux fenêtres se voient. Skin de couleur aléatoire. Orientation
       (corps + tête) transmise. *(fait)*
-- [ ] **Chapitre 2 — Netcode : fluidité** ⬅️ *prochaine étape*
-      Aujourd'hui l'avatar distant « téléporte » (paquets bruts). On ajoute le
-      **jitter buffer** (petit délai tampon) et l'**interpolation** (deviner les
-      positions entre deux paquets) pour un mouvement lisse. On testera en
-      dégradant le réseau avec `tc netem`.
+- [x] **Chapitre 2 — Netcode : fluidité**
+      Envoi à 20 paquets/s (au lieu de 60). Chaque position reçue est rangée
+      dans une file d'**instantanés** horodatés ; l'avatar est dessiné 100 ms
+      dans le passé (**retard d'interpolation**) en glissant entre les deux
+      instantanés qui l'entourent → mouvement lisse, robuste aux paquets en
+      retard ou perdus. Se teste en dégradant le réseau avec `tc netem`. *(fait)*
 - [ ] **Chapitre 3 — Topologie & passage à l'échelle**
       NAT, STUN, hole-punching (se connecter sans serveur). **Area of Interest**
       (AoI) : ne parler qu'aux joueurs proches → passer de O(N²) à O(N).
