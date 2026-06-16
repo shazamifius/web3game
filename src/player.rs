@@ -28,15 +28,19 @@ pub fn setup_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    my_color: Res<crate::net::MyColor>,
 ) {
     let torso = meshes.add(Capsule3d::new(0.17, 0.45));
     let head = meshes.add(Sphere::new(0.14));
     let limb = meshes.add(Capsule3d::new(0.07, 0.40));
 
-    // Palette synthwave : base sombre + émissif (cyan, magenta, violet).
-    let cyan = materials.add(body_mat(0.1, 1.2, 1.6));
-    let magenta = materials.add(body_mat(1.6, 0.2, 1.2));
-    let violet = materials.add(body_mat(0.7, 0.1, 1.7));
+    // Couleur de skin aléatoire (la même qu'on envoie sur le réseau). On la
+    // décline en 3 nuances pour garder un peu de relief : torse/bras à la
+    // couleur de base, tête plus vive, jambes plus sombres.
+    let (r, g, b) = (my_color.0, my_color.1, my_color.2);
+    let cyan = materials.add(body_mat(r, g, b)); // torse + bras
+    let magenta = materials.add(body_mat(r * 1.3, g * 1.3, b * 1.3)); // tête (plus vive)
+    let violet = materials.add(body_mat(r * 0.55, g * 0.55, b * 0.55)); // jambes (plus sombres)
 
     commands
         .spawn((

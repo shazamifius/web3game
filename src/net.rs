@@ -1,29 +1,27 @@
-//! La couche réseau du jeu — 100 % faite main, uniquement avec la bibliothèque
-//! standard de Rust (`std::net`). Aucune dépendance, aucune « boîte noire » :
-//! on voit exactement comment une position de joueur devient une suite d'octets,
-//! part dans le réseau, et revient.
+//! La couche réseau du jeu — faite main, avec la bibliothèque standard de Rust
+//! pour le transport (`std::net`), plus une fine couche qui la relie à Bevy.
 //!
-//! # L'idée de ce premier jet
-//! Deux sessions du jeu, sur le MÊME PC, s'envoient leur position en **UDP**.
-//! - UDP = on jette un paquet vers une adresse, sans garantie qu'il arrive.
-//!   C'est rapide (pas d'accusé de réception), parfait pour un jeu : si un
-//!   paquet de position se perd, le suivant arrive 50 ms plus tard de toute façon.
-//! - Chaque session « écoute » sur un port (sa boîte aux lettres) et « parle »
-//!   vers le port de l'autre.
+//! On voit exactement comment une position de joueur devient une suite d'octets,
+//! part dans le réseau et revient. Aucune « boîte noire » côté réseau.
 //!
-//! # Comment l'essayer (deux terminaux)
-//!   Terminal 1 :  nix-shell --run "cargo run -- net-demo a"
-//!   Terminal 2 :  nix-shell --run "cargo run -- net-demo b"
-//! Tu verras chaque session afficher les positions qu'elle REÇOIT de l'autre.
+//! # Organisation de ce fichier
+//!   1) LE MESSAGE        : `PlayerState` + `encode` / `decode` (octets bruts)
+//!   2) LE PAIR (PEER)    : `NetPeer`, la prise UDP (envoyer / relever le courrier)
+//!   3) LA COULEUR        : couleur de skin aléatoire (`random_color`)
+//!   4) LE MODE DÉMO      : `run_demo` (texte seul, pour observer les paquets)
+//!   5) L'INTÉGRATION JEU : ressources + systèmes Bevy qui branchent tout ça en 3D
 //!
-//! # Le test qui compte vraiment (plus tard)
-//! Tant que c'est du « localhost » nu, tout marche parfaitement et ça ne prouve
-//! rien. Pour simuler un vrai mauvais réseau sur ta machine :
-//!   sudo tc qdisc add dev lo root netem delay 100ms loss 5%
-//! (et pour tout remettre normal :)
-//!   sudo tc qdisc del dev lo root
-//! Là tu verras des paquets arriver en retard ou disparaître — les vrais défis.
+//! # Comment jouer à deux fenêtres (sur le même PC)
+//!   Terminal 1 :  nix-shell --run "cargo run -- a"
+//!   Terminal 2 :  nix-shell --run "cargo run -- b"
+//! Bouge en ZQSD dans une fenêtre : ton avatar (de ta couleur) apparaît et bouge
+//! dans l'autre fenêtre.
+//!
+//! # Tester un vrai mauvais réseau (plus tard)
+//!   sudo tc qdisc add dev lo root netem delay 100ms loss 10%   # dégrade
+//!   sudo tc qdisc del dev lo root                              # remet normal
 
+use bevy::prelude::*;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -31,113 +29,97 @@ use std::time::{Duration, Instant};
 // 1) LE MESSAGE : ce qu'un joueur envoie aux autres
 // ============================================================================
 
-/// L'état minimal d'un joueur qu'on transmet sur le réseau.
-/// Pour l'instant : qui c'est (`id`) et où il est (`x`, `y`, `z`).
-/// Plus tard on y ajoutera la rotation, l'animation, etc.
+/// L'état d'un joueur transmis sur le réseau : qui (`id`), où (`x,y,z`) et de
+/// quelle couleur (`r,g,b`, son « skin »).
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerState {
-    pub id: u8,  // identifiant du joueur (1 octet = jusqu'à 255 joueurs, suffira pour commencer)
-    pub x: f32,  // position sur l'axe gauche/droite
-    pub y: f32,  // position sur l'axe haut/bas (la hauteur)
-    pub z: f32,  // position sur l'axe avant/arrière
+    pub id: u8, // identifiant du joueur (1 octet : jusqu'à 255 joueurs)
+    pub x: f32, // position gauche/droite
+    pub y: f32, // position haut/bas (hauteur)
+    pub z: f32, // position avant/arrière
+    pub r: f32, // couleur du skin : rouge
+    pub g: f32, // couleur du skin : vert
+    pub b: f32, // couleur du skin : bleu
 }
 
-// Taille exacte d'un paquet, en octets. On la calcule à la main pour bien
-// comprendre : 1 octet pour l'id + 3 nombres `f32` de 4 octets chacun.
-//   1 + 4 + 4 + 4 = 13 octets.
-const PACKET_SIZE: usize = 1 + 4 + 4 + 4;
+// Taille exacte d'un paquet, calculée à la main pour bien comprendre :
+//   1 octet (id) + 6 nombres f32 de 4 octets (x,y,z,r,g,b) = 1 + 24 = 25 octets.
+const PACKET_SIZE: usize = 1 + 4 * 6;
 
-/// Transforme un `PlayerState` en une suite d'octets prête à être envoyée.
-/// C'est ça, « sérialiser » : passer d'une structure Rust à des octets bruts.
-///
-/// `to_le_bytes` découpe un nombre en ses 4 octets, en « little-endian » (LE).
-/// Peu importe le sens exact ici ; ce qui compte : l'émetteur et le récepteur
-/// doivent utiliser LE MÊME sens. On choisit LE des deux côtés, point.
+/// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
+/// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
+/// L'émetteur et le récepteur doivent juste utiliser le même sens — on choisit LE.
 fn encode(p: &PlayerState) -> [u8; PACKET_SIZE] {
     let mut buf = [0u8; PACKET_SIZE];
-    buf[0] = p.id; // le 1er octet : l'identifiant
-    buf[1..5].copy_from_slice(&p.x.to_le_bytes()); // octets 1 à 4 : x
-    buf[5..9].copy_from_slice(&p.y.to_le_bytes()); // octets 5 à 8 : y
-    buf[9..13].copy_from_slice(&p.z.to_le_bytes()); // octets 9 à 12 : z
+    buf[0] = p.id;
+    buf[1..5].copy_from_slice(&p.x.to_le_bytes());
+    buf[5..9].copy_from_slice(&p.y.to_le_bytes());
+    buf[9..13].copy_from_slice(&p.z.to_le_bytes());
+    buf[13..17].copy_from_slice(&p.r.to_le_bytes());
+    buf[17..21].copy_from_slice(&p.g.to_le_bytes());
+    buf[21..25].copy_from_slice(&p.b.to_le_bytes());
     buf
 }
 
-/// L'opération inverse : à partir des octets reçus, reconstruire un `PlayerState`.
-/// Renvoie `None` si le paquet est trop court ou abîmé — on ne fait JAMAIS
-/// confiance aveuglément à ce qui vient du réseau.
+/// L'inverse : reconstruire un `PlayerState` à partir des octets reçus.
+/// Renvoie `None` si le paquet est trop court — on ne fait jamais confiance
+/// aveuglément à ce qui vient du réseau.
 fn decode(buf: &[u8]) -> Option<PlayerState> {
-    // Si on a reçu moins d'octets que prévu, le paquet est invalide : on jette.
     if buf.len() < PACKET_SIZE {
         return None;
     }
     let id = buf[0];
-    // `try_into()` transforme une tranche de 4 octets en tableau `[u8; 4]`.
-    // Le `?` veut dire : « si ça rate, renvoie None tout de suite ».
+    // `?` = « si la conversion rate, renvoie None tout de suite ».
     let x = f32::from_le_bytes(buf[1..5].try_into().ok()?);
     let y = f32::from_le_bytes(buf[5..9].try_into().ok()?);
     let z = f32::from_le_bytes(buf[9..13].try_into().ok()?);
-    Some(PlayerState { id, x, y, z })
+    let r = f32::from_le_bytes(buf[13..17].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[17..21].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[21..25].try_into().ok()?);
+    Some(PlayerState { id, x, y, z, r, g, b })
 }
 
 // ============================================================================
 // 2) LE PAIR (PEER) : la prise réseau d'une session
 // ============================================================================
 
-/// Représente la connexion réseau d'UNE session de jeu.
-/// - `socket` : notre « boîte aux lettres » UDP (on reçoit et on envoie par là).
-/// - `remote` : l'adresse de l'autre joueur à qui on parle.
+/// La connexion réseau d'UNE session : sa boîte aux lettres UDP (`socket`)
+/// et l'adresse de l'autre joueur (`remote`).
 pub struct NetPeer {
     socket: UdpSocket,
     remote: SocketAddr,
 }
 
 impl NetPeer {
-    /// Ouvre la prise réseau locale et mémorise à qui on parle.
-    /// - `local_port`  : le port sur lequel CETTE session écoute.
-    /// - `remote_port` : le port de l'AUTRE session, sur la même machine (127.0.0.1).
+    /// Ouvre la prise locale et mémorise à qui on parle (tout sur 127.0.0.1).
     pub fn bind(local_port: u16, remote_port: u16) -> std::io::Result<NetPeer> {
-        // 127.0.0.1 = « moi-même » (localhost). On reste sur le même PC pour l'instant.
         let socket = UdpSocket::bind(("127.0.0.1", local_port))?;
-
-        // TRÈS IMPORTANT : mode « non-bloquant ». Par défaut, lire le réseau MET
-        // EN PAUSE le programme jusqu'à ce qu'un paquet arrive. Dans un jeu on ne
-        // peut pas se figer : on veut juste « y a-t-il du courrier ? sinon tant pis,
-        // on continue ». Ce réglage fait exactement ça.
+        // Mode non-bloquant : lire le réseau ne met JAMAIS le jeu en pause.
+        // « Y a-t-il du courrier ? Non ? Tant pis, on continue. »
         socket.set_nonblocking(true)?;
-
         let remote = SocketAddr::from(([127, 0, 0, 1], remote_port));
         Ok(NetPeer { socket, remote })
     }
 
-    /// Envoie notre position à l'autre joueur. Un seul paquet, et on n'attend
-    /// aucune confirmation (c'est ça, l'UDP : on lance et on oublie).
+    /// Envoie notre position. Un seul paquet, aucun accusé de réception (c'est l'UDP).
     pub fn send(&self, state: &PlayerState) -> std::io::Result<()> {
-        let bytes = encode(state);
-        self.socket.send_to(&bytes, self.remote)?;
+        self.socket.send_to(&encode(state), self.remote)?;
         Ok(())
     }
 
-    /// Relève la boîte aux lettres : récupère TOUS les paquets arrivés depuis le
-    /// dernier appel, et renvoie les positions décodées. Ne bloque jamais (grâce
-    /// au mode non-bloquant) : s'il n'y a rien, on renvoie une liste vide.
+    /// Relève TOUS les paquets arrivés depuis le dernier appel. Ne bloque jamais.
     pub fn poll(&self) -> Vec<PlayerState> {
         let mut received = Vec::new();
-        let mut buf = [0u8; 64]; // tampon de lecture (un peu plus grand que nécessaire)
-
-        // On boucle tant qu'il reste des paquets en attente.
+        let mut buf = [0u8; 64];
         loop {
             match self.socket.recv_from(&mut buf) {
-                // On a lu `n` octets venant de `_from`. On tente de les décoder.
                 Ok((n, _from)) => {
                     if let Some(state) = decode(&buf[..n]) {
                         received.push(state);
                     }
-                    // (si decode renvoie None, on ignore simplement ce paquet abîmé)
                 }
-                // `WouldBlock` = « la boîte est vide pour l'instant ». Ce n'est PAS
-                // une erreur : c'est le signal normal pour arrêter de relever.
+                // `WouldBlock` = boîte vide pour l'instant : ce n'est pas une erreur.
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                // Toute autre erreur réseau : on arrête la relève pour ce tour.
                 Err(_) => break,
             }
         }
@@ -146,68 +128,202 @@ impl NetPeer {
 }
 
 // ============================================================================
-// 3) LE MODE DÉMO : pour VOIR les paquets circuler, sans le jeu
+// 3) LA COULEUR DE SKIN : une couleur vive aléatoire à chaque lancement
 // ============================================================================
 
-/// Lance une session de démonstration réseau. On l'appelle depuis `main.rs`
-/// avec : `cargo run -- net-demo a`  (ou `b` pour l'autre session).
-///
-/// Chaque session invente une position qui tourne en cercle, l'envoie à l'autre
-/// 5 fois par seconde, et affiche tout ce qu'elle reçoit. Tu lances les deux et
-/// tu vois la conversation réseau en direct.
-pub fn run_demo(role: &str) {
-    // Selon le rôle, on choisit nos ports et notre identifiant.
-    // 'a' écoute sur 5000 et parle à 5001 ; 'b' fait l'inverse.
-    let (local_port, remote_port, id) = match role {
-        "b" | "B" => (5001u16, 5000u16, 2u8),
-        _ => (5000u16, 5001u16, 1u8), // 'a' par défaut
-    };
+/// La couleur de skin de CETTE session, choisie au démarrage. On la garde dans
+/// une ressource Bevy pour que le perso ET le réseau utilisent la même.
+#[derive(Resource, Clone, Copy)]
+pub struct MyColor(pub f32, pub f32, pub f32);
 
+/// Tire une couleur vive aléatoire (rouge/vert/bleu, valeurs faites pour « glow »).
+/// On évite toute dépendance externe : petit générateur pseudo-aléatoire maison.
+pub fn random_color() -> (f32, f32, f32) {
+    // Graine = nanosecondes actuelles, mélangées à l'identifiant du processus
+    // (pour que deux fenêtres lancées au même instant aient des couleurs différentes).
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let mut x = nanos ^ std::process::id().wrapping_mul(2_654_435_761);
+    // « xorshift » : on brasse les bits pour obtenir un nombre bien mélangé.
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    let hue = (x % 360) as f32; // une teinte au hasard sur le cercle des couleurs
+    hsv_to_rgb(hue, 1.0, 1.2) // saturation max, valeur > 1 pour le néon
+}
+
+/// Convertit une couleur Teinte/Saturation/Valeur en Rouge/Vert/Bleu.
+/// (La teinte donne « quelle couleur » ; on s'en sert pour tirer au hasard.)
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let c = v * s;
+    let h2 = h / 60.0;
+    let x = c * (1.0 - ((h2 % 2.0) - 1.0).abs());
+    let (r, g, b) = match h2 as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    (r + m, g + m, b + m)
+}
+
+// ============================================================================
+// 4) LE MODE DÉMO : observer les paquets en texte, sans la 3D
+// ============================================================================
+
+/// `cargo run -- net-demo a` (ou `b`) : deux sessions s'envoient une position
+/// qui tourne en cercle et affichent ce qu'elles reçoivent. Utile pour voir le
+/// réseau seul. (Le vrai jeu, lui, se lance avec `cargo run -- a` / `b`.)
+pub fn run_demo(role: &str) {
+    let (local_port, remote_port, id) = ports_for_role(role);
     let peer = match NetPeer::bind(local_port, remote_port) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Impossible d'ouvrir le port {local_port} : {e}");
-            eprintln!("(le port est peut-être déjà pris par une autre session ?)");
             return;
         }
     };
+    let (r, g, b) = random_color();
+    println!("Démo '{role}' : écoute {local_port}, parle à {remote_port}, joueur {id}.\n");
 
-    println!("Session '{role}' prête.");
-    println!("  J'écoute sur 127.0.0.1:{local_port}");
-    println!("  Je parle  à 127.0.0.1:{remote_port}");
-    println!("  Je suis le joueur n°{id}.");
-    println!("  (Ctrl-C pour arrêter.)\n");
-
-    // `Instant` = une horloge MONOTONE : elle ne recule jamais, même si l'heure
-    // système est modifiée. C'est la bonne horloge pour mesurer du temps de jeu.
     let start = Instant::now();
-
     loop {
-        let t = start.elapsed().as_secs_f32(); // secondes écoulées depuis le début
-
-        // Position fictive : on tourne en cercle pour avoir un mouvement visible.
-        let me = PlayerState {
-            id,
-            x: t.cos() * 2.0,
-            y: 0.7,
-            z: t.sin() * 2.0,
-        };
-
-        // 1) On envoie NOTRE position.
+        let t = start.elapsed().as_secs_f32();
+        let me = PlayerState { id, x: t.cos() * 2.0, y: 0.7, z: t.sin() * 2.0, r, g, b };
         if let Err(e) = peer.send(&me) {
             eprintln!("Envoi raté : {e}");
         }
-
-        // 2) On relève le courrier et on affiche ce que l'AUTRE nous a envoyé.
         for other in peer.poll() {
             println!(
                 "  ← reçu du joueur {} : x={:.2}  y={:.2}  z={:.2}",
                 other.id, other.x, other.y, other.z
             );
         }
-
-        // 3) On attend un peu avant le tour suivant : 5 messages par seconde.
-        //    (200 ms, pour que l'affichage reste lisible à l'œil.)
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Selon le rôle ('a' ou 'b'), choisit les ports et l'identifiant.
+/// 'a' écoute sur 5000 et parle à 5001 ; 'b' fait l'inverse.
+fn ports_for_role(role: &str) -> (u16, u16, u8) {
+    match role {
+        "b" | "B" => (5001, 5000, 2),
+        _ => (5000, 5001, 1), // 'a' par défaut
+    }
+}
+
+// ============================================================================
+// 5) INTÉGRATION DANS LE JEU (Bevy)
+// ============================================================================
+
+/// Le lien réseau de la session, rangé dans une ressource pour que les systèmes
+/// Bevy puissent l'utiliser. Présent uniquement en mode multijoueur.
+#[derive(Resource)]
+pub struct NetLink {
+    peer: NetPeer,
+    my_id: u8,
+    my_color: (f32, f32, f32),
+}
+
+impl NetLink {
+    /// Prépare le lien réseau pour le rôle donné, avec notre couleur de skin.
+    pub fn new(role: &str, color: (f32, f32, f32)) -> std::io::Result<NetLink> {
+        let (local, remote, id) = ports_for_role(role);
+        let peer = NetPeer::bind(local, remote)?;
+        println!("Multijoueur '{role}' : écoute {local}, parle à {remote}, joueur {id}.");
+        Ok(NetLink { peer, my_id: id, my_color: color })
+    }
+}
+
+/// Mémorise quel avatar (entité Bevy) correspond à quel joueur distant, pour
+/// le retrouver et déplacer le bon quand un nouveau paquet arrive.
+#[derive(Resource, Default)]
+pub struct RemoteAvatars {
+    map: std::collections::HashMap<u8, Entity>,
+}
+
+/// Marque une entité comme étant l'avatar d'un joueur DISTANT.
+#[derive(Component)]
+pub struct RemoteAvatar {
+    pub id: u8,
+}
+
+/// Système : envoie NOTRE position (et couleur) à l'autre joueur, chaque frame.
+/// (À 60 images/s ça fait 60 petits paquets/s — on lissera/ralentira plus tard.)
+pub fn net_send(link: Res<NetLink>, player: Query<&Transform, With<crate::player::Player>>) {
+    let Ok(transform) = player.single() else {
+        return;
+    };
+    let (r, g, b) = link.my_color;
+    let me = PlayerState {
+        id: link.my_id,
+        x: transform.translation.x,
+        y: transform.translation.y,
+        z: transform.translation.z,
+        r,
+        g,
+        b,
+    };
+    let _ = link.peer.send(&me); // on ignore l'échec : le prochain paquet repart
+}
+
+/// Système : relève les positions reçues et met à jour (ou crée) l'avatar du
+/// joueur distant correspondant.
+pub fn net_receive(
+    link: Res<NetLink>,
+    mut avatars: ResMut<RemoteAvatars>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut transforms: Query<&mut Transform, With<RemoteAvatar>>,
+) {
+    for state in link.peer.poll() {
+        if state.id == link.my_id {
+            continue; // on ignore les paquets venant de soi-même
+        }
+
+        if let Some(&entity) = avatars.map.get(&state.id) {
+            // Avatar déjà connu : on déplace seulement son corps.
+            if let Ok(mut transform) = transforms.get_mut(entity) {
+                transform.translation = Vec3::new(state.x, state.y, state.z);
+            }
+        } else {
+            // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
+            let torso = meshes.add(Capsule3d::new(0.17, 0.45));
+            let head = meshes.add(Sphere::new(0.14));
+            let skin = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.02, 0.02, 0.03),
+                emissive: LinearRgba::rgb(state.r, state.g, state.b),
+                ..default()
+            });
+
+            let entity = commands
+                .spawn((
+                    RemoteAvatar { id: state.id },
+                    Transform::from_xyz(state.x, state.y, state.z),
+                    Visibility::default(),
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        Mesh3d(torso),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(0.0, 0.10, 0.0),
+                    ));
+                    p.spawn((
+                        Mesh3d(head),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(0.0, 0.62, 0.0),
+                    ));
+                })
+                .id();
+
+            avatars.map.insert(state.id, entity);
+            println!("Nouveau joueur {} apparu.", state.id);
+        }
     }
 }
