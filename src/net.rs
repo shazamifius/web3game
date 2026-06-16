@@ -259,6 +259,8 @@ impl NetLink {
 // moment qu'on veut afficher — même si un paquet arrive en retard ou se perd.
 const SEND_HZ: f32 = 20.0; // paquets envoyés par seconde
 const INTERP_DELAY: f32 = 0.10; // on dessine 100 ms dans le passé
+const MAX_EXTRAPOLATION: f32 = 0.25; // on ne PRÉDIT jamais plus de 250 ms à l'aveugle
+const SMOOTH_TAU: f32 = 0.05; // douceur de la correction (s) : ↑ = plus lisse mais + de retard
 
 /// Un « instantané » reçu : où était le joueur distant, et À QUEL MOMENT on l'a
 /// reçu (horloge interne du jeu). On en garde plusieurs pour glisser entre eux.
@@ -465,31 +467,44 @@ pub fn net_interpolate(
     // Le moment qu'on veut dessiner : un peu dans le passé, pour avoir de la marge.
     let render_t = time.elapsed_secs() - INTERP_DELAY;
 
+    // Facteur de lissage indépendant du nombre d'images/s : on parcourt une
+    // fraction du chemin restant à chaque image (≈ 63 % atteint en SMOOTH_TAU s).
+    // C'est lui qui absorbe une correction quand notre prédiction s'est trompée.
+    let blend = 1.0 - (-time.delta_secs() / SMOOTH_TAU).exp();
+
     for player in avatars.map.values() {
         if player.buffer.is_empty() {
             continue;
         }
+        // La CIBLE : interpolée si on a les deux points, prédite (extrapolée) sinon.
         let (pos, yaw, pitch) = sample(&player.buffer, render_t);
 
         if let Ok(mut t) = bodies.get_mut(player.body) {
-            t.translation = pos;
-            t.rotation = Quat::from_rotation_y(yaw);
+            // RÉCONCILIATION : on glisse vers la cible au lieu d'y sauter. En régime
+            // normal la cible bouge à peine d'une image à l'autre → on la suit de
+            // près. Si elle a « sauté » (vrai paquet contredisant la prédiction),
+            // la correction se répartit en douceur sur quelques images.
+            t.translation = t.translation.lerp(pos, blend);
+            let current_yaw = t.rotation.to_euler(EulerRot::YXZ).0;
+            t.rotation = Quat::from_rotation_y(lerp_angle(current_yaw, yaw, blend));
         }
         if let Ok(mut t) = heads.get_mut(player.head) {
-            t.rotation = Quat::from_rotation_x(pitch);
+            let current_pitch = t.rotation.to_euler(EulerRot::XYZ).0;
+            t.rotation = Quat::from_rotation_x(lerp_angle(current_pitch, pitch, blend));
         }
     }
 }
 
-/// Donne l'état interpolé à l'instant `t` à partir de la file d'instantanés.
-/// On cherche la paire (a, b) qui encadre `t` et on glisse de a vers b.
+/// Donne l'état du joueur distant à l'instant `t`, à partir de l'historique.
+/// Trois cas : avant le 1er point (on tient), entre deux points (INTERPOLATION),
+/// au-delà du dernier point (PRÉDICTION par extrapolation de la vitesse).
 fn sample(buf: &VecDeque<Snapshot>, t: f32) -> (Vec3, f32, f32) {
-    // Avant le plus ancien instantané connu : on tient sa position (rien à interpoler).
+    // Avant le plus ancien instantané connu : on tient sa position (rien à deviner).
     let first = buf.front().unwrap();
     if t <= first.t {
         return (first.pos, first.yaw, first.pitch);
     }
-    // On parcourt les paires successives jusqu'à trouver celle qui encadre `t`.
+    // Cas normal : on cherche la paire (a, b) qui encadre `t` et on glisse de a vers b.
     for i in 0..buf.len() - 1 {
         let a = buf[i];
         let b = buf[i + 1];
@@ -503,22 +518,40 @@ fn sample(buf: &VecDeque<Snapshot>, t: f32) -> (Vec3, f32, f32) {
             return (pos, yaw, pitch);
         }
     }
-    // Après le dernier instantané (on a « rattrapé » le réseau, ou un paquet
-    // manque) : on tient la dernière position connue en attendant la suite.
+    // Au-delà du dernier instantané : la file est épuisée (paquet en retard ou
+    // perdu). PRÉDICTION : on prolonge le mouvement avec la vitesse mesurée sur
+    // les deux derniers points, le temps que le vrai paquet arrive.
     let last = buf.back().unwrap();
-    (last.pos, last.yaw, last.pitch)
+    if buf.len() < 2 {
+        return (last.pos, last.yaw, last.pitch); // pas d'historique => on tient
+    }
+    let prev = buf[buf.len() - 2];
+    let dt = (last.t - prev.t).max(1e-6);
+    // On borne la prédiction : au-delà, on a trop peu d'info pour deviner sans
+    // partir n'importe où (ex. le joueur s'est déconnecté d'un coup).
+    let ahead = (t - last.t).min(MAX_EXTRAPOLATION);
+    let velocity = (last.pos - prev.pos) / dt; // mètres / seconde
+    let yaw_rate = shortest_diff(prev.yaw, last.yaw) / dt; // radians / seconde
+    let pos = last.pos + velocity * ahead;
+    let yaw = last.yaw + yaw_rate * ahead;
+    (pos, yaw, last.pitch) // le tangage de tête, lui, on ne le prédit pas
 }
 
-/// Interpole entre deux angles par le plus court chemin (gère le passage par
+/// Écart le plus court entre deux angles, dans [−π, π] (gère le passage par
 /// ±180° : sinon, en tournant, le corps ferait brièvement un tour à l'envers).
-fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+fn shortest_diff(a: f32, b: f32) -> f32 {
     let mut diff = (b - a) % TAU;
     if diff > PI {
         diff -= TAU;
     } else if diff < -PI {
         diff += TAU;
     }
-    a + diff * t
+    diff
+}
+
+/// Interpole entre deux angles par le plus court chemin.
+fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    a + shortest_diff(a, b) * t
 }
 
 /// Matériau de skin émissif (glow néon) pour les avatars distants.

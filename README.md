@@ -77,12 +77,21 @@ anti-triche).
       UDP fait main : encoder une position en octets, l'envoyer, la recevoir.
       Deux fenêtres se voient. Skin de couleur aléatoire. Orientation
       (corps + tête) transmise. *(fait)*
-- [x] **Chapitre 2 — Netcode : fluidité**
+- [x] **Chapitre 2 — Netcode : fluidité + prédiction**
       Envoi à 20 paquets/s (au lieu de 60). Chaque position reçue est rangée
       dans une file d'**instantanés** horodatés ; l'avatar est dessiné 100 ms
       dans le passé (**retard d'interpolation**) en glissant entre les deux
-      instantanés qui l'entourent → mouvement lisse, robuste aux paquets en
-      retard ou perdus. Se teste en dégradant le réseau avec `tc netem`. *(fait)*
+      instantanés qui l'entourent. Quand la file est épuisée (paquet en retard
+      ou perdu), on **prédit** la suite par extrapolation de la vitesse
+      (*dead reckoning*) au lieu de figer l'avatar, puis on **réconcilie** en
+      douceur quand le vrai paquet arrive. Réglages dans `net.rs` :
+      `INTERP_DELAY`, `MAX_EXTRAPOLATION`, `SMOOTH_TAU`. Se teste avec
+      `tc netem`. *(fait)*
+
+      > Note de conception : prédiction faite **à la main** (vitesse depuis
+      > l'historique), pas par réseau de neurones — la physique de l'inertie
+      > humaine suffit sur 100 ms, c'est déterministe, lisible et gratuit en CPU.
+      > L'IA serait pertinente pour prédire la *pose du corps*, pas la position.
 - [ ] **Chapitre 3 — Topologie & passage à l'échelle**
       NAT, STUN, hole-punching (se connecter sans serveur). **Area of Interest**
       (AoI) : ne parler qu'aux joueurs proches → passer de O(N²) à O(N).
