@@ -93,6 +93,12 @@ src/
 Un paquet de joueur fait aujourd'hui **45 octets** : `id` (1) + `x,y,z` +
 `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets). Voir `net/message.rs`.
 
+**Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
+préfixé d'un `_` (ex. `_demo.rs`) et sa ligne `mod` est retirée. Il remonte en
+tête de liste et signale d'un coup d'œil qu'il ne sert plus — sans le ranger
+dans un sous-dossier. (Le compilateur Rust confirme l'inverse : si un fichier
+*est* branché sans warning `unused`, c'est qu'il sert.)
+
 ---
 
 ## Feuille de route (le cours en 6 chapitres)
