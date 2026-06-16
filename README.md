@@ -72,8 +72,8 @@ nix-shell --run "cargo watch -x 'run -- b'"     # terminal 2
 | `player.rs`  | le personnage, la caméra première personne, les contrôles           |
 | `net.rs`     | **le réseau, fait main** : encode/décode des paquets UDP + 3D        |
 
-Dans `net.rs`, un paquet de joueur fait aujourd'hui **33 octets** :
-`id` (1) + `x,y,z` + `yaw,pitch` + `r,g,b` (8 × 4 octets).
+Dans `net.rs`, un paquet de joueur fait aujourd'hui **45 octets** :
+`id` (1) + `x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets).
 
 ---
 
@@ -100,9 +100,12 @@ anti-triche).
       (dilatation temporelle « à la Discord ») : chaque avatar a sa propre
       horloge qui avance plus vite quand on est en retard / plus lentement
       quand on risque la disette (±10 % max), pour rattraper en marchant le
-      vrai chemin au lieu de téléporter. Réglages dans `net.rs` :
-      `INTERP_DELAY`, `MAX_EXTRAPOLATION`, `SMOOTH_TAU`, `CATCHUP_GAIN`,
-      `MAX_WARP`. Se teste avec `tc netem`. *(fait)*
+      vrai chemin au lieu de téléporter. La **vraie vitesse** de l'émetteur est
+      transmise dans le paquet (45 octets) → prédiction non bruitée. La
+      réconciliation se fait par **ressort amorti** (SmoothDamp) : rattrape vite,
+      sans dépasser. Réglages dans `net.rs` : `INTERP_DELAY`,
+      `MAX_EXTRAPOLATION`, `SMOOTH_TIME`, `CATCHUP_GAIN`, `MAX_WARP`. Se teste
+      avec `tc netem`. *(fait)*
 
       > Note de conception : prédiction faite **à la main** (vitesse depuis
       > l'historique), pas par réseau de neurones — la physique de l'inertie

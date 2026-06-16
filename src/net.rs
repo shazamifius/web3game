@@ -35,21 +35,24 @@ use std::time::{Duration, Instant};
 /// quelle couleur (`r,g,b`, son « skin »).
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerState {
-    pub id: u8,    // identifiant du joueur (1 octet : jusqu'à 255 joueurs)
-    pub x: f32,    // position gauche/droite
-    pub y: f32,    // position haut/bas (hauteur)
-    pub z: f32,    // position avant/arrière
-    pub yaw: f32,  // orientation du corps gauche/droite (radians)
+    pub id: u8,     // identifiant du joueur (1 octet : jusqu'à 255 joueurs)
+    pub x: f32,     // position gauche/droite
+    pub y: f32,     // position haut/bas (hauteur)
+    pub z: f32,     // position avant/arrière
+    pub vx: f32,    // vitesse RÉELLE de l'émetteur : gauche/droite (m/s)
+    pub vy: f32,    // vitesse réelle : haut/bas (m/s)
+    pub vz: f32,    // vitesse réelle : avant/arrière (m/s)
+    pub yaw: f32,   // orientation du corps gauche/droite (radians)
     pub pitch: f32, // inclinaison de la tête haut/bas (radians)
-    pub r: f32,    // couleur du skin : rouge
-    pub g: f32,    // couleur du skin : vert
-    pub b: f32,    // couleur du skin : bleu
+    pub r: f32,     // couleur du skin : rouge
+    pub g: f32,     // couleur du skin : vert
+    pub b: f32,     // couleur du skin : bleu
 }
 
 // Taille exacte d'un paquet, calculée à la main pour bien comprendre :
-//   1 octet (id) + 8 nombres f32 de 4 octets (x,y,z,yaw,pitch,r,g,b)
-//   = 1 + 32 = 33 octets.
-const PACKET_SIZE: usize = 1 + 4 * 8;
+//   1 octet (id) + 11 nombres f32 de 4 octets (x,y,z, vx,vy,vz, yaw,pitch, r,g,b)
+//   = 1 + 44 = 45 octets.
+const PACKET_SIZE: usize = 1 + 4 * 11;
 
 /// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
 /// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
@@ -60,11 +63,14 @@ fn encode(p: &PlayerState) -> [u8; PACKET_SIZE] {
     buf[1..5].copy_from_slice(&p.x.to_le_bytes());
     buf[5..9].copy_from_slice(&p.y.to_le_bytes());
     buf[9..13].copy_from_slice(&p.z.to_le_bytes());
-    buf[13..17].copy_from_slice(&p.yaw.to_le_bytes());
-    buf[17..21].copy_from_slice(&p.pitch.to_le_bytes());
-    buf[21..25].copy_from_slice(&p.r.to_le_bytes());
-    buf[25..29].copy_from_slice(&p.g.to_le_bytes());
-    buf[29..33].copy_from_slice(&p.b.to_le_bytes());
+    buf[13..17].copy_from_slice(&p.vx.to_le_bytes());
+    buf[17..21].copy_from_slice(&p.vy.to_le_bytes());
+    buf[21..25].copy_from_slice(&p.vz.to_le_bytes());
+    buf[25..29].copy_from_slice(&p.yaw.to_le_bytes());
+    buf[29..33].copy_from_slice(&p.pitch.to_le_bytes());
+    buf[33..37].copy_from_slice(&p.r.to_le_bytes());
+    buf[37..41].copy_from_slice(&p.g.to_le_bytes());
+    buf[41..45].copy_from_slice(&p.b.to_le_bytes());
     buf
 }
 
@@ -80,12 +86,15 @@ fn decode(buf: &[u8]) -> Option<PlayerState> {
     let x = f32::from_le_bytes(buf[1..5].try_into().ok()?);
     let y = f32::from_le_bytes(buf[5..9].try_into().ok()?);
     let z = f32::from_le_bytes(buf[9..13].try_into().ok()?);
-    let yaw = f32::from_le_bytes(buf[13..17].try_into().ok()?);
-    let pitch = f32::from_le_bytes(buf[17..21].try_into().ok()?);
-    let r = f32::from_le_bytes(buf[21..25].try_into().ok()?);
-    let g = f32::from_le_bytes(buf[25..29].try_into().ok()?);
-    let b = f32::from_le_bytes(buf[29..33].try_into().ok()?);
-    Some(PlayerState { id, x, y, z, yaw, pitch, r, g, b })
+    let vx = f32::from_le_bytes(buf[13..17].try_into().ok()?);
+    let vy = f32::from_le_bytes(buf[17..21].try_into().ok()?);
+    let vz = f32::from_le_bytes(buf[21..25].try_into().ok()?);
+    let yaw = f32::from_le_bytes(buf[25..29].try_into().ok()?);
+    let pitch = f32::from_le_bytes(buf[29..33].try_into().ok()?);
+    let r = f32::from_le_bytes(buf[33..37].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[37..41].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[41..45].try_into().ok()?);
+    Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b })
 }
 
 // ============================================================================
@@ -203,8 +212,21 @@ pub fn run_demo(role: &str) {
     let start = Instant::now();
     loop {
         let t = start.elapsed().as_secs_f32();
-        let me =
-            PlayerState { id, x: t.cos() * 2.0, y: 0.7, z: t.sin() * 2.0, yaw: t, pitch: 0.0, r, g, b };
+        // Position sur un cercle, et la vitesse = sa dérivée (tangente au cercle).
+        let me = PlayerState {
+            id,
+            x: t.cos() * 2.0,
+            y: 0.7,
+            z: t.sin() * 2.0,
+            vx: -t.sin() * 2.0,
+            vy: 0.0,
+            vz: t.cos() * 2.0,
+            yaw: t,
+            pitch: 0.0,
+            r,
+            g,
+            b,
+        };
         if let Err(e) = peer.send(&me) {
             eprintln!("Envoi raté : {e}");
         }
@@ -260,27 +282,33 @@ impl NetLink {
 const SEND_HZ: f32 = 20.0; // paquets envoyés par seconde
 const INTERP_DELAY: f32 = 0.10; // on dessine 100 ms dans le passé
 const MAX_EXTRAPOLATION: f32 = 0.25; // on ne PRÉDIT jamais plus de 250 ms à l'aveugle
-const SMOOTH_TAU: f32 = 0.05; // douceur de la correction (s) : ↑ = plus lisse mais + de retard
+const SMOOTH_TIME: f32 = 0.08; // temps pour ~rejoindre la cible (ressort amorti) : ↑ = + lisse, + de retard
 const CATCHUP_GAIN: f32 = 1.5; // réactivité de l'horloge de lecture au retard accumulé
 const MAX_WARP: f32 = 0.10; // accélère/ralentit la lecture de ±10 % max (invisible à l'œil)
 
-/// Un « instantané » reçu : où était le joueur distant, et À QUEL MOMENT on l'a
-/// reçu (horloge interne du jeu). On en garde plusieurs pour glisser entre eux.
+/// Un « instantané » reçu : où était le joueur distant, à quelle VITESSE il allait,
+/// et À QUEL MOMENT on l'a reçu. On en garde plusieurs pour glisser entre eux.
 #[derive(Clone, Copy)]
 struct Snapshot {
-    t: f32, // instant de réception (secondes)
+    t: f32,    // instant de réception (secondes)
     pos: Vec3,
+    vel: Vec3, // vitesse RÉELLE envoyée par l'émetteur (m/s) — sert à prédire
     yaw: f32,
     pitch: f32,
 }
 
-/// Tout ce qu'on retient d'un joueur distant : ses deux entités 3D (corps + tête)
-/// et la file de ses derniers instantanés, qu'on interpole image par image.
+/// Tout ce qu'on retient d'un joueur distant : ses deux entités 3D (corps + tête),
+/// la file de ses derniers instantanés, et l'état interne du lissage (ressort amorti).
 struct RemotePlayer {
     body: Entity,
     head: Entity,
     buffer: VecDeque<Snapshot>,
     clock: f32, // notre horloge de LECTURE perso (avance plus/moins vite que le temps réel)
+    // Vitesses internes du ressort amorti (SmoothDamp) : il s'en sert pour rattraper
+    // la cible sans à-coup ni dépassement. Une par grandeur lissée.
+    smooth_vel: Vec3,
+    yaw_vel: f32,
+    pitch_vel: f32,
 }
 
 /// Mémorise tous les joueurs distants connus, par identifiant.
@@ -304,6 +332,7 @@ pub struct RemoteHead;
 pub fn net_send(
     time: Res<Time>,
     mut accumulator: Local<f32>,
+    mut last_pos: Local<Option<Vec3>>,
     link: Res<NetLink>,
     player: Query<&Transform, With<crate::player::Player>>,
     camera: Query<&Transform, With<crate::player::PlayerCamera>>,
@@ -315,11 +344,23 @@ pub fn net_send(
     if *accumulator < interval {
         return;
     }
+    let dt_send = *accumulator; // temps réellement écoulé depuis le dernier envoi
     *accumulator = 0.0;
 
     let Ok(transform) = player.single() else {
         return;
     };
+    let pos = transform.translation;
+
+    // VRAIE vitesse : variation de position depuis le dernier paquet, divisée par
+    // le temps écoulé. On la connaît exactement ici (pas besoin de la deviner à la
+    // réception). Au tout premier envoi, on n'a pas de précédent → vitesse nulle.
+    let velocity = match *last_pos {
+        Some(prev) => (pos - prev) / dt_send,
+        None => Vec3::ZERO,
+    };
+    *last_pos = Some(pos);
+
     // L'orientation gauche/droite vit sur le corps (lacet = rotation autour de Y).
     let (yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
     // L'inclinaison haut/bas vit sur la tête/caméra (tangage = rotation autour de X).
@@ -331,9 +372,12 @@ pub fn net_send(
     let (r, g, b) = link.my_color;
     let me = PlayerState {
         id: link.my_id,
-        x: transform.translation.x,
-        y: transform.translation.y,
-        z: transform.translation.z,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        vx: velocity.x,
+        vy: velocity.y,
+        vz: velocity.z,
         yaw,
         pitch,
         r,
@@ -363,6 +407,7 @@ pub fn net_receive(
         let snap = Snapshot {
             t: now,
             pos: Vec3::new(state.x, state.y, state.z),
+            vel: Vec3::new(state.vx, state.vy, state.vz),
             yaw: state.yaw,
             pitch: state.pitch,
         };
@@ -453,7 +498,15 @@ pub fn net_receive(
             // on a ainsi tout de suite la bonne marge derrière le plus récent.
             avatars.map.insert(
                 state.id,
-                RemotePlayer { body, head: head_entity, buffer, clock: now - INTERP_DELAY },
+                RemotePlayer {
+                    body,
+                    head: head_entity,
+                    buffer,
+                    clock: now - INTERP_DELAY,
+                    smooth_vel: Vec3::ZERO,
+                    yaw_vel: 0.0,
+                    pitch_vel: 0.0,
+                },
             );
             println!("Nouveau joueur {} apparu.", state.id);
         }
@@ -471,11 +524,6 @@ pub fn net_interpolate(
     mut heads: Query<&mut Transform, (With<RemoteHead>, Without<RemoteAvatar>)>,
 ) {
     let dt = time.delta_secs();
-
-    // Facteur de lissage indépendant du nombre d'images/s : on parcourt une
-    // fraction du chemin restant à chaque image (≈ 63 % atteint en SMOOTH_TAU s).
-    // C'est lui qui absorbe une correction quand notre prédiction s'est trompée.
-    let blend = 1.0 - (-dt / SMOOTH_TAU).exp();
 
     for player in avatars.map.values_mut() {
         if player.buffer.is_empty() {
@@ -496,17 +544,19 @@ pub fn net_interpolate(
         let (pos, yaw, pitch) = sample(&player.buffer, player.clock);
 
         if let Ok(mut t) = bodies.get_mut(player.body) {
-            // RÉCONCILIATION : on glisse vers la cible au lieu d'y sauter. En régime
-            // normal la cible bouge à peine d'une image à l'autre → on la suit de
-            // près. Si elle a « sauté » (vrai paquet contredisant la prédiction),
-            // la correction se répartit en douceur sur quelques images.
-            t.translation = t.translation.lerp(pos, blend);
+            // RÉCONCILIATION par RESSORT AMORTI (SmoothDamp) : au lieu de glisser à
+            // taux fixe (qui traîne toujours derrière une cible en mouvement), le
+            // ressort tient compte de sa propre vitesse → il rattrape vite, SANS
+            // dépasser. Une correction (prédiction fausse) est absorbée en douceur.
+            t.translation = smooth_damp_vec3(t.translation, pos, &mut player.smooth_vel, dt);
             let current_yaw = t.rotation.to_euler(EulerRot::YXZ).0;
-            t.rotation = Quat::from_rotation_y(lerp_angle(current_yaw, yaw, blend));
+            let new_yaw = smooth_damp_angle(current_yaw, yaw, &mut player.yaw_vel, dt);
+            t.rotation = Quat::from_rotation_y(new_yaw);
         }
         if let Ok(mut t) = heads.get_mut(player.head) {
             let current_pitch = t.rotation.to_euler(EulerRot::XYZ).0;
-            t.rotation = Quat::from_rotation_x(lerp_angle(current_pitch, pitch, blend));
+            let new_pitch = smooth_damp_angle(current_pitch, pitch, &mut player.pitch_vel, dt);
+            t.rotation = Quat::from_rotation_x(new_pitch);
         }
     }
 }
@@ -535,21 +585,23 @@ fn sample(buf: &VecDeque<Snapshot>, t: f32) -> (Vec3, f32, f32) {
         }
     }
     // Au-delà du dernier instantané : la file est épuisée (paquet en retard ou
-    // perdu). PRÉDICTION : on prolonge le mouvement avec la vitesse mesurée sur
-    // les deux derniers points, le temps que le vrai paquet arrive.
+    // perdu). PRÉDICTION : on prolonge le mouvement, le temps que le vrai paquet
+    // arrive. On borne à MAX_EXTRAPOLATION pour ne pas partir n'importe où si le
+    // joueur s'est déconnecté d'un coup.
     let last = buf.back().unwrap();
-    if buf.len() < 2 {
-        return (last.pos, last.yaw, last.pitch); // pas d'historique => on tient
-    }
-    let prev = buf[buf.len() - 2];
-    let dt = (last.t - prev.t).max(1e-6);
-    // On borne la prédiction : au-delà, on a trop peu d'info pour deviner sans
-    // partir n'importe où (ex. le joueur s'est déconnecté d'un coup).
     let ahead = (t - last.t).min(MAX_EXTRAPOLATION);
-    let velocity = (last.pos - prev.pos) / dt; // mètres / seconde
-    let yaw_rate = shortest_diff(prev.yaw, last.yaw) / dt; // radians / seconde
-    let pos = last.pos + velocity * ahead;
-    let yaw = last.yaw + yaw_rate * ahead;
+    // Position : on prolonge avec la VRAIE vitesse reçue (Axe 1) — bien plus stable
+    // qu'une vitesse estimée sur deux points bruités.
+    let pos = last.pos + last.vel * ahead;
+    // Orientation : on n'envoie pas (encore) la vitesse de rotation, donc on
+    // l'estime sur les deux derniers points si on les a, sinon on tient l'angle.
+    let yaw = if buf.len() >= 2 {
+        let prev = buf[buf.len() - 2];
+        let dt = (last.t - prev.t).max(1e-6);
+        last.yaw + shortest_diff(prev.yaw, last.yaw) / dt * ahead
+    } else {
+        last.yaw
+    };
     (pos, yaw, last.pitch) // le tangage de tête, lui, on ne le prédit pas
 }
 
@@ -568,6 +620,38 @@ fn shortest_diff(a: f32, b: f32) -> f32 {
 /// Interpole entre deux angles par le plus court chemin.
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + shortest_diff(a, b) * t
+}
+
+/// RESSORT AMORTI (« SmoothDamp ») sur un nombre : fait avancer `current` vers
+/// `target` en gardant une vitesse interne `vel` (mise à jour au passage). Le
+/// résultat rejoint la cible de façon critique : vite, mais sans jamais dépasser.
+/// `SMOOTH_TIME` ≈ le temps mis pour ~rejoindre une cible immobile.
+/// (Formule de référence, celle de Unity — dérivée d'un ressort critique.)
+fn smooth_damp(current: f32, target: f32, vel: &mut f32, dt: f32) -> f32 {
+    let omega = 2.0 / SMOOTH_TIME.max(1e-4);
+    let x = omega * dt;
+    // Approximation rationnelle de e^-x (rapide et stable pour tout dt).
+    let exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
+    let change = current - target;
+    let temp = (*vel + omega * change) * dt;
+    *vel = (*vel - omega * temp) * exp;
+    target + (change + temp) * exp
+}
+
+/// Le ressort amorti appliqué composante par composante à un vecteur 3D.
+fn smooth_damp_vec3(current: Vec3, target: Vec3, vel: &mut Vec3, dt: f32) -> Vec3 {
+    Vec3::new(
+        smooth_damp(current.x, target.x, &mut vel.x, dt),
+        smooth_damp(current.y, target.y, &mut vel.y, dt),
+        smooth_damp(current.z, target.z, &mut vel.z, dt),
+    )
+}
+
+/// Le ressort amorti sur un angle : on « déplie » d'abord la cible vers le plus
+/// court chemin pour éviter le saut à ±180°, puis on lisse normalement.
+fn smooth_damp_angle(current: f32, target: f32, vel: &mut f32, dt: f32) -> f32 {
+    let unwrapped_target = current + shortest_diff(current, target);
+    smooth_damp(current, unwrapped_target, vel, dt)
 }
 
 /// Matériau de skin émissif (glow néon) pour les avatars distants.
