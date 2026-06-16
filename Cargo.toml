@@ -1,0 +1,17 @@
+[package]
+name = "jeu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Moteur de jeu, 100 % Rust. Feature "wayland" car la session est en Wayland.
+bevy = { version = "0.18.1", features = ["wayland"] }
+
+# On compile les dépendances (dont Bevy) en optimisé même en mode debug :
+# la première compilation est longue, mais le jeu tourne ensuite de façon fluide.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Notre propre code reste peu optimisé pour garder une compilation rapide.
+[profile.dev]
+opt-level = 1
