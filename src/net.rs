@@ -261,6 +261,8 @@ const SEND_HZ: f32 = 20.0; // paquets envoyés par seconde
 const INTERP_DELAY: f32 = 0.10; // on dessine 100 ms dans le passé
 const MAX_EXTRAPOLATION: f32 = 0.25; // on ne PRÉDIT jamais plus de 250 ms à l'aveugle
 const SMOOTH_TAU: f32 = 0.05; // douceur de la correction (s) : ↑ = plus lisse mais + de retard
+const CATCHUP_GAIN: f32 = 1.5; // réactivité de l'horloge de lecture au retard accumulé
+const MAX_WARP: f32 = 0.10; // accélère/ralentit la lecture de ±10 % max (invisible à l'œil)
 
 /// Un « instantané » reçu : où était le joueur distant, et À QUEL MOMENT on l'a
 /// reçu (horloge interne du jeu). On en garde plusieurs pour glisser entre eux.
@@ -278,6 +280,7 @@ struct RemotePlayer {
     body: Entity,
     head: Entity,
     buffer: VecDeque<Snapshot>,
+    clock: f32, // notre horloge de LECTURE perso (avance plus/moins vite que le temps réel)
 }
 
 /// Mémorise tous les joueurs distants connus, par identifiant.
@@ -446,9 +449,12 @@ pub fn net_receive(
 
             let mut buffer = VecDeque::new();
             buffer.push_back(snap);
-            avatars
-                .map
-                .insert(state.id, RemotePlayer { body, head: head_entity, buffer });
+            // On démarre l'horloge de lecture déjà en retard de INTERP_DELAY :
+            // on a ainsi tout de suite la bonne marge derrière le plus récent.
+            avatars.map.insert(
+                state.id,
+                RemotePlayer { body, head: head_entity, buffer, clock: now - INTERP_DELAY },
+            );
             println!("Nouveau joueur {} apparu.", state.id);
         }
     }
@@ -459,25 +465,35 @@ pub fn net_receive(
 /// qui transforme des paquets espacés et saccadés en un mouvement fluide.
 pub fn net_interpolate(
     time: Res<Time>,
-    avatars: Res<RemoteAvatars>,
+    mut avatars: ResMut<RemoteAvatars>,
     // Corps et tête sont deux `Transform` : on sépare les requêtes avec `Without`.
     mut bodies: Query<&mut Transform, (With<RemoteAvatar>, Without<RemoteHead>)>,
     mut heads: Query<&mut Transform, (With<RemoteHead>, Without<RemoteAvatar>)>,
 ) {
-    // Le moment qu'on veut dessiner : un peu dans le passé, pour avoir de la marge.
-    let render_t = time.elapsed_secs() - INTERP_DELAY;
+    let dt = time.delta_secs();
 
     // Facteur de lissage indépendant du nombre d'images/s : on parcourt une
     // fraction du chemin restant à chaque image (≈ 63 % atteint en SMOOTH_TAU s).
     // C'est lui qui absorbe une correction quand notre prédiction s'est trompée.
-    let blend = 1.0 - (-time.delta_secs() / SMOOTH_TAU).exp();
+    let blend = 1.0 - (-dt / SMOOTH_TAU).exp();
 
-    for player in avatars.map.values() {
+    for player in avatars.map.values_mut() {
         if player.buffer.is_empty() {
             continue;
         }
+
+        // --- HORLOGE DE LECTURE ADAPTATIVE (l'idée « à la Discord ») ----------
+        // On veut rester ~INTERP_DELAY derrière le paquet le plus récent. Si on a
+        // pris du retard (la file s'allonge devant nous), on lit un peu plus vite
+        // pour rattraper ; si on risque la disette, on lit plus lentement. Le tout
+        // borné à ±MAX_WARP : l'avatar suit toujours son vrai chemin, sans sauter.
+        let newest = player.buffer.back().unwrap().t;
+        let lead = newest - player.clock; // de combien la file est en avance sur nous
+        let warp = (CATCHUP_GAIN * (lead - INTERP_DELAY)).clamp(-MAX_WARP, MAX_WARP);
+        player.clock += dt * (1.0 + warp);
+
         // La CIBLE : interpolée si on a les deux points, prédite (extrapolée) sinon.
-        let (pos, yaw, pitch) = sample(&player.buffer, render_t);
+        let (pos, yaw, pitch) = sample(&player.buffer, player.clock);
 
         if let Ok(mut t) = bodies.get_mut(player.body) {
             // RÉCONCILIATION : on glisse vers la cible au lieu d'y sauter. En régime

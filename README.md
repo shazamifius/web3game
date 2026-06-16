@@ -84,9 +84,13 @@ anti-triche).
       instantanés qui l'entourent. Quand la file est épuisée (paquet en retard
       ou perdu), on **prédit** la suite par extrapolation de la vitesse
       (*dead reckoning*) au lieu de figer l'avatar, puis on **réconcilie** en
-      douceur quand le vrai paquet arrive. Réglages dans `net.rs` :
-      `INTERP_DELAY`, `MAX_EXTRAPOLATION`, `SMOOTH_TAU`. Se teste avec
-      `tc netem`. *(fait)*
+      douceur quand le vrai paquet arrive. **Horloge de lecture adaptative**
+      (dilatation temporelle « à la Discord ») : chaque avatar a sa propre
+      horloge qui avance plus vite quand on est en retard / plus lentement
+      quand on risque la disette (±10 % max), pour rattraper en marchant le
+      vrai chemin au lieu de téléporter. Réglages dans `net.rs` :
+      `INTERP_DELAY`, `MAX_EXTRAPOLATION`, `SMOOTH_TAU`, `CATCHUP_GAIN`,
+      `MAX_WARP`. Se teste avec `tc netem`. *(fait)*
 
       > Note de conception : prédiction faite **à la main** (vitesse depuis
       > l'historique), pas par réseau de neurones — la physique de l'inertie
