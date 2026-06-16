@@ -41,6 +41,18 @@ nix-shell --run "cargo run -- net-demo a"
 nix-shell --run "cargo run -- net-demo b"
 ```
 
+**Développer avec relance automatique** (le jeu se recompile et redémarre à
+chaque sauvegarde — confort de dev, via `cargo-watch`) :
+
+```fish
+nix-shell --run "cargo watch -x 'run -- a'"     # terminal 1
+nix-shell --run "cargo watch -x 'run -- b'"     # terminal 2
+```
+
+> La fenêtre se ferme/rouvre à chaque reload (la position est donc remise à
+> zéro, et un clic gauche recapture la souris). C'est de la relance auto, pas du
+> hot-patch : largement suffisant pour régler le netcode.
+
 ### Contrôles
 | Touche        | Action                          |
 |---------------|---------------------------------|

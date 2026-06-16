@@ -6,7 +6,8 @@
 
 pkgs.mkShell {
   # Outils nécessaires à la compilation (trouvent alsa/udev via pkg-config).
-  nativeBuildInputs = [ pkgs.pkg-config ];
+  # cargo-watch : relance automatiquement le jeu à chaque sauvegarde de fichier.
+  nativeBuildInputs = [ pkgs.pkg-config pkgs.cargo-watch ];
 
   buildInputs = [
     pkgs.alsa-lib        # audio
