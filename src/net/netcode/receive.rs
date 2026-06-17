@@ -12,7 +12,7 @@ use super::state::{
 };
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
-use crate::net::message::{decode, decode_relay, encode};
+use crate::net::message::{decode, decode_relay, encode, PlayerState};
 use crate::net::orb::{apply_incoming, decode_orb, Orb};
 use crate::net::punch::{decode_punch, Holes};
 use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME};
@@ -60,12 +60,18 @@ pub fn net_receive(
             //     SON avatar : on n'est qu'un porteur d'octets, pas une autorité. ---
             Some(KIND_RELAY) => {
                 if let Some(state) = decode_relay(&bytes) {
+                    // 1) on RECOPIE à nos voisins (sauf l'auteur) — rôle de porteur.
                     let relayed = encode(&state);
                     for (id, addr) in &link.peers {
                         if *id != state.id {
                             let _ = link.socket.send_to(*addr, &relayed);
                         }
                     }
+                    // 2) on l'affiche AUSSI chez nous : le parent voit son protégé.
+                    ingest_state(
+                        state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                        &mut meshes, &mut materials,
+                    );
                 }
             }
             // --- État de l'orbe : seul le maître l'émet. On l'accepte si elle
@@ -77,44 +83,11 @@ pub fn net_receive(
             }
             // --- État d'un pair : on le range pour l'interpolation -------------
             Some(KIND_STATE) => {
-                let Some(state) = decode(&bytes) else { continue };
-                if Some(state.id) == link.my_id {
-                    continue; // jamais notre propre avatar
-                }
-                // Recevoir un état prouve aussi que le trou est ouvert (au cas où
-                // le PUNCH serait passé inaperçu) : on le marque ouvert sans bruit.
-                holes.map.entry(state.id).or_default().open = true;
-                let snap = Snapshot {
-                    t: now,
-                    pos: Vec3::new(state.x, state.y, state.z),
-                    vel: Vec3::new(state.vx, state.vy, state.vz),
-                    yaw: state.yaw,
-                    pitch: state.pitch,
-                };
-                if let Some(player) = avatars.map.get_mut(&state.id) {
-                    // Avatar déjà connu : on empile l'instantané (~1 s d'historique).
-                    player.buffer.push_back(snap);
-                    while player.buffer.len() > 2 && now - player.buffer.front().unwrap().t > 1.0 {
-                        player.buffer.pop_front();
-                    }
-                } else {
-                    // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
-                    let parts = spawn_avatar(&mut commands, &mut meshes, &mut materials, &state);
-                    let mut buffer = VecDeque::new();
-                    buffer.push_back(snap);
-                    avatars.map.insert(
-                        state.id,
-                        RemotePlayer {
-                            body: parts.0,
-                            head: parts.1,
-                            buffer,
-                            clock: now - INTERP_DELAY,
-                            smooth_vel: Vec3::ZERO,
-                            yaw_vel: 0.0,
-                            pitch_vel: 0.0,
-                        },
+                if let Some(state) = decode(&bytes) {
+                    ingest_state(
+                        state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                        &mut meshes, &mut materials,
                     );
-                    println!("Nouveau joueur {} apparu.", state.id);
                 }
             }
             _ => {}
@@ -134,6 +107,62 @@ pub fn net_receive(
         }
         keep
     });
+}
+
+/// Range un état reçu (direct ou relayé) : marque le trou ouvert, empile
+/// l'instantané dans la file du joueur, et crée son avatar au premier paquet.
+/// Mutualisé entre `KIND_STATE` (état direct) et `KIND_RELAY` (état recopié par un
+/// parent) pour que le traitement soit identique — y compris chez le parent, qui
+/// doit voir son protégé comme n'importe quel autre joueur.
+#[allow(clippy::too_many_arguments)]
+fn ingest_state(
+    state: PlayerState,
+    now: f32,
+    my_id: Option<u8>,
+    holes: &mut Holes,
+    avatars: &mut RemoteAvatars,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    if Some(state.id) == my_id {
+        return; // jamais notre propre avatar
+    }
+    // Recevoir un état prouve aussi que le trou est ouvert (au cas où le PUNCH
+    // serait passé inaperçu) : on le marque ouvert sans bruit.
+    holes.map.entry(state.id).or_default().open = true;
+    let snap = Snapshot {
+        t: now,
+        pos: Vec3::new(state.x, state.y, state.z),
+        vel: Vec3::new(state.vx, state.vy, state.vz),
+        yaw: state.yaw,
+        pitch: state.pitch,
+    };
+    if let Some(player) = avatars.map.get_mut(&state.id) {
+        // Avatar déjà connu : on empile l'instantané (~1 s d'historique).
+        player.buffer.push_back(snap);
+        while player.buffer.len() > 2 && now - player.buffer.front().unwrap().t > 1.0 {
+            player.buffer.pop_front();
+        }
+    } else {
+        // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
+        let parts = spawn_avatar(commands, meshes, materials, &state);
+        let mut buffer = VecDeque::new();
+        buffer.push_back(snap);
+        avatars.map.insert(
+            state.id,
+            RemotePlayer {
+                body: parts.0,
+                head: parts.1,
+                buffer,
+                clock: now - INTERP_DELAY,
+                smooth_vel: Vec3::ZERO,
+                yaw_vel: 0.0,
+                pitch_vel: 0.0,
+            },
+        );
+        println!("Nouveau joueur {} apparu.", state.id);
+    }
 }
 
 /// Crée l'avatar 3D d'un joueur distant (corps articulé + tête à nez directionnel).
