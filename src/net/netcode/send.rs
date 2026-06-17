@@ -4,7 +4,8 @@
 //!   2) NOTRE état (position, vraie vitesse, orientation, couleur) à TOUS les
 //!      pairs connus, à débit limité (SEND_HZ fois/s).
 
-use super::state::SEND_HZ;
+use super::state::{RemoteAvatars, SEND_HZ};
+use crate::net::aoi::{FULL_BUDGET, REDUCE_FACTOR};
 use crate::net::control::encode_hello;
 use crate::net::link::NetLink;
 use crate::net::message::{encode, PlayerState};
@@ -15,7 +16,9 @@ pub fn net_send(
     mut send_acc: Local<f32>,
     mut hello_acc: Local<f32>,
     mut last_pos: Local<Option<Vec3>>,
+    mut tick: Local<u32>,
     link: Res<NetLink>,
+    avatars: Res<RemoteAvatars>,
     player: Query<&Transform, With<crate::player::Player>>,
     camera: Query<&Transform, With<crate::player::PlayerCamera>>,
 ) {
@@ -32,8 +35,7 @@ pub fn net_send(
     *hello_acc += dt;
     if *hello_acc >= 1.0 {
         *hello_acc = 0.0;
-        let cell = crate::net::aoi::cell_of(pos.x, pos.z);
-        let _ = link.socket.send_to(link.rendezvous, &encode_hello(cell));
+        let _ = link.socket.send_to(link.rendezvous, &encode_hello(pos.x, pos.z));
     }
 
     // 2) Notre état vers tous les pairs VOISINS (SEND_HZ/s). On accumule le temps
@@ -80,8 +82,32 @@ pub fn net_send(
         b,
     };
     let bytes = encode(&me);
-    // Un même paquet, envoyé à CHAQUE pair (le P2P en étoile, depuis nous).
-    for addr in link.peers.values() {
-        let _ = link.socket.send_to(*addr, &bytes);
+
+    // BUDGET DE PRIORITÉ : on classe les pairs par distance (on lit leur dernière
+    // position connue dans leur file d'instantanés), puis on donne le plein débit
+    // aux FULL_BUDGET plus proches, et un débit réduit (1 paquet sur REDUCE_FACTOR)
+    // aux plus lointains. Une foule ne coûte donc jamais plus qu'un budget fixe.
+    let me_xz = (pos.x, pos.z);
+    let mut ranked: Vec<(_, f32)> = link
+        .peers
+        .iter()
+        .map(|(id, addr)| {
+            let d2 = avatars
+                .map
+                .get(id)
+                .and_then(|p| p.buffer.back())
+                .map(|s| crate::net::aoi::dist2(me_xz, (s.pos.x, s.pos.z)))
+                .unwrap_or(0.0); // pair encore inconnu → priorité haute, pour le découvrir
+            (*addr, d2)
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    *tick = tick.wrapping_add(1);
+    for (rank, (addr, _)) in ranked.iter().enumerate() {
+        let full = rank < FULL_BUDGET;
+        if full || *tick % REDUCE_FACTOR == 0 {
+            let _ = link.socket.send_to(*addr, &bytes);
+        }
     }
 }

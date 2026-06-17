@@ -1,26 +1,36 @@
-//! AREA OF INTEREST (« zone d'intérêt ») : on ne se synchronise qu'avec les
-//! joueurs PROCHES, pas avec tout le monde.
+//! AREA OF INTEREST par PERTINENCE (pas par grille).
 //!
-//! On découpe le monde en cases carrées. Un joueur ne « voit » sur le réseau que
-//! les joueurs de sa case et des 8 cases adjacentes (un bloc 3×3 autour de lui).
-//! Résultat : chacun ne parle qu'à ~une poignée de voisins au lieu de TOUS →
-//! on passe d'un coût en O(N²) (chacun parle à chacun) à ~O(N).
+//! On ne synchronise pas « les gens de ma case » mais « les gens que je peux
+//! réellement percevoir », classés par **distance**. Deux niveaux :
 //!
-//! Ici la salle est petite (12 m), donc les cases sont volontairement petites
-//! pour que l'effet soit VISIBLE : un joueur à un coin ne voit pas celui du coin
-//! opposé. Dans un vrai grand monde, on choisirait des cases à la bonne échelle.
+//!   1) RAYON (côté rendez-vous) : il ne te donne que les joueurs dans un cercle
+//!      autour de toi — un seuil DOUX et symétrique, pas un carré arbitraire.
+//!   2) BUDGET DE PRIORITÉ (côté client) : parmi ces voisins, tu donnes le plein
+//!      débit aux plus PROCHES (jusqu'à FULL_BUDGET), et un débit réduit aux
+//!      plus lointains. Résultat : une foule ne te coûte jamais plus qu'un budget
+//!      fixe, et l'expérience se dégrade en douceur au lieu d'un mur dedans/dehors.
+//!
+//! La grille reste utile ailleurs, mais seulement comme INDEX rapide — jamais
+//! comme la règle. Ici la règle, c'est la distance.
 
-/// Côté d'une case, en mètres.
-pub(crate) const CELL_SIZE: f32 = 4.0;
+/// Rayon de perception (m) : au-delà, le rendez-vous ne te parle plus du joueur.
+pub(crate) const AOI_RADIUS: f32 = 8.0;
+/// Nombre de voisins servis à plein débit (les plus proches). Au-delà : réduit.
+pub(crate) const FULL_BUDGET: usize = 8;
+/// Les voisins « lointains » reçoivent 1 paquet sur REDUCE_FACTOR (débit réduit).
+pub(crate) const REDUCE_FACTOR: u32 = 4;
 
-/// La case (colonne, ligne) qui contient la position (x, z).
-pub(crate) fn cell_of(x: f32, z: f32) -> (i8, i8) {
-    ((x / CELL_SIZE).floor() as i8, (z / CELL_SIZE).floor() as i8)
+/// Distance au carré entre deux positions (x, z). On évite la racine carrée :
+/// pour comparer/trier des distances, le carré suffit (et c'est moins cher).
+pub(crate) fn dist2(a: (f32, f32), b: (f32, f32)) -> f32 {
+    let dx = a.0 - b.0;
+    let dz = a.1 - b.1;
+    dx * dx + dz * dz
 }
 
-/// Deux cases sont-elles voisines (la même, ou adjacentes — bloc 3×3) ?
-pub(crate) fn is_neighbor(a: (i8, i8), b: (i8, i8)) -> bool {
-    (a.0 - b.0).abs() <= 1 && (a.1 - b.1).abs() <= 1
+/// Deux positions sont-elles à portée de perception (dans le rayon) ?
+pub(crate) fn within_radius(a: (f32, f32), b: (f32, f32)) -> bool {
+    dist2(a, b) <= AOI_RADIUS * AOI_RADIUS
 }
 
 #[cfg(test)]
@@ -28,19 +38,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cases_et_voisinage() {
-        // Centre de la salle, puis deux coins opposés (salle de 12 m, cases de 4 m).
-        assert_eq!(cell_of(0.0, 0.0), (0, 0));
-        assert_eq!(cell_of(-6.0, 5.9), (-2, 1));
-        assert_eq!(cell_of(5.9, -6.0), (1, -2));
-
-        // Même case et cases adjacentes = voisins.
-        assert!(is_neighbor((0, 0), (0, 0)));
-        assert!(is_neighbor((0, 0), (1, 1)));
-        assert!(is_neighbor((0, 0), (-1, 1)));
-
-        // Deux cases d'écart (coins opposés de la salle) = PAS voisins → filtrés.
-        assert!(!is_neighbor((-2, -2), (1, 1)));
-        assert!(!is_neighbor((0, 0), (2, 0)));
+    fn rayon_et_distance() {
+        // Triangle 3-4-5 : distance 5 < 8 → à portée.
+        assert!(within_radius((0.0, 0.0), (3.0, 4.0)));
+        // Coins opposés de la salle (12 m) : ~17 m → hors portée.
+        assert!(!within_radius((-6.0, -6.0), (6.0, 6.0)));
+        // Le tri du budget de priorité s'appuie sur dist2 : plus proche = plus petit.
+        assert!(dist2((0.0, 0.0), (1.0, 0.0)) < dist2((0.0, 0.0), (5.0, 0.0)));
     }
 }

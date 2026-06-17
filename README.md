@@ -155,12 +155,15 @@ anti-triche).
         et envoie son état directement à tous les pairs. Plus de « 2 pairs codés
         en dur » → autant de joueurs qu'on veut.
       - [ ] NAT, STUN, hole-punching (se connecter entre vraies machines).
-      - [x] **Area of Interest** (AoI) : le monde est découpé en cases
-        (`net/aoi.rs`, 4 m). Chaque client annonce sa case dans le HELLO ; le
-        rendez-vous ne lui renvoie que les **voisins** (sa case + les 8
-        adjacentes). On ne parle donc qu'aux proches → O(N²) ramené à ~O(N).
-        Visible en jeu : éloigne-toi à un coin opposé, l'avatar de l'autre
-        disparaît (hors zone) ; reviens, il réapparaît.
+      - [x] **Area of Interest par pertinence** (`net/aoi.rs`) : on ne parle
+        qu'aux joueurs qu'on peut percevoir, classés par **distance** (pas une
+        grille carrée). Deux niveaux : (1) le HELLO porte la **position** et le
+        rendez-vous ne renvoie que les joueurs dans un **rayon** (cercle doux) ;
+        (2) côté client, **budget de priorité** — plein débit aux `FULL_BUDGET`
+        plus proches, débit réduit (`REDUCE_FACTOR`) aux lointains. Une foule
+        coûte donc un budget fixe, et ça se dégrade en douceur. Réglages :
+        `AOI_RADIUS`, `FULL_BUDGET`, `REDUCE_FACTOR`. Visible : éloigne-toi,
+        l'avatar de l'autre disparaît hors rayon ; reviens, il réapparaît.
 - [ ] **Chapitre 4 — Autorité & migration d'hôte**
       Modèle **Own + Shields** (1 hôte + 3 vérificateurs = BFT 3f+1). Élection,
       détection de panne, migration sans coupure (problème du *split-brain*).

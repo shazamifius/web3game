@@ -8,7 +8,7 @@
 //!
 //! Lancement :  cargo run -- rendezvous
 
-use super::aoi::is_neighbor;
+use super::aoi::within_radius;
 use super::control::{decode_hello, encode_welcome};
 use super::skin::random_hue;
 use super::transport::Socket;
@@ -16,6 +16,16 @@ use super::wire::RENDEZVOUS_PORT;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+
+/// Ce que le rendez-vous retient d'un client : son id, sa dernière activité, sa
+/// position (pour l'AoI), et son dernier nombre de voisins (pour ne logger qu'au
+/// changement).
+struct ClientInfo {
+    id: u8,
+    seen: Instant,
+    pos: (f32, f32),
+    last_count: usize,
+}
 
 pub fn run_rendezvous() {
     let socket = match Socket::bind(RENDEZVOUS_PORT) {
@@ -32,49 +42,48 @@ pub fn run_rendezvous() {
         "Rendez-vous : écoute sur 127.0.0.1:{RENDEZVOUS_PORT} (couleur de salle : teinte {world_hue}°). En attente de joueurs…"
     );
 
-    // Pour chaque client : son id, la dernière fois qu'on l'a vu, et sa case (AoI).
-    let mut clients: HashMap<SocketAddr, (u8, Instant, (i8, i8))> = HashMap::new();
+    let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
     let mut next_id: u8 = 1;
 
     loop {
         for (from, bytes) in socket.poll() {
-            // HELLO porte la case du joueur ; on s'en sert pour l'Area of Interest.
-            let Some(cell) = decode_hello(&bytes) else {
+            // HELLO porte la position du joueur ; on s'en sert pour l'Area of Interest.
+            let Some(pos) = decode_hello(&bytes) else {
                 continue; // le rendez-vous ne comprend que HELLO
             };
             let now = Instant::now();
             // Nouveau venu ? On lui donne le prochain identifiant libre.
-            // `changed` = il a aussi changé de case depuis la dernière fois.
-            let (id, changed) = match clients.get(&from) {
-                Some((id, _, old_cell)) => (*id, *old_cell != cell),
+            let (id, last_count) = match clients.get(&from) {
+                Some(info) => (info.id, info.last_count),
                 None => {
                     let id = next_id;
                     next_id = next_id.checked_add(1).unwrap_or(1);
                     println!("Joueur {id} rejoint ({from}).");
-                    (id, true)
+                    (id, usize::MAX) // force le log au premier roster
                 }
             };
-            clients.insert(from, (id, now, cell));
 
-            // AREA OF INTEREST : on ne renvoie que les VOISINS (même case ou case
-            // adjacente), pas tout le monde. C'est ça qui fait tenir la charge.
+            // AREA OF INTEREST : on ne renvoie que les joueurs dans le RAYON de
+            // perception (un cercle), pas tout le monde. C'est ça qui tient la charge.
             let roster: Vec<(u8, SocketAddr)> = clients
                 .iter()
-                .filter(|(addr, (_, _, c))| **addr != from && is_neighbor(*c, cell))
-                .map(|(addr, (id, _, _))| (*id, *addr))
+                .filter(|(addr, info)| **addr != from && within_radius(info.pos, pos))
+                .map(|(addr, info)| (info.id, *addr))
                 .collect();
-            if changed {
-                println!("Joueur {id} en case {cell:?} : {} voisin(s).", roster.len());
+
+            if roster.len() != last_count {
+                println!("Joueur {id} : {} a portee.", roster.len());
             }
+            clients.insert(from, ClientInfo { id, seen: now, pos, last_count: roster.len() });
             let _ = socket.send_to(from, &encode_welcome(id, world_hue, &roster));
         }
 
         // On oublie les clients silencieux depuis plus de 5 s (déconnectés).
         let now = Instant::now();
-        clients.retain(|addr, (id, seen, _)| {
-            let keep = now.duration_since(*seen) < Duration::from_secs(5);
+        clients.retain(|addr, info| {
+            let keep = now.duration_since(info.seen) < Duration::from_secs(5);
             if !keep {
-                println!("Joueur {id} parti ({addr}).");
+                println!("Joueur {} parti ({addr}).", info.id);
             }
             keep
         });

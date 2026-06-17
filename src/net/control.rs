@@ -7,18 +7,24 @@
 use super::wire::{KIND_HELLO, KIND_WELCOME};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-/// Fabrique un paquet HELLO : type + la case (colonne, ligne) du joueur. Le
-/// rendez-vous s'en sert pour ne renvoyer que les voisins (Area of Interest).
-pub(crate) fn encode_hello(cell: (i8, i8)) -> [u8; 3] {
-    [KIND_HELLO, cell.0 as u8, cell.1 as u8]
+/// Fabrique un paquet HELLO : type + la POSITION (x, z) du joueur. Le rendez-vous
+/// s'en sert pour ne renvoyer que les joueurs dans le rayon de perception (AoI).
+pub(crate) fn encode_hello(x: f32, z: f32) -> [u8; 9] {
+    let mut b = [0u8; 9];
+    b[0] = KIND_HELLO;
+    b[1..5].copy_from_slice(&x.to_le_bytes());
+    b[5..9].copy_from_slice(&z.to_le_bytes());
+    b
 }
 
-/// Lit un paquet HELLO : renvoie la case (colonne, ligne) annoncée.
-pub(crate) fn decode_hello(buf: &[u8]) -> Option<(i8, i8)> {
-    if buf.len() < 3 || buf[0] != KIND_HELLO {
+/// Lit un paquet HELLO : renvoie la position (x, z) annoncée.
+pub(crate) fn decode_hello(buf: &[u8]) -> Option<(f32, f32)> {
+    if buf.len() < 9 || buf[0] != KIND_HELLO {
         return None;
     }
-    Some((buf[1] as i8, buf[2] as i8))
+    let x = f32::from_le_bytes(buf[1..5].try_into().ok()?);
+    let z = f32::from_le_bytes(buf[5..9].try_into().ok()?);
+    Some((x, z))
 }
 
 /// Fabrique un paquet WELCOME : type + ton_id + teinte_du_monde (2o) + nombre +
