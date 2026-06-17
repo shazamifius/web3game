@@ -35,11 +35,14 @@ nix-shell --run "cargo run -- rendezvous"   # terminal 1  (l'annuaire — à lan
 nix-shell --run "cargo run -- a"            # terminal 2  (un joueur)
 nix-shell --run "cargo run -- b"            # terminal 3  (un autre)
 nix-shell --run "cargo run -- play"         # terminal 4  (… et autant qu'on veut)
+nix-shell --run "cargo run -- weak"         # un client à FAIBLE upload (passe par un relais)
 ```
 
 Les identifiants sont attribués par le rendez-vous (plus de rôle codé en dur) ;
 chaque client prend un port libre tout seul. `a`, `b`, `play`, `client` font
-tous la même chose : lancer un client.
+tous la même chose : lancer un client. `weak` lance un client à **faible upload** :
+il n'émet plus son état à tous, mais une seule fois à un **parent** (relais) qui le
+recopie aux autres à sa place (chapitre 4.1).
 
 > 💡 **Indice de connexion** : la **couleur de la salle** est donnée par le
 > serveur de rendez-vous. Deux fenêtres de **même couleur** = connectées au même
@@ -211,12 +214,19 @@ anti-triche).
         la version → un éventuel **split-brain** (l'ancien maître réapparaît) se
         résout tout seul (sa version est plus basse → il abdique via `supersedes`).
         Se voit en tuant la fenêtre du maître pendant que l'orbe vole.
-      - [ ] **Relais / « parent »** pour les connexions faibles *(chapitre 4.1)* :
-        un joueur à faible débit montant envoie **1 seul** message à un voisin bien
-        connecté, qui le **retransmet** aux ~10 autres à sa place. Un relais par
-        recoin (≈ 10 joueurs) → des milliers de relais, aucun goulot. ⚠️ Le relais
+      - [x] **Relais / « parent »** pour les connexions faibles *(chapitre 4.1)* :
+        un client lancé en mode `weak` (faible débit montant) n'émet plus son état
+        à tous ses pairs — il l'envoie **une seule fois** à un **parent** (le plus
+        petit id joignable), dans un paquet `KIND_RELAY`. Le parent le **recopie**
+        en `KIND_STATE` à ses propres voisins. L'**id dans le paquet reste celui de
+        l'auteur** (pas du relayeur) → ses voisins le rangent sous SON avatar : le
+        parent n'est qu'un **porteur d'octets**. Économie : **1 envoi au lieu de N**
+        (le *download* reste direct — on continue de recevoir tout le monde, ce qui
+        colle à une vraie 4G : upload faible, download correct). Un parent par recoin
+        (≈ 10 joueurs) → des milliers de relais, aucun goulot. ⚠️ Le relais
         **recopie** (transport), il n'**arbitre** pas (autorité) : deux rôles
-        distincts (cf. *Own ≠ Relais* plus bas).
+        distincts (cf. *Own ≠ Relais* plus bas). Sécurité (chap. 5) : le faible
+        **signera** son état pour que le parent ne puisse pas le falsifier.
       - [ ] **Shields** (témoins) : vérification **périodique** d'un Own d'objet/zone
         pour empêcher un maître local de tricher (passerelle vers le chapitre 5).
 - [ ] **Chapitre 5 — Confiance & anti-triche**

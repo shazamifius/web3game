@@ -8,7 +8,7 @@ use super::state::{RemoteAvatars, SEND_HZ};
 use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::link::NetLink;
-use crate::net::message::{encode, PlayerState};
+use crate::net::message::{encode, encode_relay, PlayerState};
 use crate::net::punch::Holes;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -84,6 +84,23 @@ pub fn net_send(
         g,
         b,
     };
+    // MODE FAIBLE UPLOAD : on n'émet PAS à tous les pairs. On envoie une seule fois
+    // notre état à un PARENT (relais), qui le recopiera à nos voisins à notre place.
+    // Parent choisi : le plus petit id joignable (trou ouvert). Économie : 1 envoi au
+    // lieu de N. (Le download reste direct : on continue de recevoir tout le monde.)
+    if link.weak {
+        let relay = encode_relay(&me);
+        let parent = link
+            .peers
+            .iter()
+            .filter(|(id, _)| holes.map.get(id).map_or(false, |h| h.open))
+            .min_by_key(|(id, _)| **id);
+        if let Some((_, addr)) = parent {
+            let _ = link.socket.send_to(*addr, &relay);
+        }
+        return;
+    }
+
     let bytes = encode(&me);
     let me_xz = (pos.x, pos.z);
 

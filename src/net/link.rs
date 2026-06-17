@@ -18,18 +18,22 @@ pub struct NetLink {
     pub(crate) my_color: (f32, f32, f32),
     pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<u8, SocketAddr>, // les autres joueurs : id → adresse
+    pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
 impl NetLink {
     /// Prépare le réseau d'un client : prise sur un port éphémère (choisi par
-    /// l'OS), et adresse du rendez-vous local.
-    pub fn new(color: (f32, f32, f32)) -> std::io::Result<NetLink> {
+    /// l'OS), et adresse du rendez-vous local. `weak` = mode « faible upload » :
+    /// on n'émet plus son état à tous les pairs, mais une seule fois à un parent
+    /// (relais) qui le recopie à notre place.
+    pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
         let rendezvous = rendezvous_addr();
         println!(
-            "Client réseau : port local {}, rendez-vous {}.",
+            "Client réseau : port local {}, rendez-vous {}{}.",
             socket.local_addr()?,
-            rendezvous
+            rendezvous,
+            if weak { " (faible upload : via un parent)" } else { "" }
         );
         Ok(NetLink {
             socket,
@@ -38,6 +42,7 @@ impl NetLink {
             my_color: color,
             world_hue: None,
             peers: HashMap::new(),
+            weak,
         })
     }
 }

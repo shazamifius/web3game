@@ -77,9 +77,16 @@ fn main() {
     // Mode multijoueur : `cargo run -- a` (ou `b`, `play`…) sur le même PC.
     // Tous ces arguments lancent un CLIENT (l'identifiant vient du rendez-vous,
     // plus de rôle codé en dur). Sans argument, le jeu reste solo (aucun réseau).
-    let is_client = matches!(mode, Some("a") | Some("b") | Some("play") | Some("client"));
+    // `weak` = un client à faible upload : il émet son état via un parent (relais)
+    // au lieu de le diffuser à tous (chapitre 4.1). Sert à tester le relais sans
+    // avoir réellement une mauvaise connexion.
+    let is_client = matches!(
+        mode,
+        Some("a") | Some("b") | Some("play") | Some("client") | Some("weak")
+    );
+    let is_weak = mode == Some("weak");
     if is_client {
-        match net::NetLink::new(my_color) {
+        match net::NetLink::new(my_color, is_weak) {
             Ok(link) => {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()

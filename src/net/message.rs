@@ -6,7 +6,7 @@
 //! Le 1er octet est le TYPE de paquet (`KIND_STATE`) : il distingue un état de
 //! joueur des messages d'annuaire (voir `wire`/`control`).
 
-use super::wire::KIND_STATE;
+use super::wire::{KIND_RELAY, KIND_STATE};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id`), où (`x,y,z`), à quelle
 /// vitesse il va (`vx,vy,vz`), comment il est orienté (`yaw,pitch`) et de quelle
@@ -51,6 +51,28 @@ pub(crate) fn encode(p: &PlayerState) -> [u8; STATE_SIZE] {
     buf[38..42].copy_from_slice(&p.g.to_le_bytes());
     buf[42..46].copy_from_slice(&p.b.to_le_bytes());
     buf
+}
+
+/// Variante RELAYÉE : exactement le même état, mais avec l'octet de tête
+/// `KIND_RELAY`. Un joueur à faible upload l'envoie à son parent pour dire
+/// « recopie ça à mes voisins » (cf. `net/netcode`). Le parent le ré-émet ensuite
+/// en `KIND_STATE` ordinaire — l'`id` reste celui de l'auteur, pas du relayeur.
+pub(crate) fn encode_relay(p: &PlayerState) -> [u8; STATE_SIZE] {
+    let mut buf = encode(p);
+    buf[0] = KIND_RELAY; // seul l'octet de type change ; tout le reste est identique
+    buf
+}
+
+/// Décode un paquet RELAY (même corps qu'un état, type `KIND_RELAY`).
+pub(crate) fn decode_relay(buf: &[u8]) -> Option<PlayerState> {
+    if buf.len() < STATE_SIZE || buf[0] != KIND_RELAY {
+        return None;
+    }
+    // Le corps est identique à un état : on rebascule l'octet de tête et on réutilise
+    // `decode` pour ne pas dupliquer la lecture des 11 nombres.
+    let mut tmp = buf[..STATE_SIZE].to_vec();
+    tmp[0] = KIND_STATE;
+    decode(&tmp)
 }
 
 /// L'inverse : reconstruire un `PlayerState` à partir des octets reçus.

@@ -12,10 +12,10 @@ use super::state::{
 };
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
-use crate::net::message::decode;
+use crate::net::message::{decode, decode_relay, encode};
 use crate::net::orb::{apply_incoming, decode_orb, Orb};
 use crate::net::punch::{decode_punch, Holes};
-use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_STATE, KIND_WELCOME};
+use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -51,6 +51,20 @@ pub fn net_receive(
                     if !hole.open {
                         hole.open = true;
                         println!("Trou OUVERT avec le pair {id} ! Connexion directe établie.");
+                    }
+                }
+            }
+            // --- RELAY d'un joueur à faible upload (W) : on est son PARENT. On
+            //     RECOPIE son état à tous nos pairs (sauf W lui-même), ré-émis en
+            //     KIND_STATE. L'id reste celui de W → ses voisins le rangent sous
+            //     SON avatar : on n'est qu'un porteur d'octets, pas une autorité. ---
+            Some(KIND_RELAY) => {
+                if let Some(state) = decode_relay(&bytes) {
+                    let relayed = encode(&state);
+                    for (id, addr) in &link.peers {
+                        if *id != state.id {
+                            let _ = link.socket.send_to(*addr, &relayed);
+                        }
                     }
                 }
             }
