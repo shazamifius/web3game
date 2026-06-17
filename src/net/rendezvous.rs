@@ -63,8 +63,10 @@ pub fn run_rendezvous() {
                 }
             };
 
-            // AREA OF INTEREST : on ne renvoie que les joueurs dans le RAYON de
-            // perception (un cercle), pas tout le monde. C'est ça qui tient la charge.
+            // Borne GROSSIÈRE de candidats : on ne garde que les joueurs dans un
+            // très grand rayon (ici ça revient à « tout le monde » dans une salle).
+            // Ce n'est PAS la règle de jeu : la vraie répartition (qui reçoit quel
+            // débit) se fait côté client par water-filling. Personne n'est exclu.
             let roster: Vec<(u8, SocketAddr)> = clients
                 .iter()
                 .filter(|(addr, info)| **addr != from && within_radius(info.pos, pos))

@@ -5,18 +5,19 @@
 //!      pairs connus, à débit limité (SEND_HZ fois/s).
 
 use super::state::{RemoteAvatars, SEND_HZ};
-use crate::net::aoi::{FULL_BUDGET, REDUCE_FACTOR};
+use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::link::NetLink;
 use crate::net::message::{encode, PlayerState};
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 pub fn net_send(
     time: Res<Time>,
     mut send_acc: Local<f32>,
     mut hello_acc: Local<f32>,
     mut last_pos: Local<Option<Vec3>>,
-    mut tick: Local<u32>,
+    mut credits: Local<HashMap<u8, f32>>,
     link: Res<NetLink>,
     avatars: Res<RemoteAvatars>,
     player: Query<&Transform, With<crate::player::Player>>,
@@ -82,32 +83,42 @@ pub fn net_send(
         b,
     };
     let bytes = encode(&me);
-
-    // BUDGET DE PRIORITÉ : on classe les pairs par distance (on lit leur dernière
-    // position connue dans leur file d'instantanés), puis on donne le plein débit
-    // aux FULL_BUDGET plus proches, et un débit réduit (1 paquet sur REDUCE_FACTOR)
-    // aux plus lointains. Une foule ne coûte donc jamais plus qu'un budget fixe.
     let me_xz = (pos.x, pos.z);
-    let mut ranked: Vec<(_, f32)> = link
-        .peers
+
+    // 1) PERTINENCE : un poids par pair, à partir de sa dernière position connue
+    //    (lue dans sa file d'instantanés). Un pair inconnu → distance 0 → poids
+    //    max, pour le découvrir vite.
+    let peers: Vec<(u8, std::net::SocketAddr)> =
+        link.peers.iter().map(|(id, addr)| (*id, *addr)).collect();
+    let weights: Vec<f32> = peers
         .iter()
-        .map(|(id, addr)| {
+        .map(|(id, _)| {
             let d2 = avatars
                 .map
                 .get(id)
                 .and_then(|p| p.buffer.back())
-                .map(|s| crate::net::aoi::dist2(me_xz, (s.pos.x, s.pos.z)))
-                .unwrap_or(0.0); // pair encore inconnu → priorité haute, pour le découvrir
-            (*addr, d2)
+                .map(|s| dist2(me_xz, (s.pos.x, s.pos.z)))
+                .unwrap_or(0.0);
+            relevance_weight(d2)
         })
         .collect();
-    ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    *tick = tick.wrapping_add(1);
-    for (rank, (addr, _)) in ranked.iter().enumerate() {
-        let full = rank < FULL_BUDGET;
-        if full || *tick % REDUCE_FACTOR == 0 {
+    // 2) WATER-FILLING : un débit (Hz) par pair, plafonné à SEND_HZ, somme ≤ budget.
+    //    Budget non saturé (peu de monde) → tout le monde au plafond. Saturé → ça
+    //    se répartit par pertinence, en douceur, jamais zéro.
+    let rates = allocate_rates(&weights, SEND_BUDGET_HZ, SEND_HZ);
+
+    // 3) CADENCEMENT par crédit : chaque pair accumule `débit × temps` ; dès qu'il
+    //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace
+    //    régulièrement les envois au bon rythme pour chacun.
+    for ((id, addr), rate) in peers.iter().zip(&rates) {
+        let credit = credits.entry(*id).or_insert(0.0);
+        *credit += rate * dt_send;
+        if *credit >= 1.0 {
+            *credit -= 1.0;
             let _ = link.socket.send_to(*addr, &bytes);
         }
     }
+    // On oublie le crédit des pairs qui ne sont plus dans l'annuaire.
+    credits.retain(|id, _| link.peers.contains_key(id));
 }

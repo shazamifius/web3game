@@ -155,15 +155,18 @@ anti-triche).
         et envoie son état directement à tous les pairs. Plus de « 2 pairs codés
         en dur » → autant de joueurs qu'on veut.
       - [ ] NAT, STUN, hole-punching (se connecter entre vraies machines).
-      - [x] **Area of Interest par pertinence** (`net/aoi.rs`) : on ne parle
-        qu'aux joueurs qu'on peut percevoir, classés par **distance** (pas une
-        grille carrée). Deux niveaux : (1) le HELLO porte la **position** et le
-        rendez-vous ne renvoie que les joueurs dans un **rayon** (cercle doux) ;
-        (2) côté client, **budget de priorité** — plein débit aux `FULL_BUDGET`
-        plus proches, débit réduit (`REDUCE_FACTOR`) aux lointains. Une foule
-        coûte donc un budget fixe, et ça se dégrade en douceur. Réglages :
-        `AOI_RADIUS`, `FULL_BUDGET`, `REDUCE_FACTOR`. Visible : éloigne-toi,
-        l'avatar de l'autre disparaît hors rayon ; reviens, il réapparaît.
+      - [x] **Interest management par allocation de budget** (`net/aoi.rs`) : on
+        ne supprime jamais personne par règle ; on **répartit un budget
+        d'émission** (`SEND_BUDGET_HZ`) entre tous les pairs selon leur
+        **pertinence** (`relevance_weight` : distance douce + un socle, jamais 0).
+        La répartition se fait par **water-filling** (`allocate_rates`) : chaque
+        pair reçoit un débit ∝ pertinence, plafonné à `SEND_HZ`, somme ≤ budget ;
+        le surplus des pairs satisfaits est redonné aux autres. Conséquences :
+        budget non saturé (2 joueurs) → **plein débit pour tous, peu importe la
+        distance** ; saturé (foule) → ça se dégrade en douceur, jamais zéro. Le
+        wifi entrera plus tard par `SEND_BUDGET_HZ` (bon lien = grand budget). Le
+        rendez-vous ne fait plus qu'une borne grossière de candidats. Tests
+        unitaires du water-filling dans `aoi.rs`.
 - [ ] **Chapitre 4 — Autorité & migration d'hôte**
       Modèle **Own + Shields** (1 hôte + 3 vérificateurs = BFT 3f+1). Élection,
       détection de panne, migration sans coupure (problème du *split-brain*).
