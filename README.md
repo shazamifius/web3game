@@ -54,6 +54,18 @@ nix-shell --run "cargo run -- net-demo a"
 nix-shell --run "cargo run -- net-demo b"
 ```
 
+**Tester le hole punching à travers de vrais NAT** (sur un seul PC, deux box
+simulées en namespaces réseau) :
+
+```fish
+nix-shell --run "cargo build"     # compiler d'abord (hors sudo)
+sudo ./tools/test-nat.sh          # monte 2 NAT + 2 clients, observe les trous s'ouvrir
+sudo ./tools/test-nat.sh --clean  # nettoyer un essai interrompu
+```
+
+> Le mode `nat-test` (lancé par le script) rejoue le scénario réseau du jeu en
+> texte, car les fenêtres 3D ne peuvent pas tourner dans un namespace sans écran.
+
 **Développer avec relance automatique** (le jeu se recompile et redémarre à
 chaque sauvegarde — confort de dev, via `cargo-watch`) :
 
@@ -90,9 +102,12 @@ src/
 └── net/                 LE RÉSEAU, fait main
     ├── mod.rs           assemble le module et expose l'API publique
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode)
-    ├── transport.rs     la prise UDP brute (NetPeer) — la « connexion »
+    ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
+    ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
+    ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
     ├── skin.rs          la couleur de skin aléatoire
     ├── demo.rs          le mode texte net-demo (observer les paquets)
+    ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
     ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
     └── netcode/         LE RATTRAPAGE DE LATENCE
         ├── mod.rs       assemble le sous-module
@@ -149,12 +164,21 @@ anti-triche).
       > l'historique), pas par réseau de neurones — la physique de l'inertie
       > humaine suffit sur 100 ms, c'est déterministe, lisible et gratuit en CPU.
       > L'IA serait pertinente pour prédire la *pose du corps*, pas la position.
-- [~] **Chapitre 3 — Topologie & passage à l'échelle** *(en cours)*
+- [x] **Chapitre 3 — Topologie & passage à l'échelle** *(fait)*
       - [x] **N pairs + rendez-vous** : un serveur d'annuaire (`net/rendezvous.rs`)
         présente les joueurs ; chacun s'inscrit (HELLO), reçoit la liste (WELCOME)
         et envoie son état directement à tous les pairs. Plus de « 2 pairs codés
         en dur » → autant de joueurs qu'on veut.
-      - [ ] NAT, STUN, hole-punching (se connecter entre vraies machines).
+      - [x] **NAT & hole punching** (`net/punch.rs`) : la box (NAT) jette tout
+        paquet entrant non sollicité. Mais ENVOYER ouvre, dans notre box, un
+        « trou de retour » sur le port utilisé. Les deux pairs s'envoient donc une
+        **salve de PUNCH** l'un vers l'autre : les premiers paquets meurent (trou
+        d'en face pas encore ouvert), les suivants passent → connexion **directe**,
+        sans relais. Le rendez-vous ne fait que présenter les adresses publiques.
+        On répète le PUNCH (toutes les 0,25 s) jusqu'à confirmation : la répétition
+        absorbe le décalage de timing. Se teste sur un seul PC avec
+        `tools/test-nat.sh` (deux NAT simulés en namespaces réseau). Repli relais
+        (TURN/supernœud) pour les NAT symétriques : prévu au chapitre 5.
       - [x] **Interest management par allocation de budget** (`net/aoi.rs`) : on
         ne supprime jamais personne par règle ; on **répartit un budget
         d'émission** (`SEND_BUDGET_HZ`) entre tous les pairs selon leur

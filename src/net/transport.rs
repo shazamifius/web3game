@@ -6,7 +6,7 @@
 
 use std::net::{SocketAddr, UdpSocket};
 
-/// Une prise UDP non-bloquante, sur 127.0.0.1 (même PC pour l'instant).
+/// Une prise UDP non-bloquante, sur toutes les interfaces (0.0.0.0).
 pub(crate) struct Socket {
     socket: UdpSocket,
 }
@@ -14,8 +14,12 @@ pub(crate) struct Socket {
 impl Socket {
     /// Ouvre la prise sur le port donné. `port = 0` → l'OS en choisit un libre
     /// (« port éphémère ») : pratique quand on lance plein de clients.
+    ///
+    /// On écoute sur `0.0.0.0` (toutes les interfaces) et pas seulement
+    /// `127.0.0.1` : indispensable pour que des « machines » différentes (ex.
+    /// namespaces réseau du test NAT) puissent nous joindre.
     pub(crate) fn bind(port: u16) -> std::io::Result<Socket> {
-        let socket = UdpSocket::bind(("127.0.0.1", port))?;
+        let socket = UdpSocket::bind(("0.0.0.0", port))?;
         // Mode non-bloquant : lire le réseau ne met JAMAIS le jeu en pause.
         socket.set_nonblocking(true)?;
         Ok(Socket { socket })

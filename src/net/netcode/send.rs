@@ -9,6 +9,7 @@ use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::link::NetLink;
 use crate::net::message::{encode, PlayerState};
+use crate::net::punch::Holes;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -20,6 +21,7 @@ pub fn net_send(
     mut credits: Local<HashMap<u8, f32>>,
     link: Res<NetLink>,
     avatars: Res<RemoteAvatars>,
+    holes: Res<Holes>,
     player: Query<&Transform, With<crate::player::Player>>,
     camera: Query<&Transform, With<crate::player::PlayerCamera>>,
 ) {
@@ -112,6 +114,13 @@ pub fn net_send(
     //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace
     //    régulièrement les envois au bon rythme pour chacun.
     for ((id, addr), rate) in peers.iter().zip(&rates) {
+        // On ne diffuse l'état qu'aux pairs dont le trou NAT est OUVERT : sinon le
+        // paquet mourrait dans leur box. Le perçage est fait par `net_punch` ; tant
+        // que le trou n'est pas ouvert, on accumule juste un peu de crédit, prêt à
+        // émettre dès que la connexion directe est établie.
+        if !holes.map.get(id).map_or(false, |h| h.open) {
+            continue;
+        }
         let credit = credits.entry(*id).or_insert(0.0);
         *credit += rate * dt_send;
         if *credit >= 1.0 {

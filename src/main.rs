@@ -34,6 +34,14 @@ fn main() {
         return;
     }
 
+    // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
+    // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
+    if mode == Some("nat-test") {
+        let label = args.get(2).map(String::as_str).unwrap_or("client");
+        net::run_nat_test(label);
+        return;
+    }
+
     // Couleur de skin aléatoire de CETTE session : le perso et le réseau
     // utiliseront la même. Choisie une fois, au démarrage.
     let my_color = net::random_color();
@@ -75,9 +83,11 @@ fn main() {
             Ok(link) => {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()
+                    .init_resource::<net::Holes>()
                     .add_systems(
                         Update,
                         (
+                            net::net_punch,
                             net::net_send,
                             net::net_receive,
                             net::net_interpolate,

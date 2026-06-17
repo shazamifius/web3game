@@ -13,7 +13,8 @@ use super::state::{
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
 use crate::net::message::decode;
-use crate::net::wire::{kind, KIND_STATE, KIND_WELCOME};
+use crate::net::punch::{decode_punch, Holes};
+use crate::net::wire::{kind, KIND_PUNCH, KIND_STATE, KIND_WELCOME};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -21,6 +22,7 @@ pub fn net_receive(
     time: Res<Time>,
     mut link: ResMut<NetLink>,
     mut avatars: ResMut<RemoteAvatars>,
+    mut holes: ResMut<Holes>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -39,12 +41,26 @@ pub fn net_receive(
                     link.peers = roster.into_iter().collect();
                 }
             }
+            // --- PUNCH d'un pair : son paquet est ARRIVÉ, donc notre trou de
+            //     retour est ouvert. On confirme la connexion directe. -----------
+            Some(KIND_PUNCH) => {
+                if let Some(id) = decode_punch(&bytes) {
+                    let hole = holes.map.entry(id).or_default();
+                    if !hole.open {
+                        hole.open = true;
+                        println!("Trou OUVERT avec le pair {id} ! Connexion directe établie.");
+                    }
+                }
+            }
             // --- État d'un pair : on le range pour l'interpolation -------------
             Some(KIND_STATE) => {
                 let Some(state) = decode(&bytes) else { continue };
                 if Some(state.id) == link.my_id {
                     continue; // jamais notre propre avatar
                 }
+                // Recevoir un état prouve aussi que le trou est ouvert (au cas où
+                // le PUNCH serait passé inaperçu) : on le marque ouvert sans bruit.
+                holes.map.entry(state.id).or_default().open = true;
                 let snap = Snapshot {
                     t: now,
                     pos: Vec3::new(state.x, state.y, state.z),

@@ -25,7 +25,7 @@ impl NetLink {
     /// l'OS), et adresse du rendez-vous local.
     pub fn new(color: (f32, f32, f32)) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
-        let rendezvous = SocketAddr::from(([127, 0, 0, 1], RENDEZVOUS_PORT));
+        let rendezvous = rendezvous_addr();
         println!(
             "Client réseau : port local {}, rendez-vous {}.",
             socket.local_addr()?,
@@ -40,4 +40,17 @@ impl NetLink {
             peers: HashMap::new(),
         })
     }
+}
+
+/// Adresse du rendez-vous. Par défaut `127.0.0.1:4000` (tout sur le même PC) ;
+/// surchargée par la variable d'environnement `RENDEZVOUS_ADDR` (ex.
+/// `10.0.0.1:4000`) pour le test NAT en namespaces ou un vrai serveur distant.
+pub(crate) fn rendezvous_addr() -> SocketAddr {
+    if let Ok(s) = std::env::var("RENDEZVOUS_ADDR") {
+        if let Ok(addr) = s.parse::<SocketAddr>() {
+            return addr;
+        }
+        eprintln!("RENDEZVOUS_ADDR='{s}' illisible ; on retombe sur 127.0.0.1.");
+    }
+    SocketAddr::from(([127, 0, 0, 1], RENDEZVOUS_PORT))
 }
