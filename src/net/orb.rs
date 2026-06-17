@@ -102,6 +102,11 @@ pub(crate) fn decode_orb(buf: &[u8]) -> Option<OrbWire> {
     let r = f32::from_le_bytes(buf[29..33].try_into().ok()?);
     let g = f32::from_le_bytes(buf[33..37].try_into().ok()?);
     let b = f32::from_le_bytes(buf[37..41].try_into().ok()?);
+    // Rejet des NaN/Inf : `NaN.clamp(lo, hi)` reste NaN, donc même la borne salle
+    // ne nous protégerait pas — la balle partirait à l'infini. On jette le paquet.
+    if ![x, y, z, vx, vy, vz, r, g, b].iter().all(|f| f.is_finite()) {
+        return None;
+    }
     Some(OrbWire { owner, version, x, y, z, vx, vy, vz, r, g, b })
 }
 
@@ -433,6 +438,17 @@ mod tests {
         assert_eq!(d.x, 1.0);
         assert_eq!(d.vz, 0.5);
         assert_eq!(d.b, 0.8);
+    }
+
+    /// Un paquet d'orbe porteur d'un NaN/Inf est rejeté (sinon la balle part à l'∞).
+    #[test]
+    fn orbe_nan_est_rejete() {
+        let w = OrbWire {
+            owner: 1, version: 1,
+            x: f32::NAN, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            r: 0.0, g: 0.0, b: 0.0,
+        };
+        assert!(decode_orb(&encode_orb(&w)).is_none());
     }
 
     /// Un paquet d'orbe d'une autre version est rejeté, pas lu de travers.

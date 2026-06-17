@@ -100,6 +100,15 @@ pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
     let g = f32::from_le_bytes(buf[39..43].try_into().ok()?);
     let b = f32::from_le_bytes(buf[43..47].try_into().ok()?);
     let parent = buf[47];
+    // ON NE FAIT JAMAIS CONFIANCE AU RÉSEAU, suite : on rejette tout NaN/Inf. Un
+    // seul flottant non fini corromprait DÉFINITIVEMENT le lissage (`smooth_damp`
+    // garde un état interne qui reste NaN). Mieux vaut jeter le paquet entier.
+    if ![x, y, z, vx, vy, vz, yaw, pitch, r, g, b]
+        .iter()
+        .all(|f| f.is_finite())
+    {
+        return None;
+    }
     Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent })
 }
 
@@ -138,6 +147,20 @@ mod tests {
         let mut bytes = encode(&p);
         bytes[1] = PROTO_VERSION.wrapping_add(1); // on falsifie la version
         assert!(decode(&bytes).is_none());
+    }
+
+    /// Un paquet porteur d'un NaN/Inf est rejeté (jamais laissé entrer).
+    #[test]
+    fn nan_est_rejete() {
+        let mut p = PlayerState {
+            id: 1, x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0,
+        };
+        p.x = f32::NAN;
+        assert!(decode(&encode(&p)).is_none());
+        p.x = 0.0;
+        p.vz = f32::INFINITY;
+        assert!(decode(&encode(&p)).is_none());
     }
 
     /// Un RELAY se décode comme un état (même corps, type différent).
