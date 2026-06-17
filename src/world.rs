@@ -48,6 +48,15 @@ pub fn setup_room(
     let neon_ceil = materials.add(emissive(grid_soft.0, grid_soft.1, grid_soft.2)); // grille du plafond
     let fixture_mat = materials.add(emissive(2.0, 1.6, 1.35)); // plafonnier (blanc chaud, fixe)
 
+    // On garde les poignées des matériaux néon : si on est connecté à un serveur,
+    // `apply_world_color` les recolore avec la teinte PARTAGÉE par tous les joueurs.
+    commands.insert_resource(WorldNeon {
+        grid: neon_cyan.clone(),
+        grid_soft: neon_ceil.clone(),
+        wall: neon_wall.clone(),
+        edge: neon_magenta.clone(),
+    });
+
     let t = 0.1; // épaisseur des parois
 
     // --- Sol et plafond ---
@@ -147,12 +156,35 @@ fn emissive(r: f32, g: f32, b: f32) -> StandardMaterial {
     }
 }
 
-/// Tire une palette néon au hasard, une fois au lancement. Renvoie 4 couleurs
-/// (r,g,b) : grille du sol, grille du plafond (plus douce), grille des murs,
-/// arêtes (accent). Teinte de base aléatoire, déclinée pour rester harmonieuse.
-fn random_neon_palette() -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32), (f32, f32, f32)) {
-    // Graine = nanosecondes ^ identifiant du processus (deux fenêtres lancées au
-    // même instant ont des palettes différentes). Petit xorshift maison.
+/// Type d'une palette néon : 4 couleurs (r,g,b) — sol, plafond (plus doux),
+/// murs, arêtes (accent).
+type Palette = ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32), (f32, f32, f32));
+
+/// Les poignées des matériaux néon recolorables : on les garde pour pouvoir
+/// changer la couleur de la salle quand le serveur nous donne sa teinte partagée.
+#[derive(Resource)]
+pub struct WorldNeon {
+    grid: Handle<StandardMaterial>,      // grille du sol
+    grid_soft: Handle<StandardMaterial>, // grille du plafond
+    wall: Handle<StandardMaterial>,      // grille des murs
+    edge: Handle<StandardMaterial>,      // arêtes
+}
+
+/// Construit une palette harmonieuse à partir d'une teinte de base (0–360).
+/// Sol/plafond suivent la teinte ; murs et arêtes prennent des teintes décalées
+/// (≈ +140° et +210°) pour un contraste agréable.
+fn palette_from_hue(base: f32) -> Palette {
+    let grid = hsv(base, 1.0, 1.3);
+    let grid_soft = hsv(base, 0.85, 0.95);
+    let wall_c = hsv((base + 140.0) % 360.0, 1.0, 1.2);
+    let edge_c = hsv((base + 210.0) % 360.0, 1.0, 1.25);
+    (grid, grid_soft, wall_c, edge_c)
+}
+
+/// Tire une palette néon au hasard, pour le démarrage (état « pas encore
+/// connecté » : chaque fenêtre a sa propre couleur, donc deux fenêtres non
+/// connectées au même serveur se distinguent).
+fn random_neon_palette() -> Palette {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
@@ -161,15 +193,40 @@ fn random_neon_palette() -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32), 
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
-    let base = (x % 360) as f32; // teinte de base au hasard
+    palette_from_hue((x % 360) as f32)
+}
 
-    // Sol/plafond suivent la teinte de base ; murs et arêtes prennent des teintes
-    // décalées (≈ +140° et +210°) pour un contraste agréable.
-    let grid = hsv(base, 1.0, 1.3);
-    let grid_soft = hsv(base, 0.85, 0.95);
-    let wall_c = hsv((base + 140.0) % 360.0, 1.0, 1.2);
-    let edge_c = hsv((base + 210.0) % 360.0, 1.0, 1.25);
-    (grid, grid_soft, wall_c, edge_c)
+/// Système (mode réseau) : dès que le serveur nous a donné sa teinte de salle,
+/// on recolore les néons avec. Résultat : TOUS les joueurs d'un même serveur ont
+/// la même salle ; une fenêtre non connectée garde sa couleur aléatoire → on voit
+/// d'un coup d'œil si on est bien connecté.
+pub fn apply_world_color(
+    link: Res<crate::net::NetLink>,
+    neon: Res<WorldNeon>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut applied: Local<Option<u16>>,
+) {
+    let Some(hue) = link.world_hue else {
+        return;
+    };
+    if *applied == Some(hue) {
+        return; // déjà appliquée : rien à refaire
+    }
+    *applied = Some(hue);
+
+    let (grid, grid_soft, wall_c, edge_c) = palette_from_hue(hue as f32);
+    recolor(&mut materials, &neon.grid, grid);
+    recolor(&mut materials, &neon.grid_soft, grid_soft);
+    recolor(&mut materials, &neon.wall, wall_c);
+    recolor(&mut materials, &neon.edge, edge_c);
+    println!("Salle recolorée à la teinte du serveur : {hue}° (connecté).");
+}
+
+/// Change la couleur émissive d'un matériau déjà créé (via sa poignée).
+fn recolor(materials: &mut Assets<StandardMaterial>, handle: &Handle<StandardMaterial>, c: (f32, f32, f32)) {
+    if let Some(mat) = materials.get_mut(handle) {
+        mat.emissive = LinearRgba::rgb(c.0, c.1, c.2);
+    }
 }
 
 /// Convertit Teinte/Saturation/Valeur en Rouge/Vert/Bleu (valeur > 1 autorisée

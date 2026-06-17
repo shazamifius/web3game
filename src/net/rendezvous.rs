@@ -9,6 +9,7 @@
 //! Lancement :  cargo run -- rendezvous
 
 use super::control::encode_welcome;
+use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::{kind, KIND_HELLO, RENDEZVOUS_PORT};
 use std::collections::HashMap;
@@ -23,7 +24,12 @@ pub fn run_rendezvous() {
             return;
         }
     };
-    println!("Rendez-vous : écoute sur 127.0.0.1:{RENDEZVOUS_PORT}. En attente de joueurs…");
+    // La couleur de salle de CETTE session de serveur : tous les joueurs connectés
+    // l'adopteront. Deux fenêtres de couleur différente = pas le même serveur.
+    let world_hue = random_hue();
+    println!(
+        "Rendez-vous : écoute sur 127.0.0.1:{RENDEZVOUS_PORT} (couleur de salle : teinte {world_hue}°). En attente de joueurs…"
+    );
 
     // Pour chaque client connu : son identifiant et la dernière fois qu'on l'a vu.
     let mut clients: HashMap<SocketAddr, (u8, Instant)> = HashMap::new();
@@ -53,7 +59,7 @@ pub fn run_rendezvous() {
                 .filter(|(addr, _)| **addr != from)
                 .map(|(addr, (id, _))| (*id, *addr))
                 .collect();
-            let _ = socket.send_to(from, &encode_welcome(id, &roster));
+            let _ = socket.send_to(from, &encode_welcome(id, world_hue, &roster));
         }
 
         // On oublie les clients silencieux depuis plus de 5 s (déconnectés).

@@ -11,6 +11,12 @@ pub struct MyColor(pub f32, pub f32, pub f32);
 /// Tire une couleur vive aléatoire (rouge/vert/bleu, valeurs faites pour « glow »).
 /// On évite toute dépendance externe : petit générateur pseudo-aléatoire maison.
 pub fn random_color() -> (f32, f32, f32) {
+    hsv_to_rgb(random_hue() as f32, 1.0, 1.2) // saturation max, valeur > 1 pour le néon
+}
+
+/// Tire une teinte au hasard (0–359) sur le cercle des couleurs. Sert au skin du
+/// joueur ET à la couleur de salle choisie par le serveur de rendez-vous.
+pub(crate) fn random_hue() -> u16 {
     // Graine = nanosecondes actuelles, mélangées à l'identifiant du processus
     // (pour que deux fenêtres lancées au même instant aient des couleurs différentes).
     let nanos = std::time::SystemTime::now()
@@ -22,8 +28,7 @@ pub fn random_color() -> (f32, f32, f32) {
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
-    let hue = (x % 360) as f32; // une teinte au hasard sur le cercle des couleurs
-    hsv_to_rgb(hue, 1.0, 1.2) // saturation max, valeur > 1 pour le néon
+    (x % 360) as u16
 }
 
 /// Convertit une couleur Teinte/Saturation/Valeur en Rouge/Vert/Bleu.

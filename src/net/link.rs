@@ -16,6 +16,7 @@ pub struct NetLink {
     pub(crate) rendezvous: SocketAddr,
     pub(crate) my_id: Option<u8>, // None tant que le rendez-vous ne nous a pas répondu
     pub(crate) my_color: (f32, f32, f32),
+    pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<u8, SocketAddr>, // les autres joueurs : id → adresse
 }
 
@@ -35,6 +36,7 @@ impl NetLink {
             rendezvous,
             my_id: None,
             my_color: color,
+            world_hue: None,
             peers: HashMap::new(),
         })
     }

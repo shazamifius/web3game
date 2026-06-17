@@ -12,9 +12,10 @@ pub(crate) fn encode_hello() -> [u8; 1] {
     [KIND_HELLO]
 }
 
-/// Fabrique un paquet WELCOME : type + ton_id + nombre + [ (id, ip, port) … ].
-/// (IPv4 uniquement pour l'instant — tout est sur 127.0.0.1.)
-pub(crate) fn encode_welcome(your_id: u8, roster: &[(u8, SocketAddr)]) -> Vec<u8> {
+/// Fabrique un paquet WELCOME : type + ton_id + teinte_du_monde (2o) + nombre +
+/// [ (id, ip, port) … ]. La teinte (0–359) est la couleur de salle PARTAGÉE par
+/// tous les joueurs du même serveur. (IPv4 uniquement — tout est sur 127.0.0.1.)
+pub(crate) fn encode_welcome(your_id: u8, world_hue: u16, roster: &[(u8, SocketAddr)]) -> Vec<u8> {
     // On ne garde que les adresses IPv4 (les seules qu'on sait encoder).
     let v4: Vec<(u8, SocketAddrV4)> = roster
         .iter()
@@ -24,7 +25,9 @@ pub(crate) fn encode_welcome(your_id: u8, roster: &[(u8, SocketAddr)]) -> Vec<u8
         })
         .collect();
 
-    let mut buf = vec![KIND_WELCOME, your_id, v4.len() as u8];
+    let mut buf = vec![KIND_WELCOME, your_id];
+    buf.extend_from_slice(&world_hue.to_le_bytes()); // teinte du monde (2 octets)
+    buf.push(v4.len() as u8);
     for (id, addr) in v4 {
         buf.push(id);
         buf.extend_from_slice(&addr.ip().octets()); // 4 octets
@@ -33,15 +36,16 @@ pub(crate) fn encode_welcome(your_id: u8, roster: &[(u8, SocketAddr)]) -> Vec<u8
     buf
 }
 
-/// Lit un paquet WELCOME : renvoie (ton_id, liste des autres joueurs).
-pub(crate) fn decode_welcome(buf: &[u8]) -> Option<(u8, Vec<(u8, SocketAddr)>)> {
-    if buf.len() < 3 || buf[0] != KIND_WELCOME {
+/// Lit un paquet WELCOME : renvoie (ton_id, teinte_du_monde, liste des autres).
+pub(crate) fn decode_welcome(buf: &[u8]) -> Option<(u8, u16, Vec<(u8, SocketAddr)>)> {
+    if buf.len() < 5 || buf[0] != KIND_WELCOME {
         return None;
     }
     let your_id = buf[1];
-    let count = buf[2] as usize;
+    let world_hue = u16::from_le_bytes([buf[2], buf[3]]);
+    let count = buf[4] as usize;
     let mut roster = Vec::with_capacity(count);
-    let mut o = 3; // on saute type + your_id + count
+    let mut o = 5; // on saute type + your_id + teinte (2o) + count
     for _ in 0..count {
         if o + 7 > buf.len() {
             break; // paquet tronqué : on s'arrête là, sans planter
@@ -52,5 +56,5 @@ pub(crate) fn decode_welcome(buf: &[u8]) -> Option<(u8, Vec<(u8, SocketAddr)>)> 
         roster.push((id, SocketAddr::from(SocketAddrV4::new(ip, port))));
         o += 7;
     }
-    Some((your_id, roster))
+    Some((your_id, world_hue, roster))
 }

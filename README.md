@@ -41,6 +41,12 @@ Les identifiants sont attribués par le rendez-vous (plus de rôle codé en dur)
 chaque client prend un port libre tout seul. `a`, `b`, `play`, `client` font
 tous la même chose : lancer un client.
 
+> 💡 **Indice de connexion** : la **couleur de la salle** est donnée par le
+> serveur de rendez-vous. Deux fenêtres de **même couleur** = connectées au même
+> serveur. Une fenêtre d'une **autre couleur** (sa couleur aléatoire de départ)
+> = pas connectée. Pratique pour vérifier d'un coup d'œil, sans chercher un
+> avatar dans la salle.
+
 **Voir le réseau seul, en texte** (sans la 3D, pour observer les paquets) :
 
 ```fish

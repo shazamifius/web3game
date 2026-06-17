@@ -33,8 +33,9 @@ pub fn net_receive(
         match kind(&bytes) {
             // --- Réponse du rendez-vous : notre id + la liste des autres -------
             Some(KIND_WELCOME) => {
-                if let Some((your_id, roster)) = decode_welcome(&bytes) {
+                if let Some((your_id, world_hue, roster)) = decode_welcome(&bytes) {
                     link.my_id = Some(your_id);
+                    link.world_hue = Some(world_hue);
                     link.peers = roster.into_iter().collect();
                 }
             }

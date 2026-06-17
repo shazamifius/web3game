@@ -77,7 +77,12 @@ fn main() {
                     .init_resource::<net::RemoteAvatars>()
                     .add_systems(
                         Update,
-                        (net::net_send, net::net_receive, net::net_interpolate),
+                        (
+                            net::net_send,
+                            net::net_receive,
+                            net::net_interpolate,
+                            world::apply_world_color,
+                        ),
                     );
             }
             Err(e) => eprintln!("Réseau désactivé ({e}) — le jeu démarre en solo."),
