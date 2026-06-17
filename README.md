@@ -124,11 +124,16 @@ src/
         └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
 ```
 
-Un paquet de joueur fait **47 octets** : `type` (1) + `id` (1) + `x,y,z` +
-`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1, l'id de notre
-tuteur si on est sous tutelle, sinon 0). Voir `net/message.rs`. Un paquet d'orbe
-fait **40 octets** : `type` + `owner` + `version` + position, vitesse et couleur.
-Voir `net/orb.rs`.
+**En-tête commun à TOUS les paquets** : octet 0 = `type` (KIND), octet 1 =
+`version du protocole` (`PROTO_VERSION`). Un récepteur d'une autre version rejette
+le paquet **et le signale** au lieu de le lire de travers — fini le « bonhomme
+invisible » de deux binaires désynchronisés. Voir `net/wire.rs`.
+
+Un paquet de joueur fait **48 octets** : `type` (1) + `version` (1) + `id` (1) +
+`x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1, l'id de
+notre tuteur si on est sous tutelle, sinon 0). Voir `net/message.rs`. Un paquet
+d'orbe fait **41 octets** : `type` + `version` + `owner` + `version d'orbe` +
+position, vitesse et couleur. Voir `net/orb.rs`.
 
 **Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
 préfixé d'un `_` (ex. `_demo.rs`) et sa ligne `mod` est retirée. Il remonte en

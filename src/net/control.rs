@@ -4,26 +4,27 @@
 //!     source du paquet, donc pas besoin de la mettre dedans (1 octet suffit).
 //!   - WELCOME (serveur → client) : « ton identifiant, et voici les autres ».
 
-use super::wire::{KIND_HELLO, KIND_WELCOME};
+use super::wire::{KIND_HELLO, KIND_WELCOME, PROTO_VERSION};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-/// Fabrique un paquet HELLO : type + la POSITION (x, z) du joueur. Le rendez-vous
-/// s'en sert pour ne renvoyer que les joueurs dans le rayon de perception (AoI).
-pub(crate) fn encode_hello(x: f32, z: f32) -> [u8; 9] {
-    let mut b = [0u8; 9];
+/// Fabrique un paquet HELLO : type + version + la POSITION (x, z) du joueur. Le
+/// rendez-vous s'en sert pour ne renvoyer que les joueurs dans le rayon (AoI).
+pub(crate) fn encode_hello(x: f32, z: f32) -> [u8; 10] {
+    let mut b = [0u8; 10];
     b[0] = KIND_HELLO;
-    b[1..5].copy_from_slice(&x.to_le_bytes());
-    b[5..9].copy_from_slice(&z.to_le_bytes());
+    b[1] = PROTO_VERSION;
+    b[2..6].copy_from_slice(&x.to_le_bytes());
+    b[6..10].copy_from_slice(&z.to_le_bytes());
     b
 }
 
 /// Lit un paquet HELLO : renvoie la position (x, z) annoncée.
 pub(crate) fn decode_hello(buf: &[u8]) -> Option<(f32, f32)> {
-    if buf.len() < 9 || buf[0] != KIND_HELLO {
+    if buf.len() < 10 || buf[0] != KIND_HELLO || buf[1] != PROTO_VERSION {
         return None;
     }
-    let x = f32::from_le_bytes(buf[1..5].try_into().ok()?);
-    let z = f32::from_le_bytes(buf[5..9].try_into().ok()?);
+    let x = f32::from_le_bytes(buf[2..6].try_into().ok()?);
+    let z = f32::from_le_bytes(buf[6..10].try_into().ok()?);
     Some((x, z))
 }
 
@@ -40,7 +41,7 @@ pub(crate) fn encode_welcome(your_id: u8, world_hue: u16, roster: &[(u8, SocketA
         })
         .collect();
 
-    let mut buf = vec![KIND_WELCOME, your_id];
+    let mut buf = vec![KIND_WELCOME, PROTO_VERSION, your_id];
     buf.extend_from_slice(&world_hue.to_le_bytes()); // teinte du monde (2 octets)
     buf.push(v4.len() as u8);
     for (id, addr) in v4 {
@@ -53,14 +54,14 @@ pub(crate) fn encode_welcome(your_id: u8, world_hue: u16, roster: &[(u8, SocketA
 
 /// Lit un paquet WELCOME : renvoie (ton_id, teinte_du_monde, liste des autres).
 pub(crate) fn decode_welcome(buf: &[u8]) -> Option<(u8, u16, Vec<(u8, SocketAddr)>)> {
-    if buf.len() < 5 || buf[0] != KIND_WELCOME {
+    if buf.len() < 6 || buf[0] != KIND_WELCOME || buf[1] != PROTO_VERSION {
         return None;
     }
-    let your_id = buf[1];
-    let world_hue = u16::from_le_bytes([buf[2], buf[3]]);
-    let count = buf[4] as usize;
+    let your_id = buf[2];
+    let world_hue = u16::from_le_bytes([buf[3], buf[4]]);
+    let count = buf[5] as usize;
     let mut roster = Vec::with_capacity(count);
-    let mut o = 5; // on saute type + your_id + teinte (2o) + count
+    let mut o = 6; // on saute type + version + your_id + teinte (2o) + count
     for _ in 0..count {
         if o + 7 > buf.len() {
             break; // paquet tronqué : on s'arrête là, sans planter

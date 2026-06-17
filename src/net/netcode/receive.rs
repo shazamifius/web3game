@@ -15,7 +15,7 @@ use crate::net::link::NetLink;
 use crate::net::message::{decode, decode_relay, encode, PlayerState};
 use crate::net::orb::{apply_incoming, decode_orb, Orb};
 use crate::net::punch::{decode_punch, Holes};
-use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME};
+use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -28,12 +28,28 @@ pub fn net_receive(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut warned_version: Local<bool>,
 ) {
     let now = time.elapsed_secs();
 
     // On vide la prise d'un coup (le Vec est à nous : on peut ensuite modifier `link`).
     let inbox = link.socket.poll();
     for (_from, bytes) in inbox {
+        // GARDE DE VERSION : tout paquet a [type, version] en tête. S'il vient d'un
+        // binaire d'une AUTRE version, on le rejette en bloc — et on le signale UNE
+        // fois, pour rendre le piège visible (au lieu du « bonhomme invisible »
+        // d'avant, où un binaire pas à jour lisait les octets de travers en silence).
+        if bytes.len() >= 2 && bytes[1] != PROTO_VERSION {
+            if !*warned_version {
+                *warned_version = true;
+                eprintln!(
+                    "⚠ Paquet ignoré : version protocole {} ≠ la mienne ({}). Un binaire \
+                     n'est pas à jour — ferme tout et relance depuis le même build.",
+                    bytes[1], PROTO_VERSION
+                );
+            }
+            continue;
+        }
         match kind(&bytes) {
             // --- Réponse du rendez-vous : notre id + la liste des autres -------
             Some(KIND_WELCOME) => {

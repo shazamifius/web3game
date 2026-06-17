@@ -21,7 +21,7 @@
 
 use super::link::NetLink;
 use super::punch::Holes;
-use super::wire::KIND_ORB;
+use super::wire::{KIND_ORB, PROTO_VERSION};
 use crate::world::{ROOM_HEIGHT, ROOM_SIZE};
 use bevy::prelude::*;
 
@@ -60,45 +60,48 @@ pub(crate) struct OrbWire {
     pub b: f32,
 }
 
-// Taille exacte, calculée à la main : 1 (type) + 1 (owner) + 2 (version u16)
-//   + 9 nombres f32 de 4 octets (x,y,z, vx,vy,vz, r,g,b) = 4 + 36 = 40 octets.
-const ORB_SIZE: usize = 1 + 1 + 2 + 4 * 9;
+// Taille exacte, calculée à la main : 1 (type) + 1 (version) + 1 (owner)
+//   + 2 (version d'orbe u16) + 9 nombres f32 de 4 octets (x,y,z, vx,vy,vz, r,g,b)
+//   = 5 + 36 = 41 octets.
+const ORB_SIZE: usize = 1 + 1 + 1 + 2 + 4 * 9;
 
 /// Sérialiser l'état de l'orbe en octets bruts (même sens little-endian que `message`).
+/// En-tête commun : octet 0 = type, octet 1 = version du protocole.
 pub(crate) fn encode_orb(o: &OrbWire) -> [u8; ORB_SIZE] {
     let mut buf = [0u8; ORB_SIZE];
     buf[0] = KIND_ORB;
-    buf[1] = o.owner;
-    buf[2..4].copy_from_slice(&o.version.to_le_bytes());
-    buf[4..8].copy_from_slice(&o.x.to_le_bytes());
-    buf[8..12].copy_from_slice(&o.y.to_le_bytes());
-    buf[12..16].copy_from_slice(&o.z.to_le_bytes());
-    buf[16..20].copy_from_slice(&o.vx.to_le_bytes());
-    buf[20..24].copy_from_slice(&o.vy.to_le_bytes());
-    buf[24..28].copy_from_slice(&o.vz.to_le_bytes());
-    buf[28..32].copy_from_slice(&o.r.to_le_bytes());
-    buf[32..36].copy_from_slice(&o.g.to_le_bytes());
-    buf[36..40].copy_from_slice(&o.b.to_le_bytes());
+    buf[1] = PROTO_VERSION;
+    buf[2] = o.owner;
+    buf[3..5].copy_from_slice(&o.version.to_le_bytes());
+    buf[5..9].copy_from_slice(&o.x.to_le_bytes());
+    buf[9..13].copy_from_slice(&o.y.to_le_bytes());
+    buf[13..17].copy_from_slice(&o.z.to_le_bytes());
+    buf[17..21].copy_from_slice(&o.vx.to_le_bytes());
+    buf[21..25].copy_from_slice(&o.vy.to_le_bytes());
+    buf[25..29].copy_from_slice(&o.vz.to_le_bytes());
+    buf[29..33].copy_from_slice(&o.r.to_le_bytes());
+    buf[33..37].copy_from_slice(&o.g.to_le_bytes());
+    buf[37..41].copy_from_slice(&o.b.to_le_bytes());
     buf
 }
 
-/// Reconstruire un `OrbWire` depuis les octets reçus. `None` si trop court ou pas
-/// du bon type — on ne fait jamais confiance aveuglément au réseau.
+/// Reconstruire un `OrbWire` depuis les octets reçus. `None` si trop court, pas du
+/// bon type, ou d'une autre version — on ne fait jamais confiance aveuglément au réseau.
 pub(crate) fn decode_orb(buf: &[u8]) -> Option<OrbWire> {
-    if buf.len() < ORB_SIZE || buf[0] != KIND_ORB {
+    if buf.len() < ORB_SIZE || buf[0] != KIND_ORB || buf[1] != PROTO_VERSION {
         return None;
     }
-    let owner = buf[1];
-    let version = u16::from_le_bytes(buf[2..4].try_into().ok()?);
-    let x = f32::from_le_bytes(buf[4..8].try_into().ok()?);
-    let y = f32::from_le_bytes(buf[8..12].try_into().ok()?);
-    let z = f32::from_le_bytes(buf[12..16].try_into().ok()?);
-    let vx = f32::from_le_bytes(buf[16..20].try_into().ok()?);
-    let vy = f32::from_le_bytes(buf[20..24].try_into().ok()?);
-    let vz = f32::from_le_bytes(buf[24..28].try_into().ok()?);
-    let r = f32::from_le_bytes(buf[28..32].try_into().ok()?);
-    let g = f32::from_le_bytes(buf[32..36].try_into().ok()?);
-    let b = f32::from_le_bytes(buf[36..40].try_into().ok()?);
+    let owner = buf[2];
+    let version = u16::from_le_bytes(buf[3..5].try_into().ok()?);
+    let x = f32::from_le_bytes(buf[5..9].try_into().ok()?);
+    let y = f32::from_le_bytes(buf[9..13].try_into().ok()?);
+    let z = f32::from_le_bytes(buf[13..17].try_into().ok()?);
+    let vx = f32::from_le_bytes(buf[17..21].try_into().ok()?);
+    let vy = f32::from_le_bytes(buf[21..25].try_into().ok()?);
+    let vz = f32::from_le_bytes(buf[25..29].try_into().ok()?);
+    let r = f32::from_le_bytes(buf[29..33].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[33..37].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[37..41].try_into().ok()?);
     Some(OrbWire { owner, version, x, y, z, vx, vy, vz, r, g, b })
 }
 
@@ -220,10 +223,11 @@ pub fn orb_simulate(
         let step = orb.vel * dt;
         orb.pos += step;
 
+        let h = ROOM_SIZE / 2.0 - ORB_RADIUS;
+        let (lo, hi) = (ORB_RADIUS, ROOM_HEIGHT - ORB_RADIUS);
         if am_owner {
             // Rebonds élastiques sur les 6 parois (l'orbe garde son énergie : façon
             // logo flottant). Seul le maître fait ça : les autres se recalent sur lui.
-            let h = ROOM_SIZE / 2.0 - ORB_RADIUS;
             if orb.pos.x < -h {
                 orb.pos.x = -h;
                 orb.vel.x = orb.vel.x.abs();
@@ -238,7 +242,6 @@ pub fn orb_simulate(
                 orb.pos.z = h;
                 orb.vel.z = -orb.vel.z.abs();
             }
-            let (lo, hi) = (ORB_RADIUS, ROOM_HEIGHT - ORB_RADIUS);
             if orb.pos.y < lo {
                 orb.pos.y = lo;
                 orb.vel.y = orb.vel.y.abs();
@@ -246,6 +249,14 @@ pub fn orb_simulate(
                 orb.pos.y = hi;
                 orb.vel.y = -orb.vel.y.abs();
             }
+        } else {
+            // Non-maître : on EXTRAPOLE entre deux paquets, mais on BORNE la position
+            // à la salle (sans toucher la vitesse). Sinon, si le maître se tait un
+            // instant (jusqu'à MASTER_TIMEOUT), l'orbe traverserait les murs en ligne
+            // droite. Le prochain paquet du maître la recale de toute façon.
+            orb.pos.x = orb.pos.x.clamp(-h, h);
+            orb.pos.z = orb.pos.z.clamp(-h, h);
+            orb.pos.y = orb.pos.y.clamp(lo, hi);
         }
     }
 
@@ -383,4 +394,57 @@ pub fn orb_migrate(time: Res<Time>, link: Res<NetLink>, mut orb: ResMut<Orb>) {
         println!("Maître {owner} disparu — je reprends l'orbe (v{}).", orb.version);
     }
     // Sinon : quelqu'un d'autre est élu ; on attend simplement son premier paquet.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `supersedes` est le CŒUR de l'autorité : on fige ses règles par des tests
+    /// avant d'empiler l'anti-triche (chapitre 5) par-dessus.
+    #[test]
+    fn supersedes_regles_d_autorite() {
+        // Pas encore de maître : le tout premier paquet fait foi.
+        assert!(supersedes(0, 5, 0, None));
+        // Version plus haute → la touche la plus récente l'emporte.
+        assert!(supersedes(10, 9, 5, Some(2)));
+        // Version plus basse → on garde notre maître courant.
+        assert!(!supersedes(4, 1, 5, Some(2)));
+        // Égalité de version : le PLUS PETIT id gagne (départage déterministe).
+        assert!(supersedes(7, 1, 7, Some(3))); // 1 < 3 → l'entrant gagne
+        assert!(!supersedes(7, 8, 7, Some(3))); // 8 > 3 → on garde le nôtre
+        // Égalité parfaite (même version, même id) : c'est le flux normal du maître
+        // courant, on l'accepte (rafraîchit position/last_heard).
+        assert!(supersedes(7, 3, 7, Some(3)));
+    }
+
+    /// L'état de l'orbe doit survivre à l'aller-retour encode→decode (offsets sûrs).
+    #[test]
+    fn orbe_survit_a_l_aller_retour() {
+        let w = OrbWire {
+            owner: 4, version: 42,
+            x: 1.0, y: 1.5, z: -2.0,
+            vx: 3.0, vy: -1.0, vz: 0.5,
+            r: 0.9, g: 0.1, b: 0.8,
+        };
+        let d = decode_orb(&encode_orb(&w)).expect("doit se décoder");
+        assert_eq!(d.owner, 4);
+        assert_eq!(d.version, 42);
+        assert_eq!(d.x, 1.0);
+        assert_eq!(d.vz, 0.5);
+        assert_eq!(d.b, 0.8);
+    }
+
+    /// Un paquet d'orbe d'une autre version est rejeté, pas lu de travers.
+    #[test]
+    fn orbe_version_differente_rejetee() {
+        let w = OrbWire {
+            owner: 1, version: 1,
+            x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            r: 0.0, g: 0.0, b: 0.0,
+        };
+        let mut bytes = encode_orb(&w);
+        bytes[1] = PROTO_VERSION.wrapping_add(1);
+        assert!(decode_orb(&bytes).is_none());
+    }
 }

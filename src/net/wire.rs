@@ -6,6 +6,13 @@
 /// Port du serveur de rendez-vous (sur 127.0.0.1 pour l'instant).
 pub(crate) const RENDEZVOUS_PORT: u16 = 4000;
 
+/// VERSION du protocole applicatif. Le 2e octet de CHAQUE paquet (juste après le
+/// KIND) la porte. On l'incrémente dès qu'un format de paquet change (l'ajout du
+/// champ `parent` au chapitre 4.1 en était un). Un récepteur qui lit une version
+/// différente REJETTE le paquet au lieu de le lire de travers : c'est ce qui
+/// évite le « bonhomme invisible » causé par deux binaires de versions différentes.
+pub(crate) const PROTO_VERSION: u8 = 1;
+
 pub(crate) const KIND_STATE: u8 = 1; // pair → pair : un PlayerState
 pub(crate) const KIND_HELLO: u8 = 2; // client → rendez-vous : « je suis là »
 pub(crate) const KIND_WELCOME: u8 = 3; // rendez-vous → client : ton id + la liste des autres

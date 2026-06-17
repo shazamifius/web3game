@@ -103,10 +103,17 @@ fn main() {
                             net::net_receive,
                             net::net_interpolate,
                             world::apply_world_color,
-                            net::orb_grab,
-                            net::orb_migrate,
-                            net::orb_simulate,
-                            net::orb_send,
+                            // Les 4 systèmes de l'orbe s'enchaînent dans CET ordre
+                            // (`.chain()`) : on saisit, puis on migre si besoin, puis
+                            // on simule la physique, puis on émet — sinon Bevy les
+                            // ordonnerait au hasard et on perdrait une frame entre eux.
+                            (
+                                net::orb_grab,
+                                net::orb_migrate,
+                                net::orb_simulate,
+                                net::orb_send,
+                            )
+                                .chain(),
                             net::update_nameplates,
                         ),
                     );

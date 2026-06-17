@@ -19,7 +19,7 @@
 //! trou est « ouvert » et on arrête de percer.
 
 use super::link::NetLink;
-use super::wire::KIND_PUNCH;
+use super::wire::{KIND_PUNCH, PROTO_VERSION};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -30,17 +30,17 @@ const PUNCH_INTERVAL: f32 = 0.25;
 /// relais (TURN/supernœud), prévu plus tard.
 const PUNCH_LOG_LIMIT: u32 = 8;
 
-/// Fabrique un paquet PUNCH : type + notre identifiant.
-pub(crate) fn encode_punch(my_id: u8) -> [u8; 2] {
-    [KIND_PUNCH, my_id]
+/// Fabrique un paquet PUNCH : type + version + notre identifiant.
+pub(crate) fn encode_punch(my_id: u8) -> [u8; 3] {
+    [KIND_PUNCH, PROTO_VERSION, my_id]
 }
 
 /// Lit un paquet PUNCH : renvoie l'identifiant du pair qui cherche à nous joindre.
 pub(crate) fn decode_punch(buf: &[u8]) -> Option<u8> {
-    if buf.len() < 2 || buf[0] != KIND_PUNCH {
+    if buf.len() < 3 || buf[0] != KIND_PUNCH || buf[1] != PROTO_VERSION {
         return None;
     }
-    Some(buf[1])
+    Some(buf[2])
 }
 
 /// L'état d'un « trou » vers un pair : confirmé ouvert ou non, nombre d'essais, et

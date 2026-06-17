@@ -6,7 +6,7 @@
 //! Le 1er octet est le TYPE de paquet (`KIND_STATE`) : il distingue un état de
 //! joueur des messages d'annuaire (voir `wire`/`control`).
 
-use super::wire::{KIND_RELAY, KIND_STATE};
+use super::wire::{KIND_RELAY, KIND_STATE, PROTO_VERSION};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id`), où (`x,y,z`), à quelle
 /// vitesse il va (`vx,vy,vz`), comment il est orienté (`yaw,pitch`) et de quelle
@@ -29,29 +29,31 @@ pub struct PlayerState {
 }
 
 // Taille exacte d'un paquet d'état, calculée à la main pour bien comprendre :
-//   1 octet (type) + 1 octet (id) + 11 nombres f32 de 4 octets
-//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) + 1 octet (parent) = 2 + 44 + 1 = 47 octets.
-const STATE_SIZE: usize = 2 + 4 * 11 + 1;
+//   1 (type) + 1 (version) + 1 (id) + 11 nombres f32 de 4 octets
+//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) + 1 (parent) = 3 + 44 + 1 = 48 octets.
+const STATE_SIZE: usize = 3 + 4 * 11 + 1;
 
 /// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
 /// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
 /// L'émetteur et le récepteur doivent juste utiliser le même sens — on choisit LE.
+/// En-tête commun : octet 0 = type, octet 1 = version du protocole.
 pub(crate) fn encode(p: &PlayerState) -> [u8; STATE_SIZE] {
     let mut buf = [0u8; STATE_SIZE];
     buf[0] = KIND_STATE; // type de paquet
-    buf[1] = p.id;
-    buf[2..6].copy_from_slice(&p.x.to_le_bytes());
-    buf[6..10].copy_from_slice(&p.y.to_le_bytes());
-    buf[10..14].copy_from_slice(&p.z.to_le_bytes());
-    buf[14..18].copy_from_slice(&p.vx.to_le_bytes());
-    buf[18..22].copy_from_slice(&p.vy.to_le_bytes());
-    buf[22..26].copy_from_slice(&p.vz.to_le_bytes());
-    buf[26..30].copy_from_slice(&p.yaw.to_le_bytes());
-    buf[30..34].copy_from_slice(&p.pitch.to_le_bytes());
-    buf[34..38].copy_from_slice(&p.r.to_le_bytes());
-    buf[38..42].copy_from_slice(&p.g.to_le_bytes());
-    buf[42..46].copy_from_slice(&p.b.to_le_bytes());
-    buf[46] = p.parent; // rôle (tuteur) sur le tout dernier octet
+    buf[1] = PROTO_VERSION; // version du protocole
+    buf[2] = p.id;
+    buf[3..7].copy_from_slice(&p.x.to_le_bytes());
+    buf[7..11].copy_from_slice(&p.y.to_le_bytes());
+    buf[11..15].copy_from_slice(&p.z.to_le_bytes());
+    buf[15..19].copy_from_slice(&p.vx.to_le_bytes());
+    buf[19..23].copy_from_slice(&p.vy.to_le_bytes());
+    buf[23..27].copy_from_slice(&p.vz.to_le_bytes());
+    buf[27..31].copy_from_slice(&p.yaw.to_le_bytes());
+    buf[31..35].copy_from_slice(&p.pitch.to_le_bytes());
+    buf[35..39].copy_from_slice(&p.r.to_le_bytes());
+    buf[39..43].copy_from_slice(&p.g.to_le_bytes());
+    buf[43..47].copy_from_slice(&p.b.to_le_bytes());
+    buf[47] = p.parent; // rôle (tuteur) sur le tout dernier octet
     buf
 }
 
@@ -67,7 +69,7 @@ pub(crate) fn encode_relay(p: &PlayerState) -> [u8; STATE_SIZE] {
 
 /// Décode un paquet RELAY (même corps qu'un état, type `KIND_RELAY`).
 pub(crate) fn decode_relay(buf: &[u8]) -> Option<PlayerState> {
-    if buf.len() < STATE_SIZE || buf[0] != KIND_RELAY {
+    if buf.len() < STATE_SIZE || buf[0] != KIND_RELAY || buf[1] != PROTO_VERSION {
         return None;
     }
     // Le corps est identique à un état : on rebascule l'octet de tête et on réutilise
@@ -81,22 +83,74 @@ pub(crate) fn decode_relay(buf: &[u8]) -> Option<PlayerState> {
 /// Renvoie `None` si le paquet est trop court ou n'est pas un état — on ne fait
 /// jamais confiance aveuglément à ce qui vient du réseau.
 pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
-    if buf.len() < STATE_SIZE || buf[0] != KIND_STATE {
+    if buf.len() < STATE_SIZE || buf[0] != KIND_STATE || buf[1] != PROTO_VERSION {
         return None;
     }
-    let id = buf[1];
+    let id = buf[2];
     // `?` = « si la conversion rate, renvoie None tout de suite ».
-    let x = f32::from_le_bytes(buf[2..6].try_into().ok()?);
-    let y = f32::from_le_bytes(buf[6..10].try_into().ok()?);
-    let z = f32::from_le_bytes(buf[10..14].try_into().ok()?);
-    let vx = f32::from_le_bytes(buf[14..18].try_into().ok()?);
-    let vy = f32::from_le_bytes(buf[18..22].try_into().ok()?);
-    let vz = f32::from_le_bytes(buf[22..26].try_into().ok()?);
-    let yaw = f32::from_le_bytes(buf[26..30].try_into().ok()?);
-    let pitch = f32::from_le_bytes(buf[30..34].try_into().ok()?);
-    let r = f32::from_le_bytes(buf[34..38].try_into().ok()?);
-    let g = f32::from_le_bytes(buf[38..42].try_into().ok()?);
-    let b = f32::from_le_bytes(buf[42..46].try_into().ok()?);
-    let parent = buf[46];
+    let x = f32::from_le_bytes(buf[3..7].try_into().ok()?);
+    let y = f32::from_le_bytes(buf[7..11].try_into().ok()?);
+    let z = f32::from_le_bytes(buf[11..15].try_into().ok()?);
+    let vx = f32::from_le_bytes(buf[15..19].try_into().ok()?);
+    let vy = f32::from_le_bytes(buf[19..23].try_into().ok()?);
+    let vz = f32::from_le_bytes(buf[23..27].try_into().ok()?);
+    let yaw = f32::from_le_bytes(buf[27..31].try_into().ok()?);
+    let pitch = f32::from_le_bytes(buf[31..35].try_into().ok()?);
+    let r = f32::from_le_bytes(buf[35..39].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[39..43].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[43..47].try_into().ok()?);
+    let parent = buf[47];
     Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un état qui fait l'aller-retour encode→decode doit revenir identique :
+    /// c'est la garantie que les offsets d'octets sont cohérents des deux côtés.
+    #[test]
+    fn etat_survit_a_l_aller_retour() {
+        let p = PlayerState {
+            id: 7,
+            x: 1.5, y: 0.7, z: -3.25,
+            vx: -2.0, vy: 0.1, vz: 4.0,
+            yaw: 1.2, pitch: -0.3,
+            r: 0.8, g: 0.2, b: 1.1,
+            parent: 3,
+        };
+        let d = decode(&encode(&p)).expect("doit se décoder");
+        assert_eq!(d.id, p.id);
+        assert_eq!(d.parent, p.parent);
+        assert_eq!(d.x, p.x);
+        assert_eq!(d.z, p.z);
+        assert_eq!(d.vz, p.vz);
+        assert_eq!(d.b, p.b);
+    }
+
+    /// Un paquet d'une AUTRE version est rejeté (None), pas lu de travers.
+    #[test]
+    fn version_differente_est_rejetee() {
+        let p = PlayerState {
+            id: 1, x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0,
+        };
+        let mut bytes = encode(&p);
+        bytes[1] = PROTO_VERSION.wrapping_add(1); // on falsifie la version
+        assert!(decode(&bytes).is_none());
+    }
+
+    /// Un RELAY se décode comme un état (même corps, type différent).
+    #[test]
+    fn relay_se_decode_comme_un_etat() {
+        let p = PlayerState {
+            id: 9, x: 2.0, y: 0.7, z: 2.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: 4,
+        };
+        let d = decode_relay(&encode_relay(&p)).expect("le relais doit se décoder");
+        assert_eq!(d.id, 9);
+        assert_eq!(d.parent, 4);
+        // … mais un état ordinaire n'est PAS un relais.
+        assert!(decode_relay(&encode(&p)).is_none());
+    }
 }
