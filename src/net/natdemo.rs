@@ -149,6 +149,7 @@ pub fn run_nat_test(label: &str) {
                         vx: 0.0, vy: 0.0, vz: 0.0,
                         yaw: 0.0, pitch: 0.0,
                         r: 0.5, g: 0.5, b: 0.5,
+                        parent: 0,
                     };
                     let _ = socket.send_to(h.addr, &encode(&ping));
                 }

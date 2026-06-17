@@ -40,6 +40,7 @@ pub fn run_demo(role: &str) {
             r,
             g,
             b,
+            parent: 0,
         };
         if let Err(e) = socket.send_to(remote, &encode(&me)) {
             eprintln!("Envoi raté : {e}");

@@ -118,15 +118,17 @@ src/
         ├── state.rs     instantanés, file par joueur, RÉGLAGES (constantes)
         ├── send.rs      émettre notre état (débit limité + vraie vitesse)
         ├── receive.rs   ranger les paquets reçus (et créer l'avatar)
+        ├── badges.rs    badges de rôle au-dessus des avatars (own/tuteur/tutelle)
         ├── interpolate.rs   animer chaque image (horloge adaptative + ressort)
         ├── predict.rs   calculer l'état voulu (interpolation ou prédiction)
         └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
 ```
 
-Un paquet de joueur fait **46 octets** : `type` (1) + `id` (1) + `x,y,z` +
-`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets). Voir `net/message.rs`. Un
-paquet d'orbe fait **40 octets** : `type` + `owner` + `version` + position,
-vitesse et couleur. Voir `net/orb.rs`.
+Un paquet de joueur fait **47 octets** : `type` (1) + `id` (1) + `x,y,z` +
+`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1, l'id de notre
+tuteur si on est sous tutelle, sinon 0). Voir `net/message.rs`. Un paquet d'orbe
+fait **40 octets** : `type` + `owner` + `version` + position, vitesse et couleur.
+Voir `net/orb.rs`.
 
 **Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
 préfixé d'un `_` (ex. `_demo.rs`) et sa ligne `mod` est retirée. Il remonte en
@@ -229,6 +231,13 @@ anti-triche).
         **signera** son état pour que le parent ne puisse pas le falsifier.
       - [ ] **Shields** (témoins) : vérification **périodique** d'un Own d'objet/zone
         pour empêcher un maître local de tricher (passerelle vers le chapitre 5).
+
+      > **Aide visuelle (debug)** : ces rôles sont invisibles à l'œil, alors un
+      > **badge néon flotte au-dessus de chaque avatar distant** (`net/netcode/badges.rs`) :
+      > 🟡 **jaune** = maître de l'orbe · 🟢 **vert** = tuteur (relais actif) ·
+      > 🟠 **orange** = sous tutelle. Le rôle voyage dans l'octet `parent` du paquet
+      > d'état, donc tout le monde voit qui relaie qui. (On ne badge pas son propre
+      > corps : on lit les rôles sur les autres, idéalement depuis une 3e fenêtre.)
 - [ ] **Chapitre 5 — Confiance & anti-triche**
       Réputation décentralisée (**EigenTrust**), supernœuds/parrainage pour les
       mauvaises connexions, et le vrai ennemi de fond : l'**attaque Sybil**.

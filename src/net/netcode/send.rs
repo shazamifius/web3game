@@ -70,6 +70,21 @@ pub fn net_send(
         .unwrap_or(0.0);
 
     let (r, g, b) = link.my_color;
+
+    // Si on est un client faible, on choisit notre PARENT (relais) : le plus petit
+    // id joignable. On le met dans notre état (champ `parent`) pour que tout le monde
+    // sache qu'on est sous tutelle, et de qui — c'est ce qui alimente les badges de
+    // rôle. `parent = 0` = autonome (on émet à tout le monde nous-mêmes).
+    let parent = if link.weak {
+        link.peers
+            .iter()
+            .filter(|(id, _)| holes.map.get(id).map_or(false, |h| h.open))
+            .min_by_key(|(id, _)| **id)
+    } else {
+        None
+    };
+    let parent_id = parent.map(|(id, _)| *id).unwrap_or(0);
+
     let me = PlayerState {
         id: my_id,
         x: pos.x,
@@ -83,20 +98,15 @@ pub fn net_send(
         r,
         g,
         b,
+        parent: parent_id,
     };
     // MODE FAIBLE UPLOAD : on n'émet PAS à tous les pairs. On envoie une seule fois
-    // notre état à un PARENT (relais), qui le recopiera à nos voisins à notre place.
-    // Parent choisi : le plus petit id joignable (trou ouvert). Économie : 1 envoi au
-    // lieu de N. (Le download reste direct : on continue de recevoir tout le monde.)
+    // notre état (RELAY) au parent choisi plus haut, qui le recopiera à nos voisins
+    // à notre place. Économie : 1 envoi au lieu de N. (Le download reste direct : on
+    // continue de recevoir tout le monde, comme une vraie 4G.)
     if link.weak {
-        let relay = encode_relay(&me);
-        let parent = link
-            .peers
-            .iter()
-            .filter(|(id, _)| holes.map.get(id).map_or(false, |h| h.open))
-            .min_by_key(|(id, _)| **id);
         if let Some((_, addr)) = parent {
-            let _ = link.socket.send_to(*addr, &relay);
+            let _ = link.socket.send_to(*addr, &encode_relay(&me));
         }
         return;
     }

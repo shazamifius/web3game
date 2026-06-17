@@ -44,6 +44,9 @@ pub(super) struct RemotePlayer {
     pub(super) smooth_vel: Vec3,
     pub(super) yaw_vel: f32,
     pub(super) pitch_vel: f32,
+    /// Rôle : id de SON tuteur (relais) si ce joueur est sous tutelle, sinon 0.
+    /// Alimente les badges de rôle (cf. `badges`).
+    pub(super) parent: u8,
 }
 
 /// Mémorise tous les joueurs distants connus, par identifiant.

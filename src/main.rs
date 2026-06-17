@@ -106,6 +106,7 @@ fn main() {
                             net::orb_migrate,
                             net::orb_simulate,
                             net::orb_send,
+                            net::update_role_badges,
                         ),
                     );
             }

@@ -25,12 +25,13 @@ pub struct PlayerState {
     pub r: f32,     // couleur du skin : rouge
     pub g: f32,     // couleur du skin : vert
     pub b: f32,     // couleur du skin : bleu
+    pub parent: u8, // rôle : id de notre tuteur (relais) si on est sous tutelle, sinon 0
 }
 
 // Taille exacte d'un paquet d'état, calculée à la main pour bien comprendre :
 //   1 octet (type) + 1 octet (id) + 11 nombres f32 de 4 octets
-//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) = 2 + 44 = 46 octets.
-const STATE_SIZE: usize = 2 + 4 * 11;
+//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) + 1 octet (parent) = 2 + 44 + 1 = 47 octets.
+const STATE_SIZE: usize = 2 + 4 * 11 + 1;
 
 /// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
 /// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
@@ -50,6 +51,7 @@ pub(crate) fn encode(p: &PlayerState) -> [u8; STATE_SIZE] {
     buf[34..38].copy_from_slice(&p.r.to_le_bytes());
     buf[38..42].copy_from_slice(&p.g.to_le_bytes());
     buf[42..46].copy_from_slice(&p.b.to_le_bytes());
+    buf[46] = p.parent; // rôle (tuteur) sur le tout dernier octet
     buf
 }
 
@@ -95,5 +97,6 @@ pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
     let r = f32::from_le_bytes(buf[34..38].try_into().ok()?);
     let g = f32::from_le_bytes(buf[38..42].try_into().ok()?);
     let b = f32::from_le_bytes(buf[42..46].try_into().ok()?);
-    Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b })
+    let parent = buf[46];
+    Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent })
 }

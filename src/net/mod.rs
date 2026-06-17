@@ -39,7 +39,7 @@ mod wire;
 pub use demo::run_demo;
 pub use link::NetLink;
 pub use natdemo::run_nat_test;
-pub use netcode::{net_interpolate, net_receive, net_send, RemoteAvatars};
+pub use netcode::{net_interpolate, net_receive, net_send, update_role_badges, RemoteAvatars};
 pub use orb::{orb_grab, orb_migrate, orb_send, orb_simulate, setup_orb};
 pub use punch::{net_punch, Holes};
 pub use rendezvous::run_rendezvous;
