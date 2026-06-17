@@ -32,6 +32,9 @@ const HELLO_PERIOD: f32 = 1.0;
 const PUNCH_PERIOD: f32 = 0.25;
 const DATA_PERIOD: f32 = 0.5;
 const TICK: Duration = Duration::from_millis(50);
+/// Au-delà de tant d'essais sans réponse, on cesse de logguer (mais on continue) :
+/// sans doute un NAT symétrique → ce sera le rôle du relais (chapitre 5).
+const PUNCH_LOG_LIMIT: u32 = 6;
 
 /// L'état d'un trou vers un pair (version texte de `punch::HoleState`).
 struct Hole {
@@ -128,7 +131,12 @@ pub fn run_nat_test(label: &str) {
                     h.punch_acc = 0.0;
                     h.tries += 1;
                     let _ = socket.send_to(h.addr, &encode_punch(id));
-                    println!("[{label}] PUNCH vers le pair {pid} (essai {}) — j'ouvre mon trou de retour.", h.tries);
+                    if h.tries <= PUNCH_LOG_LIMIT {
+                        println!("[{label}] PUNCH vers le pair {pid} (essai {}) — j'ouvre mon trou de retour.", h.tries);
+                        if h.tries == PUNCH_LOG_LIMIT {
+                            println!("[{label}] pair {pid} : pas de réponse ; on continue en silence (NAT symétrique ? → relais au chap. 5).");
+                        }
+                    }
                 }
             } else {
                 // Trou ouvert : on envoie un petit STATE pour prouver que ça circule.
