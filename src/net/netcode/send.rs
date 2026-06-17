@@ -21,15 +21,23 @@ pub fn net_send(
 ) {
     let dt = time.delta_secs();
 
-    // 1) Battement de cœur vers le rendez-vous : « je suis toujours là ».
+    // On a besoin de notre position tout de suite (pour la case AoI du HELLO).
+    let Ok(transform) = player.single() else {
+        return;
+    };
+    let pos = transform.translation;
+
+    // 1) Battement de cœur vers le rendez-vous : « je suis toujours là, dans
+    //    cette case ». Le rendez-vous s'en sert pour ne nous donner que les voisins.
     *hello_acc += dt;
     if *hello_acc >= 1.0 {
         *hello_acc = 0.0;
-        let _ = link.socket.send_to(link.rendezvous, &encode_hello());
+        let cell = crate::net::aoi::cell_of(pos.x, pos.z);
+        let _ = link.socket.send_to(link.rendezvous, &encode_hello(cell));
     }
 
-    // 2) Notre état vers tous les pairs (SEND_HZ/s). On accumule le temps et on
-    //    n'envoie que quand l'intervalle est atteint.
+    // 2) Notre état vers tous les pairs VOISINS (SEND_HZ/s). On accumule le temps
+    //    et on n'envoie que quand l'intervalle est atteint.
     *send_acc += dt;
     let interval = 1.0 / SEND_HZ;
     if *send_acc < interval {
@@ -42,10 +50,6 @@ pub fn net_send(
     let Some(my_id) = link.my_id else {
         return;
     };
-    let Ok(transform) = player.single() else {
-        return;
-    };
-    let pos = transform.translation;
 
     // VRAIE vitesse : variation de position depuis le dernier paquet / temps écoulé.
     let velocity = match *last_pos {

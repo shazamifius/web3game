@@ -5,6 +5,7 @@
 //!   - `wire`       : le TYPE d'un paquet (1er octet) + le port du rendez-vous
 //!   - `message`    : le format d'un état de joueur (`PlayerState`, encode/decode)
 //!   - `control`    : les messages de l'annuaire (HELLO / WELCOME)
+//!   - `aoi`        : Area of Interest (grille de cases : qui est « proche »)
 //!   - `transport`  : la prise réseau UDP générique (`Socket`)
 //!   - `rendezvous` : le serveur d'annuaire qui présente les joueurs entre eux
 //!   - `skin`       : la couleur de skin aléatoire d'une session
@@ -18,6 +19,7 @@
 //!   Terminal 2 :  nix-shell --run "cargo run -- a"
 //!   Terminal 3 :  nix-shell --run "cargo run -- b"   (… et autant qu'on veut)
 
+mod aoi;
 mod control;
 mod demo;
 mod link;

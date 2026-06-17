@@ -7,9 +7,18 @@
 use super::wire::{KIND_HELLO, KIND_WELCOME};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-/// Fabrique un paquet HELLO (juste le type : 1 octet).
-pub(crate) fn encode_hello() -> [u8; 1] {
-    [KIND_HELLO]
+/// Fabrique un paquet HELLO : type + la case (colonne, ligne) du joueur. Le
+/// rendez-vous s'en sert pour ne renvoyer que les voisins (Area of Interest).
+pub(crate) fn encode_hello(cell: (i8, i8)) -> [u8; 3] {
+    [KIND_HELLO, cell.0 as u8, cell.1 as u8]
+}
+
+/// Lit un paquet HELLO : renvoie la case (colonne, ligne) annoncée.
+pub(crate) fn decode_hello(buf: &[u8]) -> Option<(i8, i8)> {
+    if buf.len() < 3 || buf[0] != KIND_HELLO {
+        return None;
+    }
+    Some((buf[1] as i8, buf[2] as i8))
 }
 
 /// Fabrique un paquet WELCOME : type + ton_id + teinte_du_monde (2o) + nombre +
