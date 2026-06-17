@@ -13,16 +13,16 @@
 //!   sudo tc qdisc add dev lo root netem delay 80ms 40ms loss 10%   # dégrade
 //!   sudo tc qdisc del dev lo root                                  # remet normal
 
-mod badges;
 mod interpolate;
+mod nameplates;
 mod predict;
 mod receive;
 mod send;
 mod smooth;
 mod state;
 
-pub use badges::update_role_badges;
 pub use interpolate::net_interpolate;
+pub use nameplates::{update_nameplates, Nameplates};
 pub use receive::net_receive;
 pub use send::net_send;
 pub use state::RemoteAvatars;

@@ -59,8 +59,7 @@ pub struct RemoteAvatars {
 /// `pub(crate)` car il apparaît dans la signature des systèmes publics du netcode.
 #[derive(Component)]
 pub(crate) struct RemoteAvatar {
-    /// Identifiant du joueur : pas encore lu, mais servira au départ d'un joueur.
-    #[allow(dead_code)]
+    /// Identifiant du joueur : sert à associer l'étiquette de rôle (cf. `nameplates`).
     pub(super) id: u8,
 }
 

@@ -7,7 +7,6 @@
 //! Ce système ne bouge JAMAIS l'avatar lui-même (c'est `interpolate` qui anime).
 //! Il fait aussi disparaître les avatars des joueurs sortis de l'annuaire.
 
-use super::badges::{badge_mat, BadgeOwn, BadgeTutor, BadgeWard};
 use super::state::{
     RemoteAvatar, RemoteAvatars, RemoteHead, RemotePlayer, Snapshot, INTERP_DELAY, REMOTE_TIMEOUT,
 };
@@ -186,16 +185,6 @@ fn spawn_avatar(
     let skin = materials.add(body_skin(state.r, state.g, state.b));
     let skin_bright = materials.add(body_skin(state.r * 1.3, state.g * 1.3, state.b * 1.3));
 
-    // Badges de rôle (cachés au départ ; `update_role_badges` les allume).
-    // 🟠 orange = sous tutelle, 🟡 jaune = maître de l'orbe, 🟢 vert = tuteur.
-    let id = state.id;
-    let badge_diamond = meshes.add(Cuboid::new(0.13, 0.13, 0.13));
-    let badge_ball = meshes.add(Sphere::new(0.09));
-    let badge_roof = meshes.add(Cuboid::new(0.5, 0.05, 0.5));
-    let mat_ward = materials.add(badge_mat(1.7, 0.7, 0.1));
-    let mat_own = materials.add(badge_mat(1.6, 1.4, 0.2));
-    let mat_tutor = materials.add(badge_mat(0.2, 1.6, 0.4));
-
     let mut head_entity = Entity::PLACEHOLDER;
 
     let body = commands
@@ -249,30 +238,6 @@ fn spawn_avatar(
                     ));
                 })
                 .id();
-
-            // Badges de rôle, empilés à des hauteurs distinctes (lisibles en cas de
-            // cumul). Cachés ici ; allumés selon le rôle par `update_role_badges`.
-            p.spawn((
-                BadgeWard(id),
-                Mesh3d(badge_diamond),
-                MeshMaterial3d(mat_ward),
-                Transform::from_xyz(0.0, 0.95, 0.0).with_rotation(Quat::from_rotation_y(0.785)),
-                Visibility::Hidden,
-            ));
-            p.spawn((
-                BadgeOwn(id),
-                Mesh3d(badge_ball),
-                MeshMaterial3d(mat_own),
-                Transform::from_xyz(0.0, 1.15, 0.0),
-                Visibility::Hidden,
-            ));
-            p.spawn((
-                BadgeTutor(id),
-                Mesh3d(badge_roof),
-                MeshMaterial3d(mat_tutor),
-                Transform::from_xyz(0.0, 1.35, 0.0),
-                Visibility::Hidden,
-            ));
         })
         .id();
 

@@ -118,7 +118,7 @@ src/
         ├── state.rs     instantanés, file par joueur, RÉGLAGES (constantes)
         ├── send.rs      émettre notre état (débit limité + vraie vitesse)
         ├── receive.rs   ranger les paquets reçus (et créer l'avatar)
-        ├── badges.rs    badges de rôle au-dessus des avatars (own/tuteur/tutelle)
+        ├── nameplates.rs  étiquettes de rôle (texte) au-dessus des avatars
         ├── interpolate.rs   animer chaque image (horloge adaptative + ressort)
         ├── predict.rs   calculer l'état voulu (interpolation ou prédiction)
         └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
@@ -232,12 +232,13 @@ anti-triche).
       - [ ] **Shields** (témoins) : vérification **périodique** d'un Own d'objet/zone
         pour empêcher un maître local de tricher (passerelle vers le chapitre 5).
 
-      > **Aide visuelle (debug)** : ces rôles sont invisibles à l'œil, alors un
-      > **badge néon flotte au-dessus de chaque avatar distant** (`net/netcode/badges.rs`) :
-      > 🟡 **jaune** = maître de l'orbe · 🟢 **vert** = tuteur (relais actif) ·
-      > 🟠 **orange** = sous tutelle. Le rôle voyage dans l'octet `parent` du paquet
-      > d'état, donc tout le monde voit qui relaie qui. (On ne badge pas son propre
-      > corps : on lit les rôles sur les autres, idéalement depuis une 3e fenêtre.)
+      > **Aide visuelle (debug)** : ces rôles sont invisibles à l'œil, alors une
+      > **étiquette texte flotte au-dessus de chaque avatar distant**
+      > (`net/netcode/nameplates.rs`, rendu en overlay 2D projeté à l'écran) :
+      > `Joueur N — OWN BALLE / TUTEUR / SOUS TUTELLE`. Le rôle voyage dans l'octet
+      > `parent` du paquet d'état, donc tout le monde voit qui relaie qui. (On
+      > n'étiquette pas son propre corps : on lit les rôles sur les autres, idéalement
+      > depuis une 3e fenêtre.)
 - [ ] **Chapitre 5 — Confiance & anti-triche**
       Réputation décentralisée (**EigenTrust**), supernœuds/parrainage pour les
       mauvaises connexions, et le vrai ennemi de fond : l'**attaque Sybil**.
