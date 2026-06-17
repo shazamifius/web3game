@@ -10,6 +10,7 @@ pub(crate) const KIND_STATE: u8 = 1; // pair → pair : un PlayerState
 pub(crate) const KIND_HELLO: u8 = 2; // client → rendez-vous : « je suis là »
 pub(crate) const KIND_WELCOME: u8 = 3; // rendez-vous → client : ton id + la liste des autres
 pub(crate) const KIND_PUNCH: u8 = 4; // pair → pair : « j'ouvre mon trou NAT vers toi » (hole punching)
+pub(crate) const KIND_ORB: u8 = 5; // maître → pairs : l'état de l'orbe partagée (objet du monde)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {

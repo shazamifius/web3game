@@ -7,6 +7,7 @@
 //!   - `control`    : les messages de l'annuaire (HELLO / WELCOME)
 //!   - `aoi`        : Area of Interest (allocation de budget : qui reçoit quel débit)
 //!   - `punch`      : hole punching (percer les NAT pour une connexion directe)
+//!   - `orb`        : l'orbe partagée (objet du monde à maître unique + transfert)
 //!   - `transport`  : la prise réseau UDP générique (`Socket`)
 //!   - `rendezvous` : le serveur d'annuaire qui présente les joueurs entre eux
 //!   - `skin`       : la couleur de skin aléatoire d'une session
@@ -27,6 +28,7 @@ mod link;
 mod message;
 mod natdemo;
 mod netcode;
+mod orb;
 mod punch;
 mod rendezvous;
 mod skin;
@@ -38,6 +40,7 @@ pub use demo::run_demo;
 pub use link::NetLink;
 pub use natdemo::run_nat_test;
 pub use netcode::{net_interpolate, net_receive, net_send, RemoteAvatars};
+pub use orb::{orb_grab, orb_send, orb_simulate, setup_orb};
 pub use punch::{net_punch, Holes};
 pub use rendezvous::run_rendezvous;
 pub use skin::{random_color, MyColor};

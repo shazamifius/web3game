@@ -84,6 +84,9 @@ fn main() {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()
                     .init_resource::<net::Holes>()
+                    // L'orbe partagée : sa sphère 3D et la ressource d'état (Startup),
+                    // puis les systèmes qui la font vivre (Update). Client uniquement.
+                    .add_systems(Startup, net::setup_orb)
                     .add_systems(
                         Update,
                         (
@@ -92,6 +95,9 @@ fn main() {
                             net::net_receive,
                             net::net_interpolate,
                             world::apply_world_color,
+                            net::orb_grab,
+                            net::orb_simulate,
+                            net::orb_send,
                         ),
                     );
             }

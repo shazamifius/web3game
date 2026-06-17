@@ -13,8 +13,9 @@ use super::state::{
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
 use crate::net::message::decode;
+use crate::net::orb::{apply_incoming, decode_orb, Orb};
 use crate::net::punch::{decode_punch, Holes};
-use crate::net::wire::{kind, KIND_PUNCH, KIND_STATE, KIND_WELCOME};
+use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_STATE, KIND_WELCOME};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -23,6 +24,7 @@ pub fn net_receive(
     mut link: ResMut<NetLink>,
     mut avatars: ResMut<RemoteAvatars>,
     mut holes: ResMut<Holes>,
+    mut orb: ResMut<Orb>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -50,6 +52,13 @@ pub fn net_receive(
                         hole.open = true;
                         println!("Trou OUVERT avec le pair {id} ! Connexion directe établie.");
                     }
+                }
+            }
+            // --- État de l'orbe : seul le maître l'émet. On l'accepte si elle
+            //     SUPPLANTE notre version (cf. règle d'autorité dans `orb`). -------
+            Some(KIND_ORB) => {
+                if let Some(w) = decode_orb(&bytes) {
+                    apply_incoming(&mut orb, w);
                 }
             }
             // --- État d'un pair : on le range pour l'interpolation -------------
