@@ -6,6 +6,7 @@
 //! Le 1er octet est le TYPE de paquet (`KIND_STATE`) : il distingue un état de
 //! joueur des messages d'annuaire (voir `wire`/`control`).
 
+use super::crypto::{verify, Identity, PUBKEY_LEN, SIG_LEN};
 use super::wire::{KIND_RELAY, KIND_STATE, PROTO_VERSION};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id`), où (`x,y,z`), à quelle
@@ -57,27 +58,6 @@ pub(crate) fn encode(p: &PlayerState) -> [u8; STATE_SIZE] {
     buf
 }
 
-/// Variante RELAYÉE : exactement le même état, mais avec l'octet de tête
-/// `KIND_RELAY`. Un joueur à faible upload l'envoie à son parent pour dire
-/// « recopie ça à mes voisins » (cf. `net/netcode`). Le parent le ré-émet ensuite
-/// en `KIND_STATE` ordinaire — l'`id` reste celui de l'auteur, pas du relayeur.
-pub(crate) fn encode_relay(p: &PlayerState) -> [u8; STATE_SIZE] {
-    let mut buf = encode(p);
-    buf[0] = KIND_RELAY; // seul l'octet de type change ; tout le reste est identique
-    buf
-}
-
-/// Décode un paquet RELAY (même corps qu'un état, type `KIND_RELAY`).
-pub(crate) fn decode_relay(buf: &[u8]) -> Option<PlayerState> {
-    if buf.len() < STATE_SIZE || buf[0] != KIND_RELAY || buf[1] != PROTO_VERSION {
-        return None;
-    }
-    // Le corps est identique à un état : on rebascule l'octet de tête et on réutilise
-    // `decode` pour ne pas dupliquer la lecture des 11 nombres.
-    let mut tmp = buf[..STATE_SIZE].to_vec();
-    tmp[0] = KIND_STATE;
-    decode(&tmp)
-}
 
 /// L'inverse : reconstruire un `PlayerState` à partir des octets reçus.
 /// Renvoie `None` si le paquet est trop court ou n'est pas un état — on ne fait
@@ -110,6 +90,61 @@ pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
         return None;
     }
     Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent })
+}
+
+// ----------------------------------------------------------------------------
+// ENVELOPPE SIGNÉE (chapitre 5.1) : corps + sceau cryptographique.
+// ----------------------------------------------------------------------------
+/// Taille d'un état SIGNÉ : le corps (48 o) suivi de la signature (64 o) = 112.
+pub(crate) const SIGNED_STATE_SIZE: usize = STATE_SIZE + SIG_LEN;
+
+/// Scelle un état : on encode le corps (forme canonique `KIND_STATE`), on le SIGNE
+/// avec notre clé privée, et on colle la signature derrière. Le récepteur pourra
+/// prouver que CES octets viennent bien de nous et n'ont pas bougé.
+///
+/// Astuce du relais : la signature couvre TOUJOURS le corps en forme `KIND_STATE`.
+/// Un client à faible upload n'a qu'à basculer le 1er octet en `KIND_RELAY` pour le
+/// transport (cf. `mark_as_relay`) ; le parent le rebascule en `KIND_STATE` avant
+/// de recopier → les octets signés sont identiques, le sceau tient. Le parent porte
+/// l'enveloppe mais ne peut pas en changer le contenu.
+pub(crate) fn encode_signed(p: &PlayerState, identity: &Identity) -> [u8; SIGNED_STATE_SIZE] {
+    let body = encode(p); // 48 octets, 1er octet = KIND_STATE
+    let sig = identity.sign(&body); // 64 octets : le sceau
+    let mut out = [0u8; SIGNED_STATE_SIZE];
+    out[..STATE_SIZE].copy_from_slice(&body);
+    out[STATE_SIZE..].copy_from_slice(&sig);
+    out
+}
+
+/// Bascule un paquet signé en variante RELAY (juste le 1er octet). Le corps SIGNÉ
+/// ne change pas : on ne touche pas aux octets couverts par le sceau (on a signé la
+/// forme `KIND_STATE`, on ne fait que marquer le transport).
+pub(crate) fn mark_as_relay(signed: &mut [u8; SIGNED_STATE_SIZE]) {
+    signed[0] = KIND_RELAY;
+}
+
+/// Vérifie le sceau d'un état signé avec la clé publique de l'émetteur, PUIS le
+/// décode. Renvoie `None` au moindre problème : trop court, signature qui ne colle
+/// pas (forgé ou altéré), ou corps invalide. Accepte les deux types en tête
+/// (`KIND_STATE` direct ou `KIND_RELAY` recopié) : on ramène à la forme canonique
+/// `KIND_STATE` — celle qui a été signée — avant de vérifier.
+pub(crate) fn decode_verified(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> Option<PlayerState> {
+    if buf.len() < SIGNED_STATE_SIZE {
+        return None;
+    }
+    // Corps canonique : copie des 48 octets, 1er octet forcé à KIND_STATE (la forme
+    // qui a été signée, que le paquet arrive en direct ou via un relais).
+    let mut body = [0u8; STATE_SIZE];
+    body.copy_from_slice(&buf[..STATE_SIZE]);
+    body[0] = KIND_STATE;
+
+    let mut sig = [0u8; SIG_LEN];
+    sig.copy_from_slice(&buf[STATE_SIZE..SIGNED_STATE_SIZE]);
+
+    if !verify(&body, &sig, pubkey) {
+        return None; // sceau invalide : forgé, altéré, ou mauvaise identité
+    }
+    decode(&body) // re-valide type + version + finitude
 }
 
 #[cfg(test)]
@@ -163,17 +198,55 @@ mod tests {
         assert!(decode(&encode(&p)).is_none());
     }
 
-    /// Un RELAY se décode comme un état (même corps, type différent).
+    fn etat_exemple() -> PlayerState {
+        PlayerState {
+            id: 5, x: 1.0, y: 0.7, z: -2.0, vx: 0.5, vy: 0.0, vz: -1.0,
+            yaw: 0.3, pitch: 0.1, r: 0.9, g: 0.4, b: 0.2, parent: 0,
+        }
+    }
+
+    /// Un état SIGNÉ se vérifie avec la bonne clé publique puis se décode.
     #[test]
-    fn relay_se_decode_comme_un_etat() {
-        let p = PlayerState {
-            id: 9, x: 2.0, y: 0.7, z: 2.0, vx: 0.0, vy: 0.0, vz: 0.0,
-            yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: 4,
-        };
-        let d = decode_relay(&encode_relay(&p)).expect("le relais doit se décoder");
-        assert_eq!(d.id, 9);
-        assert_eq!(d.parent, 4);
-        // … mais un état ordinaire n'est PAS un relais.
-        assert!(decode_relay(&encode(&p)).is_none());
+    fn etat_signe_se_verifie_et_se_decode() {
+        let id = Identity::generate();
+        let p = etat_exemple();
+        let signed = encode_signed(&p, &id);
+        let d = decode_verified(&signed, &id.public()).expect("sceau valide");
+        assert_eq!(d.id, 5);
+        assert_eq!(d.z, -2.0);
+    }
+
+    /// Le moindre octet du CORPS modifié casse le sceau → rejet (anti-falsification).
+    #[test]
+    fn etat_signe_altere_est_rejete() {
+        let id = Identity::generate();
+        let mut signed = encode_signed(&etat_exemple(), &id);
+        signed[3] ^= 0xFF; // on triture un octet de la position
+        assert!(decode_verified(&signed, &id.public()).is_none());
+    }
+
+    /// Vérifié contre la clé publique de QUELQU'UN D'AUTRE → rejet (anti-usurpation).
+    #[test]
+    fn etat_signe_mauvaise_cle_est_rejete() {
+        let moi = Identity::generate();
+        let autre = Identity::generate();
+        let signed = encode_signed(&etat_exemple(), &moi);
+        assert!(decode_verified(&signed, &autre.public()).is_none());
+    }
+
+    /// L'enveloppe scellée résiste au RELAIS : basculer en KIND_RELAY (ce que fait
+    /// le client faible) puis rebascule implicite par decode_verified ne casse pas
+    /// le sceau — mais changer le contenu, si. C'est la garantie « parent porteur,
+    /// pas faussaire ».
+    #[test]
+    fn enveloppe_scellee_survit_au_relais_mais_pas_a_la_falsification() {
+        let id = Identity::generate();
+        let mut signed = encode_signed(&etat_exemple(), &id);
+        mark_as_relay(&mut signed); // le client faible marque le transport
+        // Le parent (et les voisins) vérifient : le sceau tient malgré KIND_RELAY.
+        assert!(decode_verified(&signed, &id.public()).is_some());
+        // Mais si un parent malveillant change la position, le sceau casse.
+        signed[5] ^= 0x7F;
+        assert!(decode_verified(&signed, &id.public()).is_none());
     }
 }

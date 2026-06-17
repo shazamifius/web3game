@@ -8,7 +8,7 @@ use super::state::{RemoteAvatars, SEND_HZ};
 use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::link::NetLink;
-use crate::net::message::{encode, encode_relay, PlayerState};
+use crate::net::message::{encode_signed, mark_as_relay, PlayerState};
 use crate::net::punch::Holes;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -38,7 +38,10 @@ pub fn net_send(
     *hello_acc += dt;
     if *hello_acc >= 1.0 {
         *hello_acc = 0.0;
-        let _ = link.socket.send_to(link.rendezvous, &encode_hello(pos.x, pos.z));
+        // Notre HELLO porte notre clé publique : le rendez-vous la redistribue pour
+        // que chacun puisse vérifier nos signatures.
+        let hello = encode_hello(pos.x, pos.z, &link.identity.public());
+        let _ = link.socket.send_to(link.rendezvous, &hello);
     }
 
     // 2) Notre état vers tous les pairs VOISINS (SEND_HZ/s). On accumule le temps
@@ -106,12 +109,18 @@ pub fn net_send(
     // continue de recevoir tout le monde, comme une vraie 4G.)
     if link.weak {
         if let Some((_, addr)) = parent {
-            let _ = link.socket.send_to(*addr, &encode_relay(&me));
+            // On SCELLE notre état, puis on marque l'enveloppe « à recopier ». Le
+            // parent ne peut que la porter : il ne peut pas en changer le contenu
+            // sans casser notre sceau (cf. `encode_signed` / `mark_as_relay`).
+            let mut sealed = encode_signed(&me, &link.identity);
+            mark_as_relay(&mut sealed);
+            let _ = link.socket.send_to(*addr, &sealed);
         }
         return;
     }
 
-    let bytes = encode(&me);
+    // État SCELLÉ (signé) diffusé en direct à nos voisins.
+    let bytes = encode_signed(&me, &link.identity);
     let me_xz = (pos.x, pos.z);
 
     // 1) PERTINENCE : un poids par pair, à partir de sa dernière position connue

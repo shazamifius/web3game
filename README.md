@@ -104,7 +104,9 @@ src/
 ├── player.rs            le personnage, la caméra 1re personne, les contrôles
 └── net/                 LE RÉSEAU, fait main
     ├── mod.rs           assemble le module et expose l'API publique
-    ├── message.rs       le format d'un paquet (PlayerState, encode/decode)
+    ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
+    ├── control.rs       les messages d'annuaire (HELLO / WELCOME + clés publiques)
+    ├── crypto.rs        signatures Ed25519 — la SEULE boîte noire (chap. 5)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
     ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
@@ -128,6 +130,11 @@ src/
 `version du protocole` (`PROTO_VERSION`). Un récepteur d'une autre version rejette
 le paquet **et le signale** au lieu de le lire de travers — fini le « bonhomme
 invisible » de deux binaires désynchronisés. Voir `net/wire.rs`.
+
+Depuis le chapitre 5.1, tout paquet d'état est **signé** : on émet le corps suivi
+d'un **sceau Ed25519 de 64 octets** (état signé = 48 + 64 = **112 octets**). Le
+récepteur le **vérifie** avec la clé publique de l'émetteur (reçue via le
+rendez-vous) avant de l'accepter. Le corps lui-même reste :
 
 Un paquet de joueur fait **48 octets** : `type` (1) + `version` (1) + `id` (1) +
 `x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1, l'id de
@@ -244,9 +251,22 @@ anti-triche).
       > `parent` du paquet d'état, donc tout le monde voit qui relaie qui. (On
       > n'étiquette pas son propre corps : on lit les rôles sur les autres, idéalement
       > depuis une 3e fenêtre.)
-- [ ] **Chapitre 5 — Confiance & anti-triche**
-      Réputation décentralisée (**EigenTrust**), supernœuds/parrainage pour les
-      mauvaises connexions, et le vrai ennemi de fond : l'**attaque Sybil**.
+- [~] **Chapitre 5 — Confiance & anti-triche** *(en cours)*
+      - [x] **5.1 — Identité signée (enveloppe scellée).** Chaque session a une paire
+        de clés **Ed25519** ; la clé publique est l'identité, diffusée par le
+        rendez-vous (dans HELLO/WELCOME). Tout état est **signé** (corps 48 o +
+        sceau 64 o = 112 o) et **vérifié** à la réception. Ferme l'**usurpation
+        d'identité** (on ne peut plus se faire passer pour un autre `id`) et la
+        **falsification par un relais** (le parent porte l'enveloppe scellée
+        verbatim, il ne peut plus modifier l'état de son protégé). La crypto vit
+        dans un **seul** fichier (`net/crypto.rs`) : la seule « boîte noire »
+        assumée du projet — on ne code JAMAIS sa propre crypto.
+      - [ ] **5.2 — Anti-rejeu** : compteur monotone dans la signature (empêche de
+        rejouer un vieux paquet).
+      - [ ] **5.3 — Orbe signée + Shields** : signer le transfert d'orbe et le faire
+        **témoigner** (ferme le vol à distance et le gel par `version = 65535`).
+      - [ ] **5.4 — Réputation** : compter les sceaux invalides par pair → **EigenTrust**.
+      - [ ] **5.5 — Sybil & NAT symétrique** : coût d'entrée, rate-limit, relais TURN.
 - [ ] **Chapitre 6 — Voix spatiale**
       Chat vocal P2P avec priorité au volume (*loudness priority*).
 

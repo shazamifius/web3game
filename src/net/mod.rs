@@ -5,6 +5,7 @@
 //!   - `wire`       : le TYPE d'un paquet (1er octet) + le port du rendez-vous
 //!   - `message`    : le format d'un état de joueur (`PlayerState`, encode/decode)
 //!   - `control`    : les messages de l'annuaire (HELLO / WELCOME)
+//!   - `crypto`     : signatures à clé publique (Ed25519) — la frontière de confiance
 //!   - `aoi`        : Area of Interest (allocation de budget : qui reçoit quel débit)
 //!   - `punch`      : hole punching (percer les NAT pour une connexion directe)
 //!   - `orb`        : l'orbe partagée (objet du monde à maître unique + transfert)
@@ -23,6 +24,7 @@
 
 mod aoi;
 mod control;
+mod crypto;
 mod demo;
 mod link;
 mod message;

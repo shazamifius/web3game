@@ -18,6 +18,7 @@
 //!   RENDEZVOUS_ADDR=10.0.0.1:4000 cargo run -- nat-test alice
 
 use super::control::{decode_welcome, encode_hello};
+use super::crypto::Identity;
 use super::link::rendezvous_addr;
 use super::message::{decode, encode, PlayerState};
 use super::punch::{decode_punch, encode_punch};
@@ -58,6 +59,8 @@ pub fn run_nat_test(label: &str) {
     println!("[{label}] prise locale {local:?}, rendez-vous {rendezvous}.");
     println!("[{label}] j'envoie HELLO au rendez-vous et j'attends la liste des pairs…\n");
 
+    // Identité de ce client de test : le rendez-vous exige une clé publique dans HELLO.
+    let identity = Identity::generate();
     let mut my_id: Option<u8> = None;
     let mut holes: HashMap<u8, Hole> = HashMap::new();
     let mut hello_acc = HELLO_PERIOD; // pour dire HELLO dès le premier tour
@@ -72,7 +75,7 @@ pub fn run_nat_test(label: &str) {
         hello_acc += dt;
         if hello_acc >= HELLO_PERIOD {
             hello_acc = 0.0;
-            let _ = socket.send_to(rendezvous, &encode_hello(0.0, 0.0));
+            let _ = socket.send_to(rendezvous, &encode_hello(0.0, 0.0, &identity.public()));
         }
 
         // 2) On relève le courrier.
@@ -85,7 +88,7 @@ pub fn run_nat_test(label: &str) {
                             println!("[{label}] le rendez-vous m'a donné l'identifiant {id}.");
                         }
                         // On (re)synchronise la liste des pairs à percer.
-                        for (pid, addr) in roster {
+                        for (pid, addr, _pubkey) in roster {
                             holes.entry(pid).or_insert(Hole {
                                 addr,
                                 open: false,

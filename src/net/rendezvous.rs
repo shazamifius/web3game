@@ -10,6 +10,7 @@
 
 use super::aoi::within_radius;
 use super::control::{decode_hello, encode_welcome};
+use super::crypto::PUBKEY_LEN;
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -24,6 +25,7 @@ struct ClientInfo {
     id: u8,
     seen: Instant,
     pos: (f32, f32),
+    pubkey: [u8; PUBKEY_LEN], // identité du client : redistribuée aux autres
     last_count: usize,
 }
 
@@ -47,10 +49,12 @@ pub fn run_rendezvous() {
 
     loop {
         for (from, bytes) in socket.poll() {
-            // HELLO porte la position du joueur ; on s'en sert pour l'Area of Interest.
-            let Some(pos) = decode_hello(&bytes) else {
+            // HELLO porte la position du joueur (pour l'AoI) ET sa clé publique
+            // (son identité, qu'on redistribuera pour que chacun vérifie ses signatures).
+            let Some((px, pz, pubkey)) = decode_hello(&bytes) else {
                 continue; // le rendez-vous ne comprend que HELLO
             };
+            let pos = (px, pz);
             let now = Instant::now();
             // Nouveau venu ? On lui donne le prochain identifiant libre.
             let (id, last_count) = match clients.get(&from) {
@@ -67,16 +71,16 @@ pub fn run_rendezvous() {
             // très grand rayon (ici ça revient à « tout le monde » dans une salle).
             // Ce n'est PAS la règle de jeu : la vraie répartition (qui reçoit quel
             // débit) se fait côté client par water-filling. Personne n'est exclu.
-            let roster: Vec<(u8, SocketAddr)> = clients
+            let roster: Vec<(u8, SocketAddr, [u8; PUBKEY_LEN])> = clients
                 .iter()
                 .filter(|(addr, info)| **addr != from && within_radius(info.pos, pos))
-                .map(|(addr, info)| (info.id, *addr))
+                .map(|(addr, info)| (info.id, *addr, info.pubkey))
                 .collect();
 
             if roster.len() != last_count {
                 println!("Joueur {id} : {} a portee.", roster.len());
             }
-            clients.insert(from, ClientInfo { id, seen: now, pos, last_count: roster.len() });
+            clients.insert(from, ClientInfo { id, seen: now, pos, pubkey, last_count: roster.len() });
             let _ = socket.send_to(from, &encode_welcome(id, world_hue, &roster));
         }
 

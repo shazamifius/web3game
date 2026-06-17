@@ -7,6 +7,14 @@ edition = "2024"
 # Moteur de jeu, 100 % Rust. Feature "wayland" car la session est en Wayland.
 bevy = { version = "0.18.1", features = ["wayland"] }
 
+# CRYPTO (chapitre 5) : signatures à clé publique Ed25519. C'est la SEULE
+# « boîte noire » du projet, et c'est volontaire : on ne code JAMAIS sa propre
+# crypto (l'arithmétique sur courbe elliptique est un nid à failles, même pour
+# des experts). On délègue donc le calcul de signature à cette bibliothèque
+# auditée, et on construit TOUT le reste du protocole à la main autour
+# (cf. src/net/crypto.rs, le seul fichier qui l'utilise).
+ed25519-dalek = "2"
+
 # On compile les dépendances (dont Bevy) en optimisé même en mode debug :
 # la première compilation est longue, mais le jeu tourne ensuite de façon fluide.
 [profile.dev.package."*"]

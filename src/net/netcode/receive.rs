@@ -12,7 +12,7 @@ use super::state::{
 };
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
-use crate::net::message::{decode, decode_relay, encode, PlayerState};
+use crate::net::message::{decode_verified, PlayerState};
 use crate::net::orb::{apply_incoming, decode_orb, Orb};
 use crate::net::punch::{decode_punch, Holes};
 use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION};
@@ -52,11 +52,15 @@ pub fn net_receive(
         }
         match kind(&bytes) {
             // --- Réponse du rendez-vous : notre id + la liste des autres -------
+            //     Le roster porte maintenant la CLÉ PUBLIQUE de chaque pair : on
+            //     remplit deux annuaires, les adresses (pour émettre) et les clés
+            //     (pour VÉRIFIER leurs signatures).
             Some(KIND_WELCOME) => {
                 if let Some((your_id, world_hue, roster)) = decode_welcome(&bytes) {
                     link.my_id = Some(your_id);
                     link.world_hue = Some(world_hue);
-                    link.peers = roster.into_iter().collect();
+                    link.peers = roster.iter().map(|(id, addr, _)| (*id, *addr)).collect();
+                    link.pubkeys = roster.iter().map(|(id, _, pk)| (*id, *pk)).collect();
                 }
             }
             // --- PUNCH d'un pair : son paquet est ARRIVÉ, donc notre trou de
@@ -71,16 +75,19 @@ pub fn net_receive(
                 }
             }
             // --- RELAY d'un joueur à faible upload (W) : on est son PARENT. On
-            //     RECOPIE son état à tous nos pairs (sauf W lui-même), ré-émis en
-            //     KIND_STATE. L'id reste celui de W → ses voisins le rangent sous
-            //     SON avatar : on n'est qu'un porteur d'octets, pas une autorité. ---
+            //     VÉRIFIE le sceau de W, puis on RECOPIE l'enveloppe SCELLÉE telle
+            //     quelle (octets verbatim), juste rebasculée en KIND_STATE. On ne
+            //     ré-encode SURTOUT pas : ainsi on ne peut pas altérer son état (le
+            //     sceau le prouve à ses voisins). Porteur d'octets, jamais faussaire.
             Some(KIND_RELAY) => {
-                if let Some(state) = decode_relay(&bytes) {
-                    // 1) on RECOPIE à nos voisins (sauf l'auteur) — rôle de porteur.
-                    let relayed = encode(&state);
+                if let Some(state) = verify_packet(&bytes, &link) {
+                    // 1) on RECOPIE l'enveloppe scellée à nos voisins (sauf l'auteur),
+                    //    rebasculée en KIND_STATE (la forme que W a signée).
+                    let mut forward = bytes.clone();
+                    forward[0] = KIND_STATE;
                     for (id, addr) in &link.peers {
                         if *id != state.id {
-                            let _ = link.socket.send_to(*addr, &relayed);
+                            let _ = link.socket.send_to(*addr, &forward);
                         }
                     }
                     // 2) on l'affiche AUSSI chez nous : le parent voit son protégé.
@@ -92,14 +99,16 @@ pub fn net_receive(
             }
             // --- État de l'orbe : seul le maître l'émet. On l'accepte si elle
             //     SUPPLANTE notre version (cf. règle d'autorité dans `orb`). -------
+            //     (Signature de l'orbe : chapitre 5.3, avec les Shields.) ----------
             Some(KIND_ORB) => {
                 if let Some(w) = decode_orb(&bytes) {
                     apply_incoming(&mut orb, w, now);
                 }
             }
-            // --- État d'un pair : on le range pour l'interpolation -------------
+            // --- État d'un pair : on VÉRIFIE son sceau, puis on le range. Un paquet
+            //     non signé / forgé / dont on n'a pas encore la clé est ignoré. -----
             Some(KIND_STATE) => {
-                if let Some(state) = decode(&bytes) {
+                if let Some(state) = verify_packet(&bytes, &link) {
                     ingest_state(
                         state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
                         &mut meshes, &mut materials,
@@ -123,6 +132,19 @@ pub fn net_receive(
         }
         keep
     });
+}
+
+/// Vérifie le sceau d'un paquet d'état (direct ou relayé) avec la clé publique de
+/// l'émetteur revendiqué (son id est à l'octet 2). Renvoie `None` si :
+///   - on n'a pas ENCORE sa clé (annuaire du rendez-vous en retard) → ignoré en silence ;
+///   - le sceau ne colle PAS (forgé, altéré, ou mauvaise identité) → jeté.
+/// C'est ICI que meurt l'usurpation d'identité : un paquet « id = 3 » qui n'est pas
+/// signé par la clé privée de 3 est refusé — impossible de se faire passer pour autrui.
+/// (Chapitre 5.4 : compter les sceaux invalides par pair = la graine de la réputation.)
+fn verify_packet(bytes: &[u8], link: &NetLink) -> Option<PlayerState> {
+    let claimed_id = *bytes.get(2)?;
+    let pubkey = link.pubkeys.get(&claimed_id)?;
+    decode_verified(bytes, pubkey)
 }
 
 /// Range un état reçu (direct ou relayé) : marque le trou ouvert, empile

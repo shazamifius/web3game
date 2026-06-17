@@ -4,6 +4,7 @@
 //! du rendez-vous, notre identifiant (attribué par le rendez-vous → `Option`
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
+use super::crypto::{Identity, PUBKEY_LEN};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
@@ -16,8 +17,15 @@ pub struct NetLink {
     pub(crate) rendezvous: SocketAddr,
     pub(crate) my_id: Option<u8>, // None tant que le rendez-vous ne nous a pas répondu
     pub(crate) my_color: (f32, f32, f32),
+    /// Notre identité cryptographique (paire de clés). On SIGNE nos paquets avec ;
+    /// notre clé publique est notre identité, diffusée par le rendez-vous.
+    pub(crate) identity: Identity,
     pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<u8, SocketAddr>, // les autres joueurs : id → adresse
+    /// Annuaire des CLÉS PUBLIQUES (id → clé) reçu du rendez-vous. C'est lui qui
+    /// permet de VÉRIFIER les signatures : un paquet d'un id dont on n'a pas la clé,
+    /// ou dont le sceau ne colle pas, est rejeté.
+    pub(crate) pubkeys: HashMap<u8, [u8; PUBKEY_LEN]>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
@@ -29,6 +37,8 @@ impl NetLink {
     pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
         let rendezvous = rendezvous_addr();
+        // On tire notre paire de clés une fois, au lancement. La privée reste ici.
+        let identity = Identity::generate();
         println!(
             "Client réseau : port local {}, rendez-vous {}{}.",
             socket.local_addr()?,
@@ -40,8 +50,10 @@ impl NetLink {
             rendezvous,
             my_id: None,
             my_color: color,
+            identity,
             world_hue: None,
             peers: HashMap::new(),
+            pubkeys: HashMap::new(),
             weak,
         })
     }

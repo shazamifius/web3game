@@ -40,7 +40,10 @@ impl Socket {
     /// l'expéditeur. Ne bloque jamais.
     pub(crate) fn poll(&self) -> Vec<(SocketAddr, Vec<u8>)> {
         let mut received = Vec::new();
-        let mut buf = [0u8; 1024];
+        // Tampon de lecture. 2 Ko : large pour nos paquets (état signé = 112 o) et
+        // pour un WELCOME qui transporte les clés publiques (~39 o par pair). À très
+        // grande échelle, le WELCOME devra être découpé en morceaux (chantier futur).
+        let mut buf = [0u8; 2048];
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((n, from)) => received.push((from, buf[..n].to_vec())),
