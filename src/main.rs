@@ -96,6 +96,7 @@ fn main() {
                             net::net_interpolate,
                             world::apply_world_color,
                             net::orb_grab,
+                            net::orb_migrate,
                             net::orb_simulate,
                             net::orb_send,
                         ),

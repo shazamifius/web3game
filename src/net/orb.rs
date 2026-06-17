@@ -35,6 +35,9 @@ const HIT_SPEED: f32 = 5.0;
 const PLAYER_RADIUS: f32 = 0.30;
 /// Fréquence à laquelle le maître diffuse l'état de l'orbe (paquets/s).
 const ORB_SEND_HZ: f32 = 20.0;
+/// Délai sans nouvelle du maître au-delà duquel on le présume parti (s). À 20 Hz,
+/// 0,5 s = ~10 battements manqués : assez pour ne pas confondre « parti » et « lag ».
+const MASTER_TIMEOUT: f32 = 0.5;
 /// Couleur de l'orbe tant que personne ne l'a touchée (blanc bleuté néon).
 const NEUTRAL_COLOR: (f32, f32, f32) = (0.85, 0.85, 1.0);
 
@@ -105,6 +108,7 @@ pub struct Orb {
     pub(crate) color: (f32, f32, f32),
     mat: Handle<StandardMaterial>,        // pour recolorer l'orbe au changement de maître
     shown: Option<(f32, f32, f32)>,       // dernière couleur réellement appliquée
+    last_heard: f32,                      // instant du dernier paquet reçu du maître (pour la migration)
 }
 
 /// Marque l'entité 3D (la sphère) qui matérialise l'orbe à l'écran.
@@ -152,6 +156,7 @@ pub fn setup_orb(
         color: NEUTRAL_COLOR,
         mat,
         shown: Some(NEUTRAL_COLOR),
+        last_heard: 0.0,
     });
 }
 
@@ -301,12 +306,67 @@ pub fn orb_send(
 
 /// Appliquer un paquet d'orbe reçu du réseau (appelé depuis `net_receive`, qui est
 /// le seul à vider la prise UDP). On n'écrase notre état QUE s'il est supplanté.
-pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire) {
+/// `now` sert à dater ce battement : c'est lui qui prouve que le maître est vivant
+/// (cf. `orb_migrate`).
+pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) {
     if supersedes(w.version, w.owner, orb.version, orb.owner) {
         orb.owner = Some(w.owner);
         orb.version = w.version;
         orb.pos = Vec3::new(w.x, w.y, w.z);
         orb.vel = Vec3::new(w.vx, w.vy, w.vz);
         orb.color = (w.r, w.g, w.b);
+        orb.last_heard = now; // le maître vient de se manifester : il est vivant
     }
+}
+
+/// UPDATE (client) : la MIGRATION D'HÔTE de l'orbe — le cœur du chapitre 4.
+///
+/// Si le maître ne s'est plus manifesté depuis `MASTER_TIMEOUT`, on le présume parti
+/// et on élit son remplaçant. L'élection est **déterministe** : chaque témoin prend
+/// le plus petit id parmi {soi} ∪ {pairs connus}, l'ancien maître exclu. Comme tout
+/// le monde a la même liste et la même règle, tout le monde désigne le MÊME gagnant
+/// sans avoir à voter. Seul le gagnant se proclame ; il incrémente la version, ce qui
+/// règle d'office un éventuel « split-brain » (l'ancien maître, s'il réapparaît, verra
+/// une version plus haute et abdiquera via `supersedes`).
+///
+/// Limite assumée (à lever plus tard) : on fait confiance à la liste `peers` du
+/// rendez-vous pour savoir qui est encore là. Si le rendez-vous est mort ET que le
+/// plus petit id élu est lui aussi parti, l'orbe peut rester figée — la détection de
+/// vivacité fine viendra avec le relais/parent (chap. 4.1) et l'anti-triche (chap. 5).
+pub fn orb_migrate(time: Res<Time>, link: Res<NetLink>, mut orb: ResMut<Orb>) {
+    let Some(my_id) = link.my_id else {
+        return;
+    };
+    // Rien à reprendre si l'orbe n'a pas de maître, ou si c'est déjà moi.
+    let Some(owner) = orb.owner else {
+        return;
+    };
+    if owner == my_id {
+        return;
+    }
+    // Le maître bat-il encore ? Tant qu'on l'entend, pas de migration.
+    let now = time.elapsed_secs();
+    if now - orb.last_heard < MASTER_TIMEOUT {
+        return;
+    }
+
+    // ÉLECTION déterministe : le plus petit id, l'ancien maître écarté.
+    let mut winner = my_id;
+    for id in link.peers.keys() {
+        if *id != owner && *id < winner {
+            winner = *id;
+        }
+    }
+
+    if winner == my_id {
+        // C'est moi : je reprends l'orbe à son dernier état connu (position + vitesse
+        // extrapolées) et je relance sa simulation. La version monte → mes paquets
+        // supplantent tout le reste.
+        orb.owner = Some(my_id);
+        orb.version = orb.version.wrapping_add(1);
+        orb.color = link.my_color;
+        orb.last_heard = now;
+        println!("Maître {owner} disparu — je reprends l'orbe (v{}).", orb.version);
+    }
+    // Sinon : quelqu'un d'autre est élu ; on attend simplement son premier paquet.
 }

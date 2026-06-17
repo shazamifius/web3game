@@ -58,7 +58,7 @@ pub fn net_receive(
             //     SUPPLANTE notre version (cf. règle d'autorité dans `orb`). -------
             Some(KIND_ORB) => {
                 if let Some(w) = decode_orb(&bytes) {
-                    apply_incoming(&mut orb, w);
+                    apply_incoming(&mut orb, w, now);
                 }
             }
             // --- État d'un pair : on le range pour l'interpolation -------------

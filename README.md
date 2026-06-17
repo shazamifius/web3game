@@ -104,6 +104,7 @@ src/
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
+    ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
     ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
     ├── skin.rs          la couleur de skin aléatoire
     ├── demo.rs          le mode texte net-demo (observer les paquets)
@@ -119,8 +120,10 @@ src/
         └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
 ```
 
-Un paquet de joueur fait aujourd'hui **45 octets** : `id` (1) + `x,y,z` +
-`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets). Voir `net/message.rs`.
+Un paquet de joueur fait **46 octets** : `type` (1) + `id` (1) + `x,y,z` +
+`vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets). Voir `net/message.rs`. Un
+paquet d'orbe fait **40 octets** : `type` + `owner` + `version` + position,
+vitesse et couleur. Voir `net/orb.rs`.
 
 **Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
 préfixé d'un `_` (ex. `_demo.rs`) et sa ligne `mod` est retirée. Il remonte en
@@ -191,9 +194,31 @@ anti-triche).
         wifi entrera plus tard par `SEND_BUDGET_HZ` (bon lien = grand budget). Le
         rendez-vous ne fait plus qu'une borne grossière de candidats. Tests
         unitaires du water-filling dans `aoi.rs`.
-- [ ] **Chapitre 4 — Autorité & migration d'hôte**
-      Modèle **Own + Shields** (1 hôte + 3 vérificateurs = BFT 3f+1). Élection,
-      détection de panne, migration sans coupure (problème du *split-brain*).
+- [~] **Chapitre 4 — Autorité & migration d'hôte** *(en cours)*
+      - [x] **Orbe partagée** (`net/orb.rs`) : le premier **objet du monde** qui
+        n'appartient à personne par naissance. Le **dernier joueur à la toucher**
+        en devient le **maître** (l'autorité) : lui seul simule sa physique
+        (rebonds sur les 6 parois) et la **diffuse** aux pairs (20 Hz) ; les autres
+        recopient. La propriété **saute de main en main** à chaque contact — une
+        mini-migration d'autorité déclenchée à la main. Conflits réglés par un
+        couple `(version, id)` : version plus haute gagne, à égalité le plus petit
+        id l'emporte (`supersedes`) — départage **déterministe**, sans serveur.
+      - [x] **Migration d'hôte** (sur l'orbe) : si le maître ne se manifeste plus
+        pendant `MASTER_TIMEOUT` (0,5 s ≈ 10 battements manqués), on le présume
+        parti et on **élit** son remplaçant de façon **déterministe** (le plus petit
+        id, l'ancien maître exclu) : chacun calcule le même gagnant **sans voter**.
+        Le nouveau maître **reprend** l'orbe à son dernier état connu et incrémente
+        la version → un éventuel **split-brain** (l'ancien maître réapparaît) se
+        résout tout seul (sa version est plus basse → il abdique via `supersedes`).
+        Se voit en tuant la fenêtre du maître pendant que l'orbe vole.
+      - [ ] **Relais / « parent »** pour les connexions faibles *(chapitre 4.1)* :
+        un joueur à faible débit montant envoie **1 seul** message à un voisin bien
+        connecté, qui le **retransmet** aux ~10 autres à sa place. Un relais par
+        recoin (≈ 10 joueurs) → des milliers de relais, aucun goulot. ⚠️ Le relais
+        **recopie** (transport), il n'**arbitre** pas (autorité) : deux rôles
+        distincts (cf. *Own ≠ Relais* plus bas).
+      - [ ] **Shields** (témoins) : vérification **périodique** d'un Own d'objet/zone
+        pour empêcher un maître local de tricher (passerelle vers le chapitre 5).
 - [ ] **Chapitre 5 — Confiance & anti-triche**
       Réputation décentralisée (**EigenTrust**), supernœuds/parrainage pour les
       mauvaises connexions, et le vrai ennemi de fond : l'**attaque Sybil**.
@@ -207,11 +232,25 @@ anti-triche).
 Le but final, formalisé avec nos mots :
 
 **« Own + Shields »** — pas de serveur central, chaque joueur est un nœud.
-- **1 Own** (hôte) : reçoit les actions de tous, les valide, redistribue.
-- **3 Shields** (boucliers) : recalculent en parallèle et comparent. Si l'Own
-  triche ou crashe, ils le bannissent et élisent un nouvel Own.
-- C'est exactement un quorum **BFT 3f+1** (tolère 1 traître) — la même idée que
-  PBFT dans les blockchains.
+- **Own** (autorité) : **arbitre** l'état d'un objet ou d'une zone contestés. Si
+  l'Own triche ou crashe, on le remplace (migration, déjà faite sur l'orbe).
+- **Shields** (boucliers) : recalculent/vérifient l'Own et le bannissent en cas de
+  triche. Quorum **BFT 3f+1** (1 Own + 3 Shields tolère 1 traître), comme PBFT.
+
+> **Affinement majeur (acté en codant) : l'autorité est PAR OBJET, pas globale.**
+> Un Own unique qui relaie *tout* pour toute l'instance redeviendrait le goulot
+> d'upload qu'on veut éviter (un seul PC ne tient pas des milliers de flux). Donc :
+> - **Ce qui est à toi** (ta position, ta voix) → **pas d'Own** : tu es ta propre
+>   autorité, tu diffuses en **direct** à tes ~10 voisins (aucun conflit possible).
+> - **Ce qui est partagé/contesté** (l'orbe, une porte, un score) → **un Own par
+>   objet/zone**, à **bas débit** (un événement de temps en temps). Des milliers de
+>   petits Owns, jamais un seul. 55 000 joueurs = des milliers de zones de ~10.
+>
+> **Own ≠ Relais.** L'**Own** *décide* (autorité, conflits). Le **Relais/parent**
+> *recopie* des octets pour un joueur à faible upload (transport, zéro décision).
+> Un même bon PC peut porter les deux casquettes, mais ce sont deux rôles séparés
+> — et le relais ne doit jamais pouvoir **modifier** ce qu'il transporte (le joueur
+> faible signera ses messages : enveloppe scellée, chapitre 5).
 
 **Choix de l'Own** : meilleur matériel + meilleure réputation + au centre
 géographique des joueurs (latence minimale).
@@ -230,7 +269,13 @@ perso. Pareil pour le *signaling* (STUN/TURN) qui aide à percer les NAT.
   réel (qui exige < 50 ms).
 - **« On peut supprimer tout serveur » → presque.** Le **NAT** des box bloque
   les connexions entrantes ; il faut un petit serveur de *signaling* pour amorcer
-  les connexions directes (hole-punching). Le jeu, lui, reste 100 % P2P.
+  les connexions directes (hole-punching). Le jeu, lui, reste 100 % P2P : une fois
+  les présentations faites, on peut **tuer le rendez-vous**, la partie continue.
+- **« Réduire à 4 envois par joueur résout le passage à l'échelle » → faux.** Le
+  travail O(N²) ne disparaît pas, il **déménage** sur le nœud qui redistribue (qui
+  exploserait à 22 Gbps pour 55 000 joueurs). Le goulot, c'est **toujours** l'upload
+  de celui qui rediffuse. La vraie réponse : l'**AoI** (tu ne parles qu'à tes ~10–100
+  voisins, **indépendamment de N**) + des Owns/relais **locaux**, jamais un hub.
 
 ---
 
