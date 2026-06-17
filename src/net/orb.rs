@@ -36,8 +36,12 @@ const PLAYER_RADIUS: f32 = 0.30;
 /// Fréquence à laquelle le maître diffuse l'état de l'orbe (paquets/s).
 const ORB_SEND_HZ: f32 = 20.0;
 /// Délai sans nouvelle du maître au-delà duquel on le présume parti (s). À 20 Hz,
-/// 0,5 s = ~10 battements manqués : assez pour ne pas confondre « parti » et « lag ».
-const MASTER_TIMEOUT: f32 = 0.5;
+/// 2 s = ~40 battements manqués. On le veut GÉNÉREUX exprès : c'est la règle des
+/// vrais systèmes (Raft & co.), où le délai d'élection est un GROS multiple du
+/// battement, sinon une simple micro-coupure (PC chargé, rafale de paquets perdus)
+/// fait basculer l'orbe à tort — et comme l'élection retombe sur le plus petit id,
+/// on verrait la balle changer de maître toute seule, sans que personne ne la touche.
+const MASTER_TIMEOUT: f32 = 2.0;
 /// Couleur de l'orbe tant que personne ne l'a touchée (blanc bleuté néon).
 const NEUTRAL_COLOR: (f32, f32, f32) = (0.85, 0.85, 1.0);
 
@@ -310,6 +314,16 @@ pub fn orb_send(
 /// (cf. `orb_migrate`).
 pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) {
     if supersedes(w.version, w.owner, orb.version, orb.owner) {
+        // Trace : on ne log QUE lorsque le maître change vraiment (pas à chaque
+        // battement du maître courant). Avec les logs de `orb_grab` (frappe) et
+        // `orb_migrate` (reprise), la console explique alors CHAQUE changement de
+        // couleur : frappe / migration / adoption d'un maître distant.
+        if orb.owner != Some(w.owner) {
+            println!(
+                "Orbe : j'adopte le maître {} (v{}) reçu du réseau.",
+                w.owner, w.version
+            );
+        }
         orb.owner = Some(w.owner);
         orb.version = w.version;
         orb.pos = Vec3::new(w.x, w.y, w.z);
