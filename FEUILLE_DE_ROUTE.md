@@ -30,19 +30,23 @@ tout** (ch. 10) ; ② **PoW anti-Sybil réglable** (on durcit si les tests l'exi
 ③ **ordre normal** 7→8→9→10 (pas de priorité forcée au 0-connexion) ; ④ **identité
 persistante = clé sauvée dans un fichier** (ch. 10).
 
-**On est dans le CHAPITRE 7 (confrontation au réel). 7.1 est FAIT.**
-**7.1 ✓** — `tools/sim-netem.sh` écrit et **prouvé réel** : il applique `tc netem` sur
-`lo` (3 profils `bon|moyen|mauvais`), lance la simu, et retire toujours le netem à la
-sortie (`trap`). Validé en profil `moyen` (~120 ms + 2 % perte) : l'essaim a TENU
-(20/20 montés, orbe intègre, orb-creep mis en sourdine). Piège tranché : sur `lo` le
-délai compte double → profils exprimés en ping cible, `delay = ping ÷ 2`.
+**On est dans le CHAPITRE 7 (confrontation au réel). 7.1 et 7.2 sont FAITS.**
+**7.1 ✓** — `tools/sim-netem.sh` (3 profils `bon|moyen|mauvais`) applique `tc netem` sur
+`lo`, lance la simu, retire toujours le netem (`trap`). Piège tranché : sur `lo` le délai
+compte double → profils en ping cible, `delay = ping ÷ 2`.
+**7.2 ✓** — mesuré sous les 3 profils (`sim 50 5 30`). Sécurité INTACTE partout (orbe
+0/50, attaques neutralisées même à 250 ms + reorder). MAIS le débit honnête s'effondre
+(−70 % sous `mauvais`) → cause = anti-rejeu strict `accept_seq` qui jette les paquets
+honnêtes ré-ordonnés.
 
-**PROCHAINE ACTION = 7.2** : faire tourner la simu sous les 3 profils (bon 30 ms /
-moyen 120 ms+2 % / mauvais 250 ms+5 %+jitter+ré-ordo) et MESURER (orbe intègre ? fausses
-migrations ? débit honnête stable ? rejets anti-rejeu dus au ré-ordonnancement ? et
-**élucider pourquoi le `teleport` n'a laissé aucune trace** au run 7.1). Puis **7.3**
-corriger ce que netem révèle (probable : l'anti-rejeu strict casse sur paquets
-re-ordonnés → fenêtre de tolérance). Détail complet : section D, chapitre 7.
+**PROCHAINE ACTION = 7.3** : remplacer l'anti-rejeu strict (`seq ≤ last → rejet`) par une
+**fenêtre glissante** d'anti-rejeu (style IPsec/DTLS) : on garde le plus grand `seq` vu +
+un masque de bits des N derniers `seq` ; on accepte tout `seq` dans la fenêtre non encore
+vu, on rejette seulement les vrais rejeus (déjà vus) et les trop vieux (< plus_grand − N).
+Ça tolère le ré-ordonnancement SANS rouvrir le rejeu. Modifie `NetLink::accept_seq`
+(link.rs) + tests (rejeu refusé, ré-ordo dans la fenêtre accepté), puis **re-mesurer**
+sous `mauvais` : le débit honnête doit remonter (= preuve causale du diagnostic 7.2).
+Détail complet : section D, chapitre 7. Décisions à prendre : taille de fenêtre N.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -338,9 +342,19 @@ inonder le rendez-vous ne le met pas à genoux.
   ~5680 paquets honnêtes/s, orbe 0/20 volée, orb-creep mis en SOURDINE).
   > À creuser au 7.2 : le `teleport` n'a laissé **aucune** trace (0 paquet de triche
   > rejeté, 0 faute) — rejoint trop tard, perte netem, ou angle mort réel ?
-- [ ] 7.2 — Faire tourner la simu sous 3 profils réseau (bon / moyen / mauvais : 30/120/250
-  ms, 0/2/5 % perte, jitter) et **mesurer** : orbe intègre ? fausses migrations ? débit
-  honnête stable ? rejets anti-rejeu dus au ré-ordonnancement ?
+- [x] 7.2 — Simu sous les 3 profils (`sim 50 5 30`), mesurée. *(fait)*
+  **Résultats** (état honnête accepté par seconde) : `bon` (30 ms) ~22 668/s · `moyen`
+  (120 ms, 2 %) ~14 553/s (−36 %) · `mauvais` (250 ms, 5 %, reorder) ~6 832/s (−70 %).
+  **Sécurité INTACTE partout** : orbe 0/50 volée, téléport/orb-creep/sybil neutralisés
+  même à 250 ms + ré-ordonnancement (le `teleport` agit bien avec une fenêtre ≥ 30 s ;
+  à 10 s il n'avait pas le temps — artefact de durée, pas un trou). **Bug révélé :** le
+  débit honnête s'effondre quand le réseau se dégrade. La perte (5 %) ne peut pas
+  expliquer −70 % → cause = l'**anti-rejeu strict** `accept_seq` (`seq ≤ last → rejet`,
+  link.rs) qui jette les paquets honnêtes **ré-ordonnés** par jitter/reorder. C'est D1
+  matérialisé → cible directe du 7.3.
+  > Limite de preuve : mécanisme (code) + symptôme (débit) prouvés ; le rapport ne
+  > COMPTE pas encore les rejets `accept_seq` séparément. Le fix 7.3 (débit qui remonte)
+  > sera la preuve causale — ou on instrumente un compteur (7.4).
 - [ ] 7.3 — Corriger ce que netem révèle (très probable : l'anti-rejeu strict casse sur
   paquets re-ordonnés → fenêtre de tolérance ; la prédiction/migration à régler).
 - [ ] 7.4 — Instrumenter `sim` : Ko/s ↑↓, CPU, RAM **par nœud** (ferme D19).
