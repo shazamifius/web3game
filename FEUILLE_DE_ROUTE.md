@@ -48,15 +48,22 @@ protocole. **Le protocole tient sous réseau réel.** Le cœur du chapitre 7 est
 
 **7.4 ✓** — `sim` chiffre le coût RÉEL par nœud (nouveau `src/net/probe.rs`) : bande passante
 (compteurs d'octets dans la prise) + CPU du thread (`/proc/thread-self/stat`), réels ; RAM
-crête **globale** du process (pas de RAM/nœud factice — un seul tas partagé). Mesuré à
-**saturation** (50 nœuds, voisinage au plafond 32) : **↑89/↓80 Ko/s/nœud, CPU ~1,5 %/cœur,
-37 Mo**. Bornés par le voisinage (~32), PAS par le total → constants à 55k (~0,7 Mbit/s ↑
-par joueur, tenable). **Ferme D19.** 36 tests (inchangé : `probe.rs` + compteurs sont
-prouvés empiriquement par la simu, pas par test unitaire), 0 warning.
+crête **globale** du process (pas de RAM/nœud factice — un seul tas partagé).
 
-**PROCHAINE ACTION = 7.5** : généraliser `tools/test-nat.sh` (un faux NAT en namespaces) au
-scénario MULTI-joueurs (plusieurs nœuds derrière des NAT distincts qui se percent), pour
-prouver le hole-punching hors localhost. Détail : section D, chapitre 7.
+**7.4b ✓ — fidélité + densité (révision de feuille de route faite avec la vision du code) :**
+le 1er chiffre de 7.4 (↑89 Ko/s) était mesuré sur le **mauvais chemin** — le bot émettait
+naïvement à tous, pas via l'AoI water-filling du vrai client. Corrigé : le bot appelle
+maintenant les mêmes fonctions qu'[aoi.rs]. Re-mesuré : **↑34/↓31 Ko/s/nœud, CPU ~0,7 %/cœur,
+38 Mo** (~0,27 Mbit/s ↑/joueur → très tenable). SURTOUT, le rapport AVOUE désormais le vrai
+mur : **D22 — en foule dense, on est aveugle au-delà de 32 voisins** (plafond dur du
+rendez-vous ; le water-filling ne peut rien car il n'apprend jamais le 33e). **Ferme D19,
+ouvre D22.** 36 tests, 0 warning.
+
+**PROCHAINE ACTION — DEUX pistes, à arbitrer :** (a) **7.5** — faux NAT MULTI-joueurs en
+namespaces (`tools/test-nat.sh`), prouver le hole-punching hors localhost ; (b) **chapitre
+densité dédié (D22)** — le vrai « plus gros problème du projet » : AoI par vision + découverte
+sans plafond dur (gossip/DHT) + relais, scénario de foule dense dans `sim`. 7.5 est plus
+petit/contenu ; la densité est le gros morceau d'architecture. Détail : section D + doute D22.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -313,24 +320,42 @@ repéré comme statistiquement anormal.
 
 ### Catégorie 8 — Méta-doutes (sur la démarche)
 
-**D19 — On n'a jamais mesuré le coût RÉEL par nœud (CPU, RAM, bande passante).** ✅ `[7.4 FAIT]`
+**D19 — On n'a jamais mesuré le coût RÉEL par nœud (CPU, RAM, bande passante).** ✅ `[7.4 + 7.4b FAITS]`
 *Constat (était) :* la simu disait « ça tient » sans chiffrer Ko/s ↑↓, % CPU, Mo RAM par nœud.
 *Résolu (7.4) :* `sim` mesure désormais, **par nœud** sur la fenêtre de test, la bande
 passante réelle (compteurs d'octets dans la prise) et le temps CPU réel du thread
 (`/proc/thread-self/stat`) ; la RAM est donnée **globale** (crête `VmHWM` du process), car
 un seul tas est partagé entre threads → on REFUSE d'inventer une RAM par nœud factice.
-**Mesure à SATURATION** (50 nœuds → voisinage au plafond 32, 2 attaquants, NixOS, PC tour
-ASUS) : **↑ ~89 Ko/s/nœud (max ~101), ↓ ~80 Ko/s/nœud, CPU ~1,5 %/cœur, RAM crête 37 Mo
-process.** Cohérence vérifiée : 89 Ko/s ÷ 32 voisins ÷ 20 Hz ≈ 139 o/paquet ≈ état signé
-112 o + en-têtes → la mesure ne ment pas.
-*Extrapolation 55k (honnête) :* ces chiffres sont **bornés par le voisinage (~32), PAS par
-le total de joueurs** (6.6) → ils ne bougent PAS à 55k ; l'échelle se fait en AJOUTANT des
-machines. Un nœud demande **~0,7 Mbit/s ↑** (≈0,85 avec en-têtes IP/UDP, non comptés par
-notre compteur de charge utile) — tenable sur une connexion domestique modeste. *Réserves :*
-(1) sur `localhost`, le CPU ne compte PAS le coût réseau réel (pas de NIC, pas de RTT) →
-c'est le coût logique+crypto, plancher honnête ; (2) le compteur mesure la charge utile UDP,
-le fil réel ajoute ~28 o/paquet d'en-têtes. Le vrai mur de densité au-delà de 32 voisins
-reste l'AoI/relais (chantier futur), pas le débit par lien.
+*Correctif de fidélité (7.4b) :* le 1er chiffre de 7.4 (**↑ ~89 Ko/s**) était mesuré sur le
+**mauvais chemin d'envoi** — le bot émettait naïvement à plein débit à tous ses voisins, alors
+que le **vrai client** ([netcode/send.rs]) répartit un budget fini par AoI water-filling. Le
+bot ([bot.rs]) appelle DÉSORMAIS les mêmes fonctions ([aoi.rs] : `relevance_weight` +
+`allocate_rates`). Re-mesuré à SATURATION (50 nœuds co-localisés, plafond 32, PC tour ASUS) :
+**↑ ~34 Ko/s/nœud (max ~38), ↓ ~31 Ko/s, CPU ~0,7 %/cœur, RAM crête 38 Mo.** L'écart 89→34
+(≈ budget AoI 240 ÷ 640 envois naïfs = 0,38) confirme que le 89 était l'artefact du bot naïf.
+*Extrapolation 55k (honnête) :* bornés par le voisinage (~32), PAS par le total (6.6) → ne
+bougent PAS à 55k ; l'échelle se fait en AJOUTANT des machines. Un nœud demande **~0,27 Mbit/s ↑**
+(≈0,4 avec en-têtes IP/UDP non comptés) — très tenable sur une connexion domestique. *Réserves :*
+(1) sur `localhost`, le CPU ne compte PAS le coût réseau réel (NIC, RTT) → plancher honnête ;
+(2) compteur = charge utile UDP, le fil réel ajoute ~28 o/paquet ; (3) **CE « constant à 55k »
+suppose qu'il SUFFIT de voir ~32 voisins — faux en foule dense : voir D22.**
+
+**D22 — La foule DENSE n'est pas résolue : au-delà de 32 voisins, on est AVEUGLE.** 🔴 `[chapitre densité dédié]`
+*Constat (révélé au 7.4b) :* le « coût constant à 55k » est acheté par un **plafond dur** au
+rendez-vous (`keep_nearest(…, 32)`, [rendezvous.rs]) : il ne présente que les 32 plus proches,
+« au-delà, on n'existe pas pour vous » ([aoi.rs]). Comme les bots de `sim` sont co-localisés
+(rayon 3 m), `sim 50` est une **foule de 50 au même point** → mesuré : chacun n'en voit que ~32,
+**aveugle aux ~17 autres**. À un rassemblement de 500, on serait aveugle à ~468. *Pourquoi
+c'est grave :* dans un monde social type VRChat, VOIR la foule est le cœur du jeu. Et le joli
+water-filling d'[aoi.rs] **ne peut pas aider** : il répartit le budget entre les 32 connus, mais
+n'apprend JAMAIS l'existence du 33e (découverte plafonnée en amont). *Pourquoi c'est une
+question d'ARCHITECTURE, pas de réglage :* (a) le rendez-vous est central (à supprimer pour du
+P2P pur) ET plafonne la vision ; (b) la vraie réponse = AoI **par vision** (périmètre par joueur,
+foule lointaine en LOD/imposteur) + découverte décentralisée (gossip/DHT) + relais/parent pour
+la densité. *Piste :* un **chapitre densité dédié** (pas un patch) : scénario de foule dense
+dans `sim`, découverte sans plafond dur, dégradation gracieuse perceptuelle. *Vérif :* à 200+
+nœuds co-localisés, un joueur perçoit une foule cohérente (proches nets, lointains dégradés)
+sans exploser son débit, et SANS plafond dur arbitraire.
 
 **D20 — Attaques combinées / adaptatives jamais testées.** 🟠 `[ch. 9]`
 *Constat :* nos attaques sont jouées isolément. Un vrai adversaire combine (Sybil +
@@ -408,11 +433,14 @@ inonder le rendez-vous ne le met pas à genoux.
   réseaux ré-ordonnent), il n'était juste pas le goulot. Aucun défaut réseau résiduel à ce
   stade — le cœur du chapitre 7 (« arrêter de mentir comme localhost ») est atteint.
 - [x] 7.4 ✓ — Instrumenter `sim` : Ko/s ↑↓ + CPU réels **par nœud** (compteurs prise +
-  `/proc/thread-self/stat`), RAM crête **globale** (pas de RAM/nœud factice). Mesuré à
-  saturation : ↑89/↓80 Ko/s/nœud, CPU ~1,5 %/cœur, 37 Mo. **Ferme D19.** (nouveau `src/net/probe.rs`)
+  `/proc/thread-self/stat`), RAM crête **globale** (pas de RAM/nœud factice). (nouveau `src/net/probe.rs`)
+- [x] 7.4b ✓ — **Fidélité + densité.** Le bot passe par le VRAI chemin AoI (water-filling,
+  mêmes fonctions qu'[aoi.rs]) → coût re-mesuré **↑34/↓31 Ko/s/nœud** (et non 89, artefact du
+  bot naïf). Le rapport AVOUE désormais la **réserve de densité (D22)** : en foule, aveugle
+  au-delà de 32. **Ferme D19, ouvre D22 (→ chapitre densité dédié).**
 - [ ] 7.5 — NAT : généraliser `tools/test-nat.sh` au scénario multi-joueurs.
-**Ferme :** D1, D19 (et révèle des correctifs réseau réels). **Vérif :** rapport de simu
-sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.
+**Ferme :** D1, D19 (et révèle des correctifs réseau réels + le doute densité D22).
+**Vérif :** rapport de simu sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.
 
 ### Chapitre 8 — Inclusivité & adaptation au lien (0 → 2 Gb/s) 🔴 *priorité 2 — ta vision*
 **But :** que le 0-connexion et le 2-Gb/s aient chacun LA meilleure expérience.

@@ -12,6 +12,7 @@
 
 use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
+use super::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, POW_BITS};
 use super::link::{NetLink, MAX_STRIKES};
@@ -50,6 +51,11 @@ pub(crate) struct Bot {
     holes: HashMap<PeerId, bool>,
     buckets: HashMap<SocketAddr, f32>,
     relay_credits: HashMap<PeerId, f32>,
+    /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
+    /// que le vrai client ([netcode/send.rs]). Chaque pair accumule `débit × dt` ; à 1,
+    /// on lui envoie un paquet. C'est ce qui fait que le bot mesure DÉSORMAIS le coût
+    /// réel du jeu (budget réparti par pertinence), pas un envoi naïf plein débit à tous.
+    send_credits: HashMap<PeerId, f32>,
     last_state: HashMap<PeerId, (Vec3, f32)>,
     orb: Orb,
     seq: u64,
@@ -77,6 +83,7 @@ impl Bot {
             holes: HashMap::new(),
             buckets: HashMap::new(),
             relay_credits: HashMap::new(),
+            send_credits: HashMap::new(),
             last_state: HashMap::new(),
             orb: Orb::headless(),
             seq: 0,
@@ -307,7 +314,10 @@ impl Bot {
             }
         }
 
-        // 4) Émission de NOTRE état signé aux pairs au trou ouvert.
+        // 4) Émission de NOTRE état signé, via l'AoI WATER-FILLING — EXACTEMENT comme le
+        //    vrai client (netcode/send.rs) : un budget d'émission fini (SEND_BUDGET_HZ)
+        //    réparti entre les voisins par pertinence (distance), au lieu d'un envoi naïf
+        //    plein débit à tous. C'est ce qui rend la mesure 7.4 FIDÈLE au jeu (7.4b).
         self.send_acc += dt;
         if self.send_acc >= 1.0 / SEND_HZ {
             let dt_send = self.send_acc;
@@ -329,13 +339,38 @@ impl Bot {
                     parent: None, seq: self.seq,
                 };
                 let bytes = encode_signed(&me, &self.link.identity);
-                let targets: Vec<(PeerId, SocketAddr)> =
+                let me_xz = (pos.x, pos.z);
+
+                // a) PERTINENCE : un poids par pair selon sa dernière position connue
+                //    (inconnu → distance 0 → poids max, pour le découvrir vite).
+                let peers: Vec<(PeerId, SocketAddr)> =
                     self.link.peers.iter().map(|(i, a)| (*i, *a)).collect();
-                for (id, addr) in targets {
-                    if *self.holes.get(&id).unwrap_or(&false) {
-                        let _ = self.link.socket.send_to(addr, &bytes);
+                let weights: Vec<f32> = peers
+                    .iter()
+                    .map(|(id, _)| {
+                        let d2 = self
+                            .last_state
+                            .get(id)
+                            .map(|(p, _)| dist2(me_xz, (p.x, p.z)))
+                            .unwrap_or(0.0);
+                        relevance_weight(d2)
+                    })
+                    .collect();
+                // b) WATER-FILLING : un débit (Hz) par pair, plafonné à SEND_HZ, somme ≤ budget.
+                let rates = allocate_rates(&weights, SEND_BUDGET_HZ, SEND_HZ);
+                // c) CADENCEMENT par crédit, vers les pairs au trou OUVERT seulement.
+                for ((id, addr), rate) in peers.iter().zip(&rates) {
+                    if !*self.holes.get(id).unwrap_or(&false) {
+                        continue;
+                    }
+                    let credit = self.send_credits.entry(*id).or_insert(0.0);
+                    *credit += rate * dt_send;
+                    if *credit >= 1.0 {
+                        *credit -= 1.0;
+                        let _ = self.link.socket.send_to(*addr, &bytes);
                     }
                 }
+                self.send_credits.retain(|id, _| self.link.peers.contains_key(id));
             }
         }
 

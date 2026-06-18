@@ -162,7 +162,7 @@ dans un sous-dossier. (Le compilateur Rust confirme l'inverse : si un fichier
 ## Feuille de route (le cours)
 
 > 📋 **Le plan COMPLET et détaillé est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** :
-> l'inventaire honnête des 21 doutes/risques (D1→D21), et le programme chapitre par
+> l'inventaire honnête des 22 doutes/risques (D1→D22), et le programme chapitre par
 > chapitre (7→14) pour les fermer, avec la méthode de test « vraie mauvaise connexion
 > sur une seule machine » (`tc netem`). Le README ci-dessous reste le résumé.
 
@@ -193,17 +193,22 @@ anti-triche).
 >   100 000 (file non bloquante) et **prouve** que le débit honnête sous `mauvais` remonte
 >   à ~21,3k/s (vs `bon` ~23,3k/s → **−9 % seulement**, ≈ la perte de 5 %). **Le protocole
 >   tient sous réseau réel** (250 ms + jitter + perte + ré-ordo) ; le −70 % était un
->   artefact du harnais, pas le jeu. **7.4** chiffre enfin le **coût réel par nœud**
+>   artefact du harnais, pas le jeu. **7.4** chiffre le **coût réel par nœud**
 >   (nouveau [`src/net/probe.rs`](src/net/probe.rs)) : bande passante (compteurs d'octets
 >   dans la prise) et CPU du thread (`/proc/thread-self/stat`) **réels, par nœud** ; la RAM
 >   est donnée **globale** (crête du process) car un seul tas est partagé — on **refuse** une
->   RAM/nœud factice. Mesuré à **saturation** (50 nœuds → voisinage au plafond 32) :
->   **↑ ~89 Ko/s, ↓ ~80 Ko/s, CPU ~1,5 %/cœur par nœud, 37 Mo crête**. Comme tout est borné
->   par le voisinage (~32, pas par le total de joueurs), ces chiffres **ne bougent pas à 55k**
->   (~0,7 Mbit/s ↑ par joueur → tenable sur une connexion domestique) ; **ferme D19**.
->   **PROCHAINE ACTION = 7.5** : faux NAT multi-joueurs en namespaces (`test-nat.sh`).
+>   RAM/nœud factice. **7.4b** corrige une erreur d'honnêteté : le 1er chiffre (↑89 Ko/s) était
+>   mesuré sur le **mauvais chemin** — le bot émettait naïvement à tous, pas via l'AoI
+>   water-filling du **vrai** client. Le bot appelle maintenant les mêmes fonctions
+>   qu'[`aoi.rs`](src/net/aoi.rs) → re-mesuré à saturation : **↑ ~34 Ko/s, ↓ ~31 Ko/s, CPU
+>   ~0,7 %/cœur, 38 Mo** (~0,27 Mbit/s ↑/joueur, très tenable). **MAIS** 7.4b révèle le vrai mur
+>   (**doute D22**) : en **foule dense**, on est **aveugle au-delà de 32 voisins** (plafond dur
+>   du rendez-vous) — le water-filling ne peut rien car il n'apprend jamais le 33e. C'est une
+>   question d'**architecture** (AoI par vision + découverte décentralisée), pas de réglage →
+>   ça mérite un **chapitre dédié**. *Ferme D19, ouvre D22.* **PROCHAINE ACTION** : arbitrer
+>   entre **7.5** (faux NAT multi-joueurs, `test-nat.sh`) et le **chapitre densité (D22)**.
 >   **Tout le plan post-chapitre-6 (chapitres
->   7→14 + les 21 doutes D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
+>   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
 >   la liste ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
@@ -450,7 +455,7 @@ anti-triche).
         suivant (adaptation au lien).
 - [ ] **Chapitres 7 → 14 — le grand chantier post-BÉTON.**
       Découpage **détaillé dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** (avec les
-      21 doutes/risques qu'ils ferment) :
+      22 doutes/risques qu'ils ferment) :
       **7** confrontation au réel (`tc netem` : latence/perte/NAT — *prochaine étape*) ·
       **8** inclusivité & adaptation au lien (de 0 à 2 Gb/s, parent/répartition de
       puissance, anti free-riding) · **9** durcissement de la confiance (Sybil, éclipse,

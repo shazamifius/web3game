@@ -16,6 +16,7 @@
 //! Lancement :  cargo run -- sim [nb_bots] [nb_attaquants] [secondes]
 //!   ex.        cargo run -- sim 200 5 20
 
+use super::aoi::MAX_NEIGHBORS;
 use super::attack::run_attack;
 use super::bot::Bot;
 use super::probe::{peak_rss_bytes, thread_cpu_secs};
@@ -157,9 +158,20 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
             println!("RAM crête du PROCESSUS entier      : {peak_mo:.0} Mo  (~{approx_per:.1} Mo/nœud — MOYENNE grossière,");
             println!("  inclut rendez-vous + attaquants + code + allocateur ; PAS une mesure par nœud)");
         }
-        // Extrapolation honnête : à débit constant par nœud (voisinage borné, 6.6).
-        println!("→ À voisinage borné, ces chiffres par nœud NE bougent PAS à 55k : on ajoute");
-        println!("  des machines, on ne surcharge pas une seule. ↑ {avg_up:.1} Ko/s/nœud = la contrainte clé.");
+        // Extrapolation honnête : coût borné par le VOISINAGE (~32), pas par le total
+        // (6.6) → constant à 55k... MAIS seulement si voir ~32 voisins suffit (cf. infra).
+        println!("→ Coût borné par le voisinage (~{MAX_NEIGHBORS}), PAS par le total → constant à 55k");
+        println!("  TANT QUE voir ~{MAX_NEIGHBORS} voisins suffit. ↑ {avg_up:.1} Ko/s/nœud = la contrainte clé.");
+        // RÉSERVE DE DENSITÉ (doute D22, 7.4b) : les bots sont co-localisés (rayon 3 m),
+        // donc `sim N` est une FOULE de N. Si N dépasse le plafond du rendez-vous, on ne
+        // voit qu'une fraction de la foule — on est AVEUGLE au reste. À dire franchement.
+        if n_bots > MAX_NEIGHBORS && max_nb >= MAX_NEIGHBORS {
+            let blind = n_bots.saturating_sub(MAX_NEIGHBORS + 1);
+            println!("⚠ DENSITÉ (D22) : ces {n_bots} nœuds sont au même endroit, mais chacun n'en voit");
+            println!("  que ~{max_nb} (plafond du rendez-vous) → AVEUGLE à ~{blind} voisins. La foule");
+            println!("  dense n'est PAS résolue : le water-filling répartit le budget sur les {MAX_NEIGHBORS} connus,");
+            println!("  mais n'apprend jamais l'existence des autres. Vrai mur d'échelle → chapitre densité.");
+        }
     }
     println!("===========================================");
     if up > 0 && stolen == 0 {
