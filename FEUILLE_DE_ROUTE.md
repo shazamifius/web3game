@@ -59,11 +59,16 @@ mur : **D22 — en foule dense, on est aveugle au-delà de 32 voisins** (plafond
 rendez-vous ; le water-filling ne peut rien car il n'apprend jamais le 33e). **Ferme D19,
 ouvre D22.** 36 tests, 0 warning.
 
-**7.5 ✓** — `tools/test-nat.sh` généralisé au MULTI-joueurs (N maisons `p1..pN` derrière
-`nat1..natN`, résumé du mesh). Logique multi-pair prouvée sur localhost (3 joueurs → 6/6
-trous). A révélé + corrigé un **bug d'instrumentation** dans [natdemo.rs] (trou ouvert en
-silence si données reçues avant le punch). *Preuve NAT réelle = run `sudo ./tools/test-nat.sh
-3 --cone` (full-cone → mesh complet) et sans `--cone` (symétrique → 0 trou direct → relais).*
+**7.5 ✓ (PREUVE NAT RÉELLE FAITE)** — `tools/test-nat.sh` généralisé au MULTI-joueurs (N
+maisons `p1..pN` derrière `nat1..natN`, résumé du mesh). A révélé + corrigé un **bug
+d'instrumentation** dans [natdemo.rs] (trou ouvert en silence si données reçues avant le
+punch). Puis **preuve réelle sous `sudo` (namespaces + vrais NAT), en ~16 s chacun** :
+`sudo ./tools/test-nat.sh 3 --cone` → **6/6 → MESH COMPLET** (full-cone : punch direct
+deux-à-deux) ; `sudo ./tools/test-nat.sh 3` (symétrique) → **0/6** (punch échoue → c'est le
+rôle du relais ch.5). En cours de route, **deux bugs du script** corrigés (exposés par le run
+réel) : `wait` nu attendait le rendez-vous sans fin (test « durait 25 min ») → on n'attend que
+les joueurs ; et `set -e` + code 124 de `timeout` coupait avant le résumé → absorbé par
+`|| true`. Le hole punching multi-joueurs est donc prouvé pour de vrai, pas juste sur localhost.
 
 **PROCHAINE ACTION = chapitre DENSITÉ dédié (D22)** — le chapitre 7 (« confrontation au réel »)
 est bouclé : le lien tient sous mauvais réseau (7.1→7.3b), le coût/nœud est chiffré honnêtement
@@ -454,7 +459,9 @@ inonder le rendez-vous ne le met pas à genoux.
   (`p1..pN` derrière `nat1..natN`) + résumé du mesh (trous ouverts / N−1). Logique multi-pair
   prouvée sur localhost (mesh 3 joueurs = 6/6). **Bug d'instrumentation corrigé** ([natdemo.rs] :
   le trou s'ouvrait en SILENCE si les données arrivaient avant le punch → sous-comptage).
-  *Preuve NAT réelle (full-cone / symétrique) = ton run `sudo ./tools/test-nat.sh 3 --cone`.*
+  **PREUVE NAT RÉELLE FAITE** (sudo, namespaces + NAT, ~16 s) : `--cone` → 6/6 MESH COMPLET ;
+  symétrique → 0/6 (relais ch.5). + 2 bugs du script corrigés (hang `wait`/rendez-vous ; `set -e`
+  vs code 124 de `timeout`).
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels + le doute densité D22).
 **Vérif :** rapport de simu sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.
 
