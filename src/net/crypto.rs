@@ -29,6 +29,48 @@ pub(crate) const PUBKEY_LEN: usize = 32;
 /// Taille d'une signature Ed25519 (octets) : le « sceau » apposé sur un paquet.
 pub(crate) const SIG_LEN: usize = 64;
 
+/// L'IDENTITÉ d'un joueur sur le réseau = sa clé publique Ed25519 (32 octets).
+///
+/// # Auto-certifiante (le keystone du chapitre 6.1)
+/// Chaque paquet signé porte cette clé ; vérifier le sceau AVEC cette clé prouve
+/// l'identité sans demander à personne. Aucun serveur ne peut donc mentir sur
+/// « telle clé = tel joueur » — l'identité EST la clé. Fini le numéro `u8` attribué
+/// par le rendez-vous (plafond 255, collisions, et surtout racine de confiance
+/// déléguée à un tiers). L'espace d'identité passe à 2²⁵⁶ : illimité en pratique.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct PeerId(pub(crate) [u8; PUBKEY_LEN]);
+
+impl PeerId {
+    /// Les 32 octets bruts (la clé publique elle-même).
+    pub(crate) fn bytes(&self) -> &[u8; PUBKEY_LEN] {
+        &self.0
+    }
+    /// Reconstruit un `PeerId` depuis 32 octets reçus du réseau.
+    pub(crate) fn from_bytes(b: [u8; PUBKEY_LEN]) -> PeerId {
+        PeerId(b)
+    }
+    /// Empreinte courte et lisible (4 premiers octets en hexa) pour les logs/affichage.
+    pub(crate) fn short(&self) -> String {
+        let b = &self.0;
+        format!("{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3])
+    }
+    /// Le `PeerId` « nul » (32 zéros) : sentinelle « pas de parent / personne ».
+    /// Une vraie clé Ed25519 n'est jamais nulle, donc aucune ambiguïté.
+    pub(crate) fn none() -> PeerId {
+        PeerId([0u8; PUBKEY_LEN])
+    }
+    /// Est-ce la sentinelle nulle ?
+    pub(crate) fn is_none(&self) -> bool {
+        self.0 == [0u8; PUBKEY_LEN]
+    }
+}
+
+impl std::fmt::Debug for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}…", self.short())
+    }
+}
+
 /// L'identité cryptographique d'UNE session : sa paire de clés. La privée ne
 /// quitte JAMAIS la mémoire de ce processus ; on ne publie que la publique.
 pub(crate) struct Identity {
@@ -47,6 +89,11 @@ impl Identity {
     /// Notre clé PUBLIQUE (notre identité), prête à être envoyée sur le réseau.
     pub(crate) fn public(&self) -> [u8; PUBKEY_LEN] {
         self.signing.verifying_key().to_bytes()
+    }
+
+    /// Notre identité réseau (= notre clé publique, enveloppée en `PeerId`).
+    pub(crate) fn id(&self) -> PeerId {
+        PeerId(self.public())
     }
 
     /// Appose notre sceau sur un message : 64 octets que seul le détenteur de

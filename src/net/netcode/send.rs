@@ -7,6 +7,7 @@
 use super::state::{RemoteAvatars, SEND_HZ};
 use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
+use crate::net::crypto::PeerId;
 use crate::net::link::NetLink;
 use crate::net::message::{encode_signed, mark_as_relay, PlayerState};
 use crate::net::punch::Holes;
@@ -18,7 +19,7 @@ pub fn net_send(
     mut send_acc: Local<f32>,
     mut hello_acc: Local<f32>,
     mut last_pos: Local<Option<Vec3>>,
-    mut credits: Local<HashMap<u8, f32>>,
+    mut credits: Local<HashMap<PeerId, f32>>,
     mut seq: Local<u64>, // compteur anti-rejeu : +1 à chaque état émis (chap. 5.2)
     link: Res<NetLink>,
     avatars: Res<RemoteAvatars>,
@@ -41,7 +42,7 @@ pub fn net_send(
         *hello_acc = 0.0;
         // Notre HELLO porte notre clé publique : le rendez-vous la redistribue pour
         // que chacun puisse vérifier nos signatures.
-        let hello = encode_hello(pos.x, pos.z, &link.identity.public());
+        let hello = encode_hello(pos.x, pos.z, link.identity.id());
         let _ = link.socket.send_to(link.rendezvous, &hello);
     }
 
@@ -87,7 +88,8 @@ pub fn net_send(
     } else {
         None
     };
-    let parent_id = parent.map(|(id, _)| *id).unwrap_or(0);
+    // L'identité (clé) de notre tuteur, ou `None` si on est autonome.
+    let parent_id: Option<PeerId> = parent.map(|(id, _)| *id);
 
     // Un numéro de séquence STRICTEMENT croissant par paquet : le récepteur refusera
     // tout paquet de `seq` ≤ au dernier vu de notre part → un vieux paquet rejoué ne
@@ -133,7 +135,7 @@ pub fn net_send(
     // 1) PERTINENCE : un poids par pair, à partir de sa dernière position connue
     //    (lue dans sa file d'instantanés). Un pair inconnu → distance 0 → poids
     //    max, pour le découvrir vite.
-    let peers: Vec<(u8, std::net::SocketAddr)> =
+    let peers: Vec<(PeerId, std::net::SocketAddr)> =
         link.peers.iter().map(|(id, addr)| (*id, *addr)).collect();
     let weights: Vec<f32> = peers
         .iter()

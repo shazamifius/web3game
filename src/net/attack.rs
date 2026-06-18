@@ -23,7 +23,7 @@
 //! justement ce qu'on veut rendre visible avant de les fermer.
 
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::Identity;
+use super::crypto::{Identity, PeerId};
 use super::link::rendezvous_addr;
 use super::message::{encode_signed, mark_as_relay, PlayerState};
 use super::orb::{encode_orb_signed, OrbWire};
@@ -34,8 +34,9 @@ use std::net::SocketAddr;
 use std::thread::sleep;
 use std::time::Duration;
 
-/// Une victime découverte via le rendez-vous : son id, son adresse, sa clé publique.
-type Victim = (u8, SocketAddr, [u8; 32]);
+/// Une victime découverte via le rendez-vous : son identité (clé) et son adresse.
+/// Depuis le chap. 6.1, l'identité EST la clé — plus besoin de la transporter à part.
+type Victim = (PeerId, SocketAddr);
 
 pub fn run_attack(attack: &str) {
     let socket = match Socket::bind(0) {
@@ -58,11 +59,11 @@ pub fn run_attack(attack: &str) {
         println!("[attaquant] aucune victime à portée. Lance d'abord `rendezvous` puis des clients (`a`, `b`…), puis réessaie.");
         return;
     }
-    println!("[attaquant] inscrit (id {my_id}). {} victime(s) : {:?}", victims.len(),
-        victims.iter().map(|(id, _, _)| *id).collect::<Vec<_>>());
+    println!("[attaquant] inscrit (id {}). {} victime(s) : {:?}", my_id.short(), victims.len(),
+        victims.iter().map(|(id, _)| *id).collect::<Vec<_>>());
     // On « perce » les victimes comme un vrai client (sur localhost c'est inutile,
     // mais on imite fidèlement le comportement d'un client honnête).
-    for (_, addr, _) in &victims {
+    for (_, addr) in &victims {
         let _ = socket.send_to(*addr, &encode_punch(my_id));
     }
 
@@ -88,25 +89,22 @@ pub fn run_attack(attack: &str) {
 /// Envoie des HELLO au rendez-vous jusqu'à recevoir notre id et la liste des pairs.
 /// Renvoie (notre id, victimes). Patiente quelques secondes pour laisser les autres
 /// clients s'inscrire ET pour que le rendez-vous nous diffuse leurs clés publiques.
-fn join_and_discover(socket: &Socket, identity: &Identity, rv: SocketAddr) -> (u8, Vec<Victim>) {
-    let pubkey = identity.public();
-    let mut my_id = 0u8;
+fn join_and_discover(socket: &Socket, identity: &Identity, rv: SocketAddr) -> (PeerId, Vec<Victim>) {
+    let my_id = identity.id(); // notre identité = notre clé, connue dès le départ
     let mut victims: Vec<Victim> = Vec::new();
 
     for _ in 0..12 {
-        let _ = socket.send_to(rv, &encode_hello(0.0, 0.0, &pubkey));
+        let _ = socket.send_to(rv, &encode_hello(0.0, 0.0, my_id));
         sleep(Duration::from_millis(300));
         for (_, bytes) in socket.poll() {
             if kind(&bytes) == Some(KIND_WELCOME) {
-                if let Some((id, _hue, roster)) = decode_welcome(&bytes) {
-                    my_id = id;
+                if let Some((_hue, roster)) = decode_welcome(&bytes) {
                     victims = roster;
                 }
             }
         }
         if !victims.is_empty() {
-            // On insiste encore un peu pour que les victimes aient AUSSI reçu notre
-            // clé (sinon elles ignoreraient nos paquets « inconnus » sans nous juger).
+            // On insiste un peu pour que les victimes aient eu le temps de nous lister.
             sleep(Duration::from_millis(700));
         }
     }
@@ -114,14 +112,14 @@ fn join_and_discover(socket: &Socket, identity: &Identity, rv: SocketAddr) -> (u
 }
 
 /// Un état de joueur de base (positions bidon : on ne teste pas le mouvement ici).
-fn etat(id: u8, seq: u64) -> PlayerState {
+fn etat(id: PeerId, seq: u64) -> PlayerState {
     PlayerState {
         id,
         x: 0.0, y: 0.7, z: 0.0,
         vx: 0.0, vy: 0.0, vz: 0.0,
         yaw: 0.0, pitch: 0.0,
         r: 1.0, g: 0.0, b: 0.0,
-        parent: 0,
+        parent: None,
         seq,
     }
 }
@@ -131,12 +129,12 @@ fn etat(id: u8, seq: u64) -> PlayerState {
 /// victime → les autres le rejettent, et SANS accuser la victime (le framing est
 /// impossible). Défense visible : … rien. C'est justement la preuve : l'imposteur
 /// n'a STRICTEMENT aucun effet.
-fn attack_forge(socket: &Socket, identity: &Identity, _my_id: u8, victims: &[Victim]) {
+fn attack_forge(socket: &Socket, identity: &Identity, _my_id: PeerId, victims: &[Victim]) {
     let cible = victims[0].0;
-    println!("[attaquant] USURPATION : je me fais passer pour le joueur {cible} (signé avec MA clé).");
+    println!("[attaquant] USURPATION : je me fais passer pour le joueur {} (signé avec MA clé).", cible.short());
     let forged = encode_signed(&etat(cible, 1), identity); // id = victime, sceau = attaquant
     for _ in 0..20 {
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &forged);
         }
         sleep(Duration::from_millis(100));
@@ -148,17 +146,17 @@ fn attack_forge(socket: &Socket, identity: &Identity, _my_id: u8, victims: &[Vic
 /// ATTAQUE 2 — REJEU : on envoie un VRAI paquet signé (seq=100), puis on le REJOUE
 /// (même seq, puis seq plus ancien). Les victimes acceptent le 1er, refusent les
 /// rejeus (compteur anti-rejeu). On ne peut donc pas « rembobiner » un joueur.
-fn attack_replay(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim]) {
+fn attack_replay(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim]) {
     println!("[attaquant] REJEU : j'émets un état valide (seq=100), puis je le rejoue (seq=100, puis 50).");
     let frais = encode_signed(&etat(my_id, 100), identity);
     let rejeu_meme = encode_signed(&etat(my_id, 100), identity);
     let rejeu_vieux = encode_signed(&etat(my_id, 50), identity);
-    for (_, addr, _) in victims {
+    for (_, addr) in victims {
         let _ = socket.send_to(*addr, &frais); // accepté (seq neuf)
     }
     sleep(Duration::from_millis(200));
     for _ in 0..10 {
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &rejeu_meme); // refusé (seq déjà vu)
             let _ = socket.send_to(*addr, &rejeu_vieux); // refusé (seq périmé)
         }
@@ -171,7 +169,7 @@ fn attack_replay(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Vic
 /// saturer son CPU. Le « seau à jetons » par adresse jette l'excès. Défense visible :
 /// la victime affiche « 🛡 Inondation détectée… ».
 fn attack_flood(socket: &Socket, victims: &[Victim]) {
-    let (_, addr, _) = victims[0];
+    let (_, addr) = victims[0];
     println!("[attaquant] INONDATION : j'envoie 20 000 paquets à {addr} aussi vite que possible.");
     let junk = [0u8; 64];
     for _ in 0..20_000 {
@@ -185,9 +183,9 @@ fn attack_flood(socket: &Socket, victims: &[Victim]) {
 /// est VALIDEMENT signé (par notre clé), donc la faute est ATTRIBUABLE : les victimes
 /// refusent le saut aberrant ET nous infligent un strike. Au bout de MAX_STRIKES,
 /// elles nous mettent en SOURDINE. Défense visible : « 🛡 Faute… » puis « SOURDINE ».
-fn attack_orb(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim], version: u16) {
+fn attack_orb(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim], version: u16) {
     let quoi = if version == 65_535 { "GEL (version 65535)" } else { "VOL (saut de version)" };
-    println!("[attaquant] ORBE — {quoi} : je me proclame maître {my_id} avec version {version}.");
+    println!("[attaquant] ORBE — {quoi} : je me proclame maître {} avec version {version}.", my_id.short());
     let w = OrbWire {
         owner: my_id, version,
         x: 0.0, y: 1.5, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
@@ -195,7 +193,7 @@ fn attack_orb(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim
     };
     let bytes = encode_orb_signed(&w, identity);
     for _ in 0..10 {
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &bytes);
         }
         sleep(Duration::from_millis(150));
@@ -214,7 +212,7 @@ fn attack_orb(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim
 /// physiquement impossibles. La signature prouve QUI ; elle ne dit RIEN sur la
 /// plausibilité du mouvement. Aucune borne de vitesse côté récepteur → tout passe.
 /// Trou n°7, à fermer au chapitre 6.3 (validation de mouvement).
-fn attack_teleport(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim]) {
+fn attack_teleport(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim]) {
     println!("[attaquant] TÉLÉPORT : états signés par MOI, mais positions folles (0 → 1000 m d'un coup).");
     let sauts = [0.0f32, 50.0, 200.0, 1000.0, -1000.0, 0.0];
     let mut seq = 1u64;
@@ -224,7 +222,7 @@ fn attack_teleport(socket: &Socket, identity: &Identity, my_id: u8, victims: &[V
         p.z = *px;
         seq += 1;
         let bytes = encode_signed(&p, identity);
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &bytes);
         }
         println!("[attaquant]   saut #{k} → x={px} m (téléport instantané).");
@@ -238,7 +236,7 @@ fn attack_teleport(socket: &Socket, identity: &Identity, my_id: u8, victims: &[V
 /// bannissement, puis on revient avec une clé toute neuve, comme si de rien n'était.
 /// La réputation/sourdine ne coûte donc rien à contourner. Trou n°6, à fermer au
 /// chapitre 6.2 (coût d'entrée anti-Sybil).
-fn attack_sybil(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim], rv: SocketAddr) {
+fn attack_sybil(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim], rv: SocketAddr) {
     println!("[attaquant] SYBIL — phase 1 : je me fais BANNIR (gros saut de version d'orbe).");
     let w = OrbWire {
         owner: my_id, version: 60_000,
@@ -247,7 +245,7 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Vict
     };
     let bytes = encode_orb_signed(&w, identity);
     for _ in 0..8 {
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &bytes);
         }
         sleep(Duration::from_millis(150));
@@ -266,10 +264,10 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Vict
         println!("[attaquant]   (pas de victimes à la reconnexion)");
         return;
     }
-    println!("[attaquant]   reconnecté sous le NOUVEL id {my_id2}. J'émets un état tout propre.");
+    println!("[attaquant]   reconnecté sous le NOUVEL id {}. J'émets un état tout propre.", my_id2.short());
     let clean = encode_signed(&etat(my_id2, 1), &id2);
     for _ in 0..10 {
-        for (_, addr, _) in &victims2 {
+        for (_, addr) in &victims2 {
             let _ = socket2.send_to(*addr, &clean);
         }
         sleep(Duration::from_millis(150));
@@ -282,7 +280,7 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Vict
 /// est « plausible » (saut ≤ 16 → pas de faute), donc on grimpe tranquillement la
 /// version jusqu'à devenir maître, SANS jamais toucher l'orbe et SANS alerter. À
 /// comparer avec `orb-steal` (gros saut = faute immédiate). Trou n°8, chap. 6.4.
-fn attack_orb_creep(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim]) {
+fn attack_orb_creep(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim]) {
     println!("[attaquant] ORBE-CREEP : je grimpe la version +1 à la fois (chaque pas ≤16 → AUCUNE faute).");
     for v in 1..=30u16 {
         let w = OrbWire {
@@ -291,7 +289,7 @@ fn attack_orb_creep(socket: &Socket, identity: &Identity, my_id: u8, victims: &[
             r: 0.0, g: 1.0, b: 0.0,
         };
         let bytes = encode_orb_signed(&w, identity);
-        for (_, addr, _) in victims {
+        for (_, addr) in victims {
             let _ = socket.send_to(*addr, &bytes);
         }
         sleep(Duration::from_millis(120));
@@ -305,8 +303,8 @@ fn attack_orb_creep(socket: &Socket, identity: &Identity, my_id: u8, victims: &[
 /// voisins, 1 paquet entrant devient N sortants : c'est l'upload de la VICTIME qui
 /// amplifie notre attaque (réflexion). Trou n°10, à fermer au chapitre 6.5
 /// (consentement du relais + AoI sur la rediffusion).
-fn attack_amplify(socket: &Socket, identity: &Identity, my_id: u8, victims: &[Victim]) {
-    let (_, parent_addr, _) = victims[0];
+fn attack_amplify(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[Victim]) {
+    let (_, parent_addr) = victims[0];
     println!("[attaquant] AMPLIFICATION : j'envoie des RELAY à 1 SEUL pair ; il les recopie à TOUS ses voisins.");
     let mut seq = 1u64;
     for _ in 0..10 {

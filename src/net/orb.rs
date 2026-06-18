@@ -8,18 +8,17 @@
 //!   - l'orbe      → personne au départ ; le DERNIER à l'avoir touchée en devient
 //!                   le maître. La propriété saute donc de main en main.
 //!
-//! # Pourquoi c'est la base du chapitre 4
-//! Ce transfert de propriété au contact, c'est une mini-migration d'autorité que
-//! tu déclenches À LA MAIN. Le `version` (compteur qui ne fait que monter) en est
-//! l'ancêtre du consensus ; le départage des « courses » (deux joueurs frappent en
-//! même temps) préfigure ce que les *Shields* régleront proprement.
+//! # Identité auto-certifiante (chap. 6.1)
+//! Le maître n'est plus un numéro `u8` mais une **clé publique** (`PeerId`), portée
+//! dans le paquet et qui sert à vérifier le sceau. Se proclamer maître exige donc
+//! de POSSÉDER la clé privée correspondante : on ne peut pas usurper un autre maître.
 //!
 //! # Le protocole (paquet KIND_ORB)
-//!   maître → pairs : position, vitesse, id du maître, n° de version, couleur.
+//!   maître → pairs : id (clé) du maître, n° de version, position, vitesse, couleur.
 //! Règle d'émission : SEUL le maître émet. Règle de réception : on accepte l'état
 //! entrant s'il SUPPLANTE le nôtre (version plus haute, ou égale mais id plus petit).
 
-use super::crypto::{verify, Identity, PUBKEY_LEN, SIG_LEN};
+use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
 use super::link::NetLink;
 use super::punch::Holes;
 use super::wire::{KIND_ORB, PROTO_VERSION};
@@ -36,27 +35,21 @@ const HIT_SPEED: f32 = 5.0;
 const PLAYER_RADIUS: f32 = 0.30;
 /// Fréquence à laquelle le maître diffuse l'état de l'orbe (paquets/s).
 const ORB_SEND_HZ: f32 = 20.0;
-/// Délai sans nouvelle du maître au-delà duquel on le présume parti (s). À 20 Hz,
-/// 2 s = ~40 battements manqués. On le veut GÉNÉREUX exprès : c'est la règle des
-/// vrais systèmes (Raft & co.), où le délai d'élection est un GROS multiple du
-/// battement, sinon une simple micro-coupure (PC chargé, rafale de paquets perdus)
-/// fait basculer l'orbe à tort — et comme l'élection retombe sur le plus petit id,
-/// on verrait la balle changer de maître toute seule, sans que personne ne la touche.
+/// Délai sans nouvelle du maître au-delà duquel on le présume parti (s). Généreux
+/// exprès (règle des vrais systèmes type Raft) : sinon une micro-coupure ferait
+/// basculer l'orbe à tort.
 const MASTER_TIMEOUT: f32 = 2.0;
 /// Couleur de l'orbe tant que personne ne l'a touchée (blanc bleuté néon).
 const NEUTRAL_COLOR: (f32, f32, f32) = (0.85, 0.85, 1.0);
 /// Saut de version maximal toléré entre deux états d'orbe acceptés (chap. 5.3).
-/// L'orbe est diffusée à 20 Hz à tous les pairs joignables : on voit donc presque
-/// tous les transferts (+1 chacun). Un saut bien plus grand (ex. vers 65535 pour
-/// VERROUILLER l'orbe à vie) est ABERRANT → on le refuse et on inscrit une faute.
-/// 16 laisse une marge confortable pour quelques transferts manqués, sans rien
-/// laisser passer de l'attaque (qui saute de ~65000).
+/// Un bond énorme (ex. vers 65535 pour verrouiller l'orbe à vie) est ABERRANT → on
+/// le refuse et on inscrit une faute. 16 laisse de la marge pour des transferts manqués.
 const MAX_ORB_VERSION_JUMP: u16 = 16;
 
 /// Le paquet « état de l'orbe » tel qu'il voyage sur le réseau (avant/après octets).
 pub(crate) struct OrbWire {
-    pub owner: u8,    // id du maître (celui qui a touché l'orbe en dernier)
-    pub version: u16, // compteur de propriété : +1 à chaque transfert
+    pub owner: PeerId, // identité (clé) du maître ; portée dans le paquet
+    pub version: u16,  // compteur de propriété : +1 à chaque transfert
     pub x: f32,
     pub y: f32,
     pub z: f32,
@@ -68,61 +61,75 @@ pub(crate) struct OrbWire {
     pub b: f32,
 }
 
-// Taille exacte, calculée à la main : 1 (type) + 1 (version) + 1 (owner)
-//   + 2 (version d'orbe u16) + 9 nombres f32 de 4 octets (x,y,z, vx,vy,vz, r,g,b)
-//   = 5 + 36 = 41 octets.
-const ORB_SIZE: usize = 1 + 1 + 1 + 2 + 4 * 9;
+// Décalages, calculés à la main : [0] type | [1] version proto | [2..34] owner (clé,
+//   32 o) | [34..36] version d'orbe (u16) | [36..72] 9 f32 (x,y,z, vx,vy,vz, r,g,b).
+const OFF_OWNER: usize = 2;
+const OFF_OVERSION: usize = OFF_OWNER + PUBKEY_LEN; // 34
+const OFF_FLOATS: usize = OFF_OVERSION + 2; // 36
+const ORB_SIZE: usize = OFF_FLOATS + 4 * 9; // 72
 
 /// Sérialiser l'état de l'orbe en octets bruts (même sens little-endian que `message`).
-/// En-tête commun : octet 0 = type, octet 1 = version du protocole.
 pub(crate) fn encode_orb(o: &OrbWire) -> [u8; ORB_SIZE] {
     let mut buf = [0u8; ORB_SIZE];
     buf[0] = KIND_ORB;
     buf[1] = PROTO_VERSION;
-    buf[2] = o.owner;
-    buf[3..5].copy_from_slice(&o.version.to_le_bytes());
-    buf[5..9].copy_from_slice(&o.x.to_le_bytes());
-    buf[9..13].copy_from_slice(&o.y.to_le_bytes());
-    buf[13..17].copy_from_slice(&o.z.to_le_bytes());
-    buf[17..21].copy_from_slice(&o.vx.to_le_bytes());
-    buf[21..25].copy_from_slice(&o.vy.to_le_bytes());
-    buf[25..29].copy_from_slice(&o.vz.to_le_bytes());
-    buf[29..33].copy_from_slice(&o.r.to_le_bytes());
-    buf[33..37].copy_from_slice(&o.g.to_le_bytes());
-    buf[37..41].copy_from_slice(&o.b.to_le_bytes());
+    buf[OFF_OWNER..OFF_OWNER + PUBKEY_LEN].copy_from_slice(o.owner.bytes());
+    buf[OFF_OVERSION..OFF_OVERSION + 2].copy_from_slice(&o.version.to_le_bytes());
+    let f = OFF_FLOATS;
+    buf[f..f + 4].copy_from_slice(&o.x.to_le_bytes());
+    buf[f + 4..f + 8].copy_from_slice(&o.y.to_le_bytes());
+    buf[f + 8..f + 12].copy_from_slice(&o.z.to_le_bytes());
+    buf[f + 12..f + 16].copy_from_slice(&o.vx.to_le_bytes());
+    buf[f + 16..f + 20].copy_from_slice(&o.vy.to_le_bytes());
+    buf[f + 20..f + 24].copy_from_slice(&o.vz.to_le_bytes());
+    buf[f + 24..f + 28].copy_from_slice(&o.r.to_le_bytes());
+    buf[f + 28..f + 32].copy_from_slice(&o.g.to_le_bytes());
+    buf[f + 32..f + 36].copy_from_slice(&o.b.to_le_bytes());
     buf
 }
 
 /// Reconstruire un `OrbWire` depuis les octets reçus. `None` si trop court, pas du
-/// bon type, ou d'une autre version — on ne fait jamais confiance aveuglément au réseau.
+/// bon type/version, ou porteur d'un NaN/Inf — on ne fait jamais confiance au réseau.
 pub(crate) fn decode_orb(buf: &[u8]) -> Option<OrbWire> {
     if buf.len() < ORB_SIZE || buf[0] != KIND_ORB || buf[1] != PROTO_VERSION {
         return None;
     }
-    let owner = buf[2];
-    let version = u16::from_le_bytes(buf[3..5].try_into().ok()?);
-    let x = f32::from_le_bytes(buf[5..9].try_into().ok()?);
-    let y = f32::from_le_bytes(buf[9..13].try_into().ok()?);
-    let z = f32::from_le_bytes(buf[13..17].try_into().ok()?);
-    let vx = f32::from_le_bytes(buf[17..21].try_into().ok()?);
-    let vy = f32::from_le_bytes(buf[21..25].try_into().ok()?);
-    let vz = f32::from_le_bytes(buf[25..29].try_into().ok()?);
-    let r = f32::from_le_bytes(buf[29..33].try_into().ok()?);
-    let g = f32::from_le_bytes(buf[33..37].try_into().ok()?);
-    let b = f32::from_le_bytes(buf[37..41].try_into().ok()?);
-    // Rejet des NaN/Inf : `NaN.clamp(lo, hi)` reste NaN, donc même la borne salle
-    // ne nous protégerait pas — la balle partirait à l'infini. On jette le paquet.
+    let mut ob = [0u8; PUBKEY_LEN];
+    ob.copy_from_slice(&buf[OFF_OWNER..OFF_OWNER + PUBKEY_LEN]);
+    let owner = PeerId::from_bytes(ob);
+    let version = u16::from_le_bytes(buf[OFF_OVERSION..OFF_OVERSION + 2].try_into().ok()?);
+    let f = OFF_FLOATS;
+    let x = f32::from_le_bytes(buf[f..f + 4].try_into().ok()?);
+    let y = f32::from_le_bytes(buf[f + 4..f + 8].try_into().ok()?);
+    let z = f32::from_le_bytes(buf[f + 8..f + 12].try_into().ok()?);
+    let vx = f32::from_le_bytes(buf[f + 12..f + 16].try_into().ok()?);
+    let vy = f32::from_le_bytes(buf[f + 16..f + 20].try_into().ok()?);
+    let vz = f32::from_le_bytes(buf[f + 20..f + 24].try_into().ok()?);
+    let r = f32::from_le_bytes(buf[f + 24..f + 28].try_into().ok()?);
+    let g = f32::from_le_bytes(buf[f + 28..f + 32].try_into().ok()?);
+    let b = f32::from_le_bytes(buf[f + 32..f + 36].try_into().ok()?);
     if ![x, y, z, vx, vy, vz, r, g, b].iter().all(|f| f.is_finite()) {
         return None;
     }
     Some(OrbWire { owner, version, x, y, z, vx, vy, vz, r, g, b })
 }
 
-/// Taille d'un état d'orbe SIGNÉ : corps (41 o) + sceau Ed25519 (64 o) = 105.
+/// Lit l'id (clé) du maître revendiqué dans un paquet d'orbe, sans rien vérifier.
+pub(crate) fn claimed_owner(buf: &[u8]) -> Option<PeerId> {
+    if buf.len() < OFF_OWNER + PUBKEY_LEN {
+        return None;
+    }
+    let mut ob = [0u8; PUBKEY_LEN];
+    ob.copy_from_slice(&buf[OFF_OWNER..OFF_OWNER + PUBKEY_LEN]);
+    Some(PeerId::from_bytes(ob))
+}
+
+/// Taille d'un état d'orbe SIGNÉ : corps (72 o) + sceau Ed25519 (64 o) = 136.
 pub(crate) const SIGNED_ORB_SIZE: usize = ORB_SIZE + SIG_LEN;
 
-/// Scelle l'état de l'orbe : le maître SIGNE le corps avec sa clé privée. Personne
-/// ne peut plus se proclamer maître à sa place (chap. 5.3).
+/// Scelle l'état de l'orbe : le maître SIGNE le corps avec sa clé privée. Le corps
+/// embarque déjà sa clé publique (`owner`) : personne d'autre ne peut produire un
+/// sceau valide pour cette clé (chap. 5.3 + 6.1).
 pub(crate) fn encode_orb_signed(o: &OrbWire, identity: &Identity) -> [u8; SIGNED_ORB_SIZE] {
     let body = encode_orb(o);
     let sig = identity.sign(&body);
@@ -132,22 +139,23 @@ pub(crate) fn encode_orb_signed(o: &OrbWire, identity: &Identity) -> [u8; SIGNED
     out
 }
 
-/// Le sceau d'un état d'orbe est-il valide pour cette clé ? (séparé du décodage,
-/// pour n'accuser que l'ATTRIBUABLE : signé mais trichant ≠ simple sceau bidon.)
-pub(crate) fn orb_sig_ok(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> bool {
+/// Le sceau d'un état d'orbe est-il valide ? On lit la clé du maître DIRECTEMENT
+/// dans le paquet (`owner`, octets 2..34) et on vérifie contre elle (auto-certifié).
+pub(crate) fn orb_sig_ok(buf: &[u8]) -> bool {
     if buf.len() < SIGNED_ORB_SIZE {
         return false;
     }
+    let mut pubkey = [0u8; PUBKEY_LEN];
+    pubkey.copy_from_slice(&buf[OFF_OWNER..OFF_OWNER + PUBKEY_LEN]);
     let mut sig = [0u8; SIG_LEN];
     sig.copy_from_slice(&buf[ORB_SIZE..SIGNED_ORB_SIZE]);
-    verify(&buf[..ORB_SIZE], &sig, pubkey)
+    verify(&buf[..ORB_SIZE], &sig, &pubkey)
 }
 
-/// Vérifie le sceau PUIS décode (combo pratique pour les tests ; la réception sépare
-/// `orb_sig_ok` et `decode_orb`). `None` si le sceau ne colle pas OU corps invalide.
+/// Vérifie le sceau PUIS décode (combo pratique pour les tests).
 #[cfg(test)]
-pub(crate) fn decode_orb_verified(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> Option<OrbWire> {
-    if !orb_sig_ok(buf, pubkey) {
+pub(crate) fn decode_orb_verified(buf: &[u8]) -> Option<OrbWire> {
+    if !orb_sig_ok(buf) {
         return None;
     }
     decode_orb(buf)
@@ -165,12 +173,12 @@ pub(crate) enum OrbApply {
 pub struct Orb {
     pub(crate) pos: Vec3,
     pub(crate) vel: Vec3,
-    pub(crate) owner: Option<u8>, // None = personne ne l'a encore touchée
+    pub(crate) owner: Option<PeerId>, // None = personne ne l'a encore touchée
     pub(crate) version: u16,
     pub(crate) color: (f32, f32, f32),
-    mat: Handle<StandardMaterial>,        // pour recolorer l'orbe au changement de maître
-    shown: Option<(f32, f32, f32)>,       // dernière couleur réellement appliquée
-    last_heard: f32,                      // instant du dernier paquet reçu du maître (pour la migration)
+    mat: Handle<StandardMaterial>,  // pour recolorer l'orbe au changement de maître
+    shown: Option<(f32, f32, f32)>, // dernière couleur réellement appliquée
+    last_heard: f32,                // instant du dernier paquet reçu du maître (migration)
 }
 
 /// Marque l'entité 3D (la sphère) qui matérialise l'orbe à l'écran.
@@ -179,8 +187,7 @@ pub struct OrbBall;
 
 impl Orb {
     /// Construit une `Orb` minimale pour un client SANS rendu 3D (le bot de test
-    /// headless du chapitre 6.0). Même logique d'autorité (`apply_incoming`,
-    /// `supersedes`, borne de version) que le jeu, sans handle de matériau réel.
+    /// headless du chapitre 6.0). Même logique d'autorité que le jeu.
     pub(crate) fn headless() -> Orb {
         Orb {
             pos: ORB_START,
@@ -195,13 +202,12 @@ impl Orb {
     }
 }
 
-/// Décide si un état entrant (reçu du réseau) doit SUPPLANTER l'état courant.
-/// C'est toute la logique d'autorité, en une fonction :
+/// Décide si un état entrant doit SUPPLANTER l'état courant. Toute la logique
+/// d'autorité en une fonction :
 ///   - version plus haute        → touche plus récente, il l'emporte ;
-///   - version égale + id ≤       → flux normal du maître courant (==) OU départage
-///                                  d'une course en faveur du plus petit id (<).
-/// (`<=` couvre les deux cas ; `>` à version égale = on garde notre état.)
-fn supersedes(in_ver: u16, in_owner: u8, cur_ver: u16, cur_owner: Option<u8>) -> bool {
+///   - version égale + id ≤       → flux du maître courant (==) OU départage d'une
+///                                  course en faveur du plus petit id (<).
+fn supersedes(in_ver: u16, in_owner: PeerId, cur_ver: u16, cur_owner: Option<PeerId>) -> bool {
     match cur_owner {
         None => true, // pas encore de maître : le premier paquet fait foi
         Some(cur) => in_ver > cur_ver || (in_ver == cur_ver && in_owner <= cur),
@@ -241,9 +247,8 @@ pub fn setup_orb(
 }
 
 /// UPDATE (client) : détecte le CONTACT entre notre joueur et l'orbe, et déclenche
-/// le transfert de propriété — on devient maître, on imprime une vitesse, et on
-/// incrémente la version. On ne frappe qu'au FRONT du contact (pas à chaque image
-/// tant qu'on reste collé), grâce au booléen mémorisé `touching`.
+/// le transfert de propriété — on devient maître, on imprime une vitesse, on
+/// incrémente la version. On ne frappe qu'au FRONT du contact (booléen `touching`).
 pub fn orb_grab(
     link: Res<NetLink>,
     mut orb: ResMut<Orb>,
@@ -258,19 +263,15 @@ pub fn orb_grab(
     };
     let pc = pt.translation;
 
-    // Contact « cylindre » : on rapproche l'orbe du corps en la projetant sur la
-    // hauteur du joueur (des pieds ~0,2 m à la tête ~1,4 m), puis on mesure.
     let closest = Vec3::new(pc.x, orb.pos.y.clamp(0.2, 1.4), pc.z);
     let touch = orb.pos.distance(closest) < ORB_RADIUS + PLAYER_RADIUS;
 
     if touch && !*touching {
-        // Direction de frappe : depuis la poitrine du joueur vers l'orbe (en 3D, donc
-        // l'orbe monte si elle est plus haute → elle rebondira aussi sol/plafond).
         let dir = (orb.pos - Vec3::new(pc.x, 0.9, pc.z)).normalize_or_zero();
         let dir = if dir == Vec3::ZERO { Vec3::Y } else { dir };
         orb.vel = dir * HIT_SPEED;
         orb.owner = Some(my_id);
-        orb.version = orb.version.wrapping_add(1); // débordement sans importance ici
+        orb.version = orb.version.wrapping_add(1);
         orb.color = link.my_color;
         println!("Orbe frappée — tu en es le maître (v{}).", orb.version);
     }
@@ -279,9 +280,7 @@ pub fn orb_grab(
 
 /// UPDATE (client) : fait vivre l'orbe et l'affiche.
 ///   - si JE suis le maître  → je simule la physique (avance + rebonds sur 6 faces) ;
-///   - si quelqu'un d'autre l'est → j'EXTRAPOLE (pos += vitesse·dt), recalé à chaque
-///     paquet reçu : ça lisse les 20 Hz du réseau sans rien recalculer.
-/// Puis on place la sphère et on la recolore si le maître a changé.
+///   - sinon → j'EXTRAPOLE (pos += vitesse·dt), recalé à chaque paquet reçu.
 pub fn orb_simulate(
     time: Res<Time>,
     link: Res<NetLink>,
@@ -299,8 +298,6 @@ pub fn orb_simulate(
         let h = ROOM_SIZE / 2.0 - ORB_RADIUS;
         let (lo, hi) = (ORB_RADIUS, ROOM_HEIGHT - ORB_RADIUS);
         if am_owner {
-            // Rebonds élastiques sur les 6 parois (l'orbe garde son énergie : façon
-            // logo flottant). Seul le maître fait ça : les autres se recalent sur lui.
             if orb.pos.x < -h {
                 orb.pos.x = -h;
                 orb.vel.x = orb.vel.x.abs();
@@ -323,10 +320,6 @@ pub fn orb_simulate(
                 orb.vel.y = -orb.vel.y.abs();
             }
         } else {
-            // Non-maître : on EXTRAPOLE entre deux paquets, mais on BORNE la position
-            // à la salle (sans toucher la vitesse). Sinon, si le maître se tait un
-            // instant (jusqu'à MASTER_TIMEOUT), l'orbe traverserait les murs en ligne
-            // droite. Le prochain paquet du maître la recale de toute façon.
             orb.pos.x = orb.pos.x.clamp(-h, h);
             orb.pos.z = orb.pos.z.clamp(-h, h);
             orb.pos.y = orb.pos.y.clamp(lo, hi);
@@ -335,10 +328,9 @@ pub fn orb_simulate(
 
     if let Ok(mut tf) = ball.single_mut() {
         tf.translation = orb.pos;
-        tf.rotate_y(dt * 1.5); // légère rotation : l'orbe « vit »
+        tf.rotate_y(dt * 1.5);
     }
 
-    // Recolore uniquement quand la couleur change (nouveau maître) — pas chaque image.
     if orb.shown != Some(orb.color) {
         if let Some(mat) = materials.get_mut(&orb.mat) {
             let (r, g, b) = orb.color;
@@ -371,7 +363,6 @@ pub fn orb_send(
     }
     *acc = 0.0;
 
-    // On SCELLE l'état de l'orbe : seul nous (clé privée) pouvons signer ce maître.
     let bytes = encode_orb_signed(
         &OrbWire {
             owner: my_id,
@@ -396,73 +387,54 @@ pub fn orb_send(
     }
 }
 
-/// Appliquer un paquet d'orbe reçu du réseau (appelé depuis `net_receive`, qui est
-/// le seul à vider la prise UDP). On n'écrase notre état QUE s'il est supplanté.
-/// `now` sert à dater ce battement : c'est lui qui prouve que le maître est vivant
-/// (cf. `orb_migrate`).
+/// Appliquer un paquet d'orbe reçu du réseau. On n'écrase notre état QUE s'il est
+/// supplanté. `now` date ce battement : il prouve que le maître est vivant.
 pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) -> OrbApply {
     if !supersedes(w.version, w.owner, orb.version, orb.owner) {
         return OrbApply::Ignored; // état plus ancien : on garde le nôtre (bénin)
     }
     // SHIELD (chap. 5.3) : même signé, on refuse un SAUT de version aberrant. Un
-    // maître honnête incrémente de +1 par transfert, et on les voit presque tous
-    // (orbe à 20 Hz). Un bond vers 65535 (pour verrouiller l'orbe à vie) ou très
-    // loin devant est impossible légitimement → faute. `wrapping_sub` gère le
-    // débordement naturel 65535→0 d'une migration (distance 1, plausible).
+    // bond vers 65535 (verrou) ou très loin devant est impossible légitimement.
     if orb.owner.is_some() {
         let jump = w.version.wrapping_sub(orb.version);
         if jump > MAX_ORB_VERSION_JUMP {
             return OrbApply::Implausible;
         }
     }
-    // Trace : on ne log QUE lorsque le maître change vraiment (pas à chaque
-    // battement du maître courant). Avec les logs de `orb_grab` (frappe) et
-    // `orb_migrate` (reprise), la console explique alors CHAQUE changement de
-    // couleur : frappe / migration / adoption d'un maître distant.
     if orb.owner != Some(w.owner) {
-        println!("Orbe : j'adopte le maître {} (v{}) reçu du réseau.", w.owner, w.version);
+        println!("Orbe : j'adopte le maître {} (v{}) reçu du réseau.", w.owner.short(), w.version);
     }
     orb.owner = Some(w.owner);
     orb.version = w.version;
     orb.pos = Vec3::new(w.x, w.y, w.z);
     orb.vel = Vec3::new(w.vx, w.vy, w.vz);
     orb.color = (w.r, w.g, w.b);
-    orb.last_heard = now; // le maître vient de se manifester : il est vivant
+    orb.last_heard = now;
     OrbApply::Applied
 }
 
-/// UPDATE (client) : la MIGRATION D'HÔTE de l'orbe — le cœur du chapitre 4.
+/// UPDATE (client) : la MIGRATION D'HÔTE de l'orbe (cœur du chapitre 4).
 ///
-/// Si le maître ne s'est plus manifesté depuis `MASTER_TIMEOUT`, on le présume parti
-/// et on élit son remplaçant. L'élection est **déterministe** : chaque témoin prend
-/// le plus petit id parmi {soi} ∪ {pairs connus}, l'ancien maître exclu. Comme tout
-/// le monde a la même liste et la même règle, tout le monde désigne le MÊME gagnant
-/// sans avoir à voter. Seul le gagnant se proclame ; il incrémente la version, ce qui
-/// règle d'office un éventuel « split-brain » (l'ancien maître, s'il réapparaît, verra
-/// une version plus haute et abdiquera via `supersedes`).
-///
-/// Limite assumée (à lever plus tard) : on fait confiance à la liste `peers` du
-/// rendez-vous pour savoir qui est encore là. Si le rendez-vous est mort ET que le
-/// plus petit id élu est lui aussi parti, l'orbe peut rester figée — la détection de
-/// vivacité fine viendra avec le relais/parent (chap. 4.1) et l'anti-triche (chap. 5).
+/// Si le maître se tait depuis `MASTER_TIMEOUT`, on élit son remplaçant de façon
+/// **déterministe** : le plus petit id (clé) parmi {soi} ∪ {pairs connus}, l'ancien
+/// maître exclu. Tout le monde a la même liste et la même règle → même gagnant, sans
+/// vote. Seul le gagnant se proclame ; il incrémente la version (règle le split-brain).
 pub fn orb_migrate(time: Res<Time>, link: Res<NetLink>, mut orb: ResMut<Orb>) {
     let Some(my_id) = link.my_id else {
         return;
     };
-    // Rien à reprendre si l'orbe n'a pas de maître, ou si c'est déjà moi.
     let Some(owner) = orb.owner else {
         return;
     };
     if owner == my_id {
         return;
     }
-    // Le maître bat-il encore ? Tant qu'on l'entend, pas de migration.
     let now = time.elapsed_secs();
     if now - orb.last_heard < MASTER_TIMEOUT {
         return;
     }
 
-    // ÉLECTION déterministe : le plus petit id, l'ancien maître écarté.
+    // ÉLECTION déterministe : le plus petit id (clé), l'ancien maître écarté.
     let mut winner = my_id;
     for id in link.peers.keys() {
         if *id != owner && *id < winner {
@@ -471,51 +443,45 @@ pub fn orb_migrate(time: Res<Time>, link: Res<NetLink>, mut orb: ResMut<Orb>) {
     }
 
     if winner == my_id {
-        // C'est moi : je reprends l'orbe à son dernier état connu (position + vitesse
-        // extrapolées) et je relance sa simulation. La version monte → mes paquets
-        // supplantent tout le reste.
         orb.owner = Some(my_id);
         orb.version = orb.version.wrapping_add(1);
         orb.color = link.my_color;
         orb.last_heard = now;
-        println!("Maître {owner} disparu — je reprends l'orbe (v{}).", orb.version);
+        println!("Maître {} disparu — je reprends l'orbe (v{}).", owner.short(), orb.version);
     }
-    // Sinon : quelqu'un d'autre est élu ; on attend simplement son premier paquet.
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `supersedes` est le CŒUR de l'autorité : on fige ses règles par des tests
-    /// avant d'empiler l'anti-triche (chapitre 5) par-dessus.
+    fn pid(seed: u8) -> PeerId {
+        PeerId::from_bytes([seed; PUBKEY_LEN])
+    }
+
+    /// `supersedes` est le CŒUR de l'autorité : on fige ses règles par des tests.
     #[test]
     fn supersedes_regles_d_autorite() {
-        // Pas encore de maître : le tout premier paquet fait foi.
-        assert!(supersedes(0, 5, 0, None));
-        // Version plus haute → la touche la plus récente l'emporte.
-        assert!(supersedes(10, 9, 5, Some(2)));
-        // Version plus basse → on garde notre maître courant.
-        assert!(!supersedes(4, 1, 5, Some(2)));
+        assert!(supersedes(0, pid(5), 0, None));
+        assert!(supersedes(10, pid(9), 5, Some(pid(2))));
+        assert!(!supersedes(4, pid(1), 5, Some(pid(2))));
         // Égalité de version : le PLUS PETIT id gagne (départage déterministe).
-        assert!(supersedes(7, 1, 7, Some(3))); // 1 < 3 → l'entrant gagne
-        assert!(!supersedes(7, 8, 7, Some(3))); // 8 > 3 → on garde le nôtre
-        // Égalité parfaite (même version, même id) : c'est le flux normal du maître
-        // courant, on l'accepte (rafraîchit position/last_heard).
-        assert!(supersedes(7, 3, 7, Some(3)));
+        assert!(supersedes(7, pid(1), 7, Some(pid(3)))); // 1 < 3 → l'entrant gagne
+        assert!(!supersedes(7, pid(8), 7, Some(pid(3)))); // 8 > 3 → on garde le nôtre
+        assert!(supersedes(7, pid(3), 7, Some(pid(3)))); // flux normal du maître
     }
 
     /// L'état de l'orbe doit survivre à l'aller-retour encode→decode (offsets sûrs).
     #[test]
     fn orbe_survit_a_l_aller_retour() {
         let w = OrbWire {
-            owner: 4, version: 42,
+            owner: pid(4), version: 42,
             x: 1.0, y: 1.5, z: -2.0,
             vx: 3.0, vy: -1.0, vz: 0.5,
             r: 0.9, g: 0.1, b: 0.8,
         };
         let d = decode_orb(&encode_orb(&w)).expect("doit se décoder");
-        assert_eq!(d.owner, 4);
+        assert_eq!(d.owner, pid(4));
         assert_eq!(d.version, 42);
         assert_eq!(d.x, 1.0);
         assert_eq!(d.vz, 0.5);
@@ -526,27 +492,23 @@ mod tests {
     #[test]
     fn orbe_nan_est_rejete() {
         let w = OrbWire {
-            owner: 1, version: 1,
+            owner: pid(1), version: 1,
             x: f32::NAN, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
             r: 0.0, g: 0.0, b: 0.0,
         };
         assert!(decode_orb(&encode_orb(&w)).is_none());
     }
 
-    /// Un paquet d'orbe d'une autre version est rejeté, pas lu de travers.
+    /// Un paquet d'orbe d'une autre version protocole est rejeté, pas lu de travers.
     #[test]
     fn orbe_version_differente_rejetee() {
-        let w = OrbWire {
-            owner: 1, version: 1,
-            x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
-            r: 0.0, g: 0.0, b: 0.0,
-        };
+        let w = orbe_exemple(pid(1), 1);
         let mut bytes = encode_orb(&w);
         bytes[1] = PROTO_VERSION.wrapping_add(1);
         assert!(decode_orb(&bytes).is_none());
     }
 
-    fn orbe_exemple(owner: u8, version: u16) -> OrbWire {
+    fn orbe_exemple(owner: PeerId, version: u16) -> OrbWire {
         OrbWire {
             owner, version,
             x: 0.0, y: 1.5, z: 0.0, vx: 1.0, vy: 0.0, vz: 0.0,
@@ -554,18 +516,20 @@ mod tests {
         }
     }
 
-    /// Une orbe SIGNÉE se vérifie avec la bonne clé ; un autre signataire est rejeté.
+    /// Une orbe SIGNÉE se vérifie ; un paquet revendiquant un autre maître mais signé
+    /// par l'imposteur est rejeté (le sceau ne colle pas à la clé embarquée).
     #[test]
     fn orbe_signee_se_verifie() {
         let maitre = Identity::generate();
-        let signed = encode_orb_signed(&orbe_exemple(3, 7), &maitre);
-        assert!(decode_orb_verified(&signed, &maitre.public()).is_some());
+        let signed = encode_orb_signed(&orbe_exemple(maitre.id(), 7), &maitre);
+        assert!(decode_orb_verified(&signed).is_some());
+        // L'imposteur signe un paquet qui prétend « maître = la vraie clé du maître ».
         let imposteur = Identity::generate();
-        assert!(decode_orb_verified(&signed, &imposteur.public()).is_none());
+        let forge = encode_orb_signed(&orbe_exemple(maitre.id(), 7), &imposteur);
+        assert!(decode_orb_verified(&forge).is_none());
     }
 
-    /// Une `Orb` minimale pour tester l'autorité (sans Bevy/3D).
-    fn orb_test(owner: Option<u8>, version: u16) -> Orb {
+    fn orb_test(owner: Option<PeerId>, version: u16) -> Orb {
         Orb {
             pos: Vec3::ZERO, vel: Vec3::ZERO, owner, version,
             color: NEUTRAL_COLOR, mat: Handle::default(),
@@ -576,25 +540,22 @@ mod tests {
     /// Un transfert normal (+1) est appliqué ; un SAUT vers 65535 (verrou) est refusé.
     #[test]
     fn apply_borne_le_saut_de_version() {
-        // +1 depuis la version 5 → accepté.
-        let mut orb = orb_test(Some(2), 5);
-        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(9, 6), 1.0), OrbApply::Applied));
+        let mut orb = orb_test(Some(pid(2)), 5);
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 1.0), OrbApply::Applied));
 
-        // Saut vers 65535 (tentative de verrouiller l'orbe à vie) → refusé comme faute.
-        let mut orb = orb_test(Some(2), 5);
+        let mut orb = orb_test(Some(pid(2)), 5);
         assert!(matches!(
-            apply_incoming(&mut orb, orbe_exemple(9, 65535), 1.0),
+            apply_incoming(&mut orb, orbe_exemple(pid(9), 65535), 1.0),
             OrbApply::Implausible
         ));
-        // … et l'état n'a PAS bougé : l'attaque n'a rien obtenu.
-        assert_eq!(orb.owner, Some(2));
+        assert_eq!(orb.owner, Some(pid(2)));
         assert_eq!(orb.version, 5);
     }
 
     /// Un état plus ancien est simplement ignoré (bénin, pas une faute).
     #[test]
     fn apply_ignore_un_etat_plus_ancien() {
-        let mut orb = orb_test(Some(2), 10);
-        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(9, 4), 1.0), OrbApply::Ignored));
+        let mut orb = orb_test(Some(pid(2)), 10);
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 4), 1.0), OrbApply::Ignored));
     }
 }

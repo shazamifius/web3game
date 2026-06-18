@@ -105,15 +105,16 @@ src/
 └── net/                 LE RÉSEAU, fait main
     ├── mod.rs           assemble le module et expose l'API publique
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
-    ├── control.rs       les messages d'annuaire (HELLO / WELCOME + clés publiques)
-    ├── crypto.rs        signatures Ed25519 — la SEULE boîte noire (chap. 5)
+    ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
+    ├── crypto.rs        Ed25519 + PeerId (identité = clé) — la SEULE boîte noire (chap. 5/6.1)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
     ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
     ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
     ├── skin.rs          la couleur de skin aléatoire
     ├── demo.rs          le mode texte net-demo (observer les paquets)
-    ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5
+    ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5 & 6
+    ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) — vrai protocole sans 3D (chap. 6.0)
     ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
     ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
     └── netcode/         LE RATTRAPAGE DE LATENCE
@@ -133,16 +134,19 @@ le paquet **et le signale** au lieu de le lire de travers — fini le « bonhomm
 invisible » de deux binaires désynchronisés. Voir `net/wire.rs`.
 
 Depuis le chapitre 5, tout paquet d'état est **signé** : on émet le corps suivi
-d'un **sceau Ed25519 de 64 octets** (état signé = 56 + 64 = **120 octets**). Le
-récepteur le **vérifie** avec la clé publique de l'émetteur (reçue via le
-rendez-vous) avant de l'accepter. Le corps lui-même reste :
+d'un **sceau Ed25519 de 64 octets**. Depuis le **chapitre 6.1**, l'identité (`id`)
+n'est plus un numéro `u8` mais la **clé publique** de l'émetteur (32 octets),
+**portée dans le paquet** : le récepteur vérifie le sceau CONTRE cette clé
+embarquée — l'identité s'auto-prouve, **sans aucun annuaire de confiance**. Le
+rendez-vous ne peut donc plus mentir sur « qui est qui ».
 
-Un paquet de joueur fait **56 octets** : `type` (1) + `version` (1) + `id` (1) +
-`x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1) +
-`seq` (8, compteur anti-rejeu). Voir `net/message.rs`. Un paquet d'orbe **signé**
-fait **105 octets** (corps 41 + sceau 64). Le corps de **41 octets** :
-`type` + `version` + `owner` + `version d'orbe` +
-position, vitesse et couleur. Voir `net/orb.rs`.
+Un paquet de joueur fait **118 octets** : `type` (1) + `version` (1) + `id`
+(**clé, 32**) + `x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) +
+`parent` (**clé, 32** ; zéros = autonome) + `seq` (8, anti-rejeu). Signé = 118 +
+64 = **182 octets**. Voir `net/message.rs`. Un paquet d'orbe **signé** fait **136
+octets** (corps 72 + sceau 64). Le corps de **72 octets** : `type` + `version` +
+`owner` (**clé, 32**) + `version d'orbe` + position, vitesse, couleur. Voir
+`net/orb.rs`. (`PeerId` = la clé, dans `net/crypto.rs` ; affiché en hexa court.)
 
 **Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
 préfixé d'un `_` (ex. `_demo.rs`) et sa ligne `mod` est retirée. Il remonte en
@@ -157,6 +161,23 @@ dans un sous-dossier. (Le compilateur Rust confirme l'inverse : si un fichier
 On avance **en codant pour de vrai**, chapitre par chapitre. On part du plus
 simple (deux PC qui se parlent) vers le plus dur (des centaines de joueurs,
 anti-triche).
+
+> ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
+> Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
+> - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques « rouges ») ;
+>   **6.1** (identité auto-certifiante = clé). Build vert, 23 tests, 0 warning.
+> - **En cours / à venir :** 6.2 → 6.8 (voir la liste ci-dessous, cochée au fur
+>   et à mesure). Chaque étape ferme un « trou » numéroté de l'audit.
+> - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
+>   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
+>   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
+>   bots impriment un « ledger » (acceptés / rejetés / relayés / muets / orbe) qui
+>   rend chaque attaque visible — rouge (réussie) aujourd'hui, verte une fois fermée.
+> - **Les 10 trous de l'audit** (cible de fermeture entre parenthèses) : 1 plafond
+>   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6)*, 3 maillage O(N²) *(6.6)*, 4 collision
+>   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2)*, 7
+>   téléport/speed-hack *(6.3)*, 8 vol d'orbe lent *(6.4)*, 9 DoS spoofing/mémoire
+>   *(6.5)*, 10 amplification relais *(6.5)*.
 
 - [x] **Chapitre 0 — Le bac à sable 3D**
       Salle néon, personnage articulé, vue première personne. *(fait)*
@@ -302,12 +323,18 @@ anti-triche).
         headless** : orb-creep vole l'orbe (v30, 0 faute), amplify fait rediffuser
         la victime, teleport est accepté sans borne. *(C'est l'embryon de la
         simulation 55K du 6.8.)*
-      - [ ] **6.1 — Identité auto-certifiante (le keystone « web3 »).** L'identité
-        d'un joueur DEVIENT sa clé publique (ou son empreinte), au lieu d'un `u8`
-        assigné par le rendez-vous. D'un coup : plus de mur des 255 joueurs, plus
-        de collision d'id, et surtout **le rendez-vous ne peut plus mentir** sur
-        « telle clé = tel joueur » (aujourd'hui toute la signature repose sur son
-        honnêteté). Touche tous les formats de paquet.
+      - [x] **6.1 — Identité auto-certifiante (le keystone « web3 »).** *(fait)*
+        L'identité d'un joueur EST désormais sa **clé publique** (`PeerId` = 32
+        octets), portée dans chaque paquet signé ; le récepteur vérifie le sceau
+        CONTRE cette clé embarquée (`sig_ok` ne consulte plus aucun annuaire). Le
+        type `u8` a disparu de tout le protocole. **Ce que ça ferme :** le mur des
+        255 joueurs (trou n°1), les collisions d'id (n°4), et surtout **le
+        rendez-vous ne peut plus mentir** sur « telle clé = tel joueur » (trou n°5,
+        le plus grave : avant, toute la signature reposait sur l'honnêteté du
+        serveur). Le rendez-vous est rétrogradé en simple carnet d'adresses.
+        **Vérifié** (headless + 23 tests) : usurpation rejetée (clé embarquée ≠
+        signataire), chemin honnête intact. Tailles : état signé 56→**182 o**,
+        orbe signée 105→**136 o**.
       - [ ] **6.2 — Coût d'entrée anti-Sybil.** Une identité doit COÛTER (preuve de
         travail façon Hashcash sur la clé). Sans ça, un banni se reconnecte en une
         milliseconde avec une clé neuve → la réputation/sourdine ne vaut rien.

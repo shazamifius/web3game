@@ -9,6 +9,7 @@
 //! autres, idéalement depuis une 3e fenêtre témoin.
 
 use super::state::{RemoteAvatar, RemoteAvatars};
+use crate::net::crypto::PeerId;
 use crate::net::orb::Orb;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -17,10 +18,10 @@ use std::collections::{HashMap, HashSet};
 #[derive(Component)]
 pub(crate) struct Nameplate;
 
-/// Associe chaque avatar (id) à son étiquette UI, pour les créer/supprimer.
+/// Associe chaque avatar (identité) à son étiquette UI, pour les créer/supprimer.
 #[derive(Resource, Default)]
 pub struct Nameplates {
-    map: HashMap<u8, Entity>,
+    map: HashMap<PeerId, Entity>,
 }
 
 /// SYSTÈME : maintient une étiquette par avatar — la crée/supprime avec lui, la
@@ -38,18 +39,17 @@ pub fn update_nameplates(
         return;
     };
 
-    // Position monde (au-dessus de la tête) de chaque avatar, par id.
-    let mut world: HashMap<u8, Vec3> = HashMap::new();
+    // Position monde (au-dessus de la tête) de chaque avatar, par identité.
+    let mut world: HashMap<PeerId, Vec3> = HashMap::new();
     for (a, gt) in bodies.iter() {
         world.insert(a.id, gt.translation() + Vec3::Y * 1.15);
     }
 
     // Tuteurs actifs = les parents référencés par les avatars sous tutelle.
-    let tutors: HashSet<u8> = avatars
+    let tutors: HashSet<PeerId> = avatars
         .map
         .values()
-        .map(|p| p.parent)
-        .filter(|&id| id != 0)
+        .filter_map(|p| p.parent)
         .collect();
 
     // 1) Retirer les étiquettes des avatars disparus.
@@ -100,13 +100,14 @@ pub fn update_nameplates(
                 if tutors.contains(id) {
                     roles.push("TUTEUR");
                 }
-                if avatars.map.get(id).map_or(false, |p| p.parent != 0) {
+                if avatars.map.get(id).map_or(false, |p| p.parent.is_some()) {
                     roles.push("SOUS TUTELLE");
                 }
+                let nom = id.short();
                 text.0 = if roles.is_empty() {
-                    format!("Joueur {id}")
+                    format!("Joueur {nom}")
                 } else {
-                    format!("Joueur {id} — {}", roles.join(", "))
+                    format!("Joueur {nom} — {}", roles.join(", "))
                 };
             }
             None => *vis = Visibility::Hidden,

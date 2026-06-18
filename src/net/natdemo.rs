@@ -18,7 +18,7 @@
 //!   RENDEZVOUS_ADDR=10.0.0.1:4000 cargo run -- nat-test alice
 
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::Identity;
+use super::crypto::{Identity, PeerId};
 use super::link::rendezvous_addr;
 use super::message::{decode, encode, PlayerState};
 use super::punch::{decode_punch, encode_punch};
@@ -61,8 +61,8 @@ pub fn run_nat_test(label: &str) {
 
     // Identité de ce client de test : le rendez-vous exige une clé publique dans HELLO.
     let identity = Identity::generate();
-    let mut my_id: Option<u8> = None;
-    let mut holes: HashMap<u8, Hole> = HashMap::new();
+    let mut my_id: Option<PeerId> = None;
+    let mut holes: HashMap<PeerId, Hole> = HashMap::new();
     let mut hello_acc = HELLO_PERIOD; // pour dire HELLO dès le premier tour
     let start = Instant::now();
     let mut last = Instant::now();
@@ -75,20 +75,20 @@ pub fn run_nat_test(label: &str) {
         hello_acc += dt;
         if hello_acc >= HELLO_PERIOD {
             hello_acc = 0.0;
-            let _ = socket.send_to(rendezvous, &encode_hello(0.0, 0.0, &identity.public()));
+            let _ = socket.send_to(rendezvous, &encode_hello(0.0, 0.0, identity.id()));
         }
 
         // 2) On relève le courrier.
         for (_from, bytes) in socket.poll() {
             match kind(&bytes) {
                 Some(KIND_WELCOME) => {
-                    if let Some((id, _hue, roster)) = decode_welcome(&bytes) {
-                        if my_id != Some(id) {
-                            my_id = Some(id);
-                            println!("[{label}] le rendez-vous m'a donné l'identifiant {id}.");
+                    if let Some((_hue, roster)) = decode_welcome(&bytes) {
+                        if my_id.is_none() {
+                            my_id = Some(identity.id());
+                            println!("[{label}] inscrit au rendez-vous (identité {}).", identity.id().short());
                         }
                         // On (re)synchronise la liste des pairs à percer.
-                        for (pid, addr, _pubkey) in roster {
+                        for (pid, addr) in roster {
                             holes.entry(pid).or_insert(Hole {
                                 addr,
                                 open: false,
@@ -106,7 +106,8 @@ pub fn run_nat_test(label: &str) {
                                 h.open = true;
                                 let s = start.elapsed().as_secs_f32();
                                 println!(
-                                    "[{label}] ✅ trou OUVERT avec le pair {pid} à t={s:.2}s — connexion DIRECTE établie !"
+                                    "[{label}] ✅ trou OUVERT avec le pair {} à t={s:.2}s — connexion DIRECTE établie !",
+                                    pid.short()
                                 );
                             }
                         }
@@ -117,7 +118,7 @@ pub fn run_nat_test(label: &str) {
                         if let Some(h) = holes.get_mut(&st.id) {
                             h.open = true; // recevoir des données prouve le trou ouvert
                         }
-                        println!("[{label}]    ← données reçues du pair {} (la voie directe fonctionne).", st.id);
+                        println!("[{label}]    ← données reçues du pair {} (la voie directe fonctionne).", st.id.short());
                     }
                 }
                 _ => {}
@@ -135,9 +136,9 @@ pub fn run_nat_test(label: &str) {
                     h.tries += 1;
                     let _ = socket.send_to(h.addr, &encode_punch(id));
                     if h.tries <= PUNCH_LOG_LIMIT {
-                        println!("[{label}] PUNCH vers le pair {pid} (essai {}) — j'ouvre mon trou de retour.", h.tries);
+                        println!("[{label}] PUNCH vers le pair {} (essai {}) — j'ouvre mon trou de retour.", pid.short(), h.tries);
                         if h.tries == PUNCH_LOG_LIMIT {
-                            println!("[{label}] pair {pid} : pas de réponse ; on continue en silence (NAT symétrique ? → relais au chap. 5).");
+                            println!("[{label}] pair {} : pas de réponse ; on continue en silence (NAT symétrique ? → relais au chap. 5).", pid.short());
                         }
                     }
                 }
@@ -152,7 +153,7 @@ pub fn run_nat_test(label: &str) {
                         vx: 0.0, vy: 0.0, vz: 0.0,
                         yaw: 0.0, pitch: 0.0,
                         r: 0.5, g: 0.5, b: 0.5,
-                        parent: 0, seq: 0,
+                        parent: None, seq: 0,
                     };
                     let _ = socket.send_to(h.addr, &encode(&ping));
                 }

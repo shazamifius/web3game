@@ -10,7 +10,7 @@
 
 use super::aoi::within_radius;
 use super::control::{decode_hello, encode_welcome};
-use super::crypto::PUBKEY_LEN;
+use super::crypto::PeerId;
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -22,10 +22,9 @@ use std::time::{Duration, Instant};
 /// position (pour l'AoI), et son dernier nombre de voisins (pour ne logger qu'au
 /// changement).
 struct ClientInfo {
-    id: u8,
+    id: PeerId, // identité (clé publique) du client : redistribuée aux autres
     seen: Instant,
     pos: (f32, f32),
-    pubkey: [u8; PUBKEY_LEN], // identité du client : redistribuée aux autres
     last_count: usize,
 }
 
@@ -45,25 +44,23 @@ pub fn run_rendezvous() {
     );
 
     let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
-    let mut next_id: u8 = 1;
 
     loop {
         for (from, bytes) in socket.poll() {
-            // HELLO porte la position du joueur (pour l'AoI) ET sa clé publique
-            // (son identité, qu'on redistribuera pour que chacun vérifie ses signatures).
-            let Some((px, pz, pubkey)) = decode_hello(&bytes) else {
+            // HELLO porte la position du joueur (pour l'AoI) ET son identité (clé
+            // publique). Depuis le chap. 6.1, le rendez-vous n'ATTRIBUE plus de numéro :
+            // l'identité, c'est la clé. Il ne fait que présenter les joueurs entre eux.
+            let Some((px, pz, id)) = decode_hello(&bytes) else {
                 continue; // le rendez-vous ne comprend que HELLO
             };
             let pos = (px, pz);
             let now = Instant::now();
-            // Nouveau venu ? On lui donne le prochain identifiant libre.
-            let (id, last_count) = match clients.get(&from) {
-                Some(info) => (info.id, info.last_count),
+            // Nouveau venu (adresse jamais vue) ? On le signale une fois.
+            let last_count = match clients.get(&from) {
+                Some(info) => info.last_count,
                 None => {
-                    let id = next_id;
-                    next_id = next_id.checked_add(1).unwrap_or(1);
-                    println!("Joueur {id} rejoint ({from}).");
-                    (id, usize::MAX) // force le log au premier roster
+                    println!("Joueur {} rejoint ({from}).", id.short());
+                    usize::MAX // force le log au premier roster
                 }
             };
 
@@ -71,17 +68,17 @@ pub fn run_rendezvous() {
             // très grand rayon (ici ça revient à « tout le monde » dans une salle).
             // Ce n'est PAS la règle de jeu : la vraie répartition (qui reçoit quel
             // débit) se fait côté client par water-filling. Personne n'est exclu.
-            let roster: Vec<(u8, SocketAddr, [u8; PUBKEY_LEN])> = clients
+            let roster: Vec<(PeerId, SocketAddr)> = clients
                 .iter()
                 .filter(|(addr, info)| **addr != from && within_radius(info.pos, pos))
-                .map(|(addr, info)| (info.id, *addr, info.pubkey))
+                .map(|(addr, info)| (info.id, *addr))
                 .collect();
 
             if roster.len() != last_count {
-                println!("Joueur {id} : {} a portee.", roster.len());
+                println!("Joueur {} : {} a portee.", id.short(), roster.len());
             }
-            clients.insert(from, ClientInfo { id, seen: now, pos, pubkey, last_count: roster.len() });
-            let _ = socket.send_to(from, &encode_welcome(id, world_hue, &roster));
+            clients.insert(from, ClientInfo { id, seen: now, pos, last_count: roster.len() });
+            let _ = socket.send_to(from, &encode_welcome(world_hue, &roster));
         }
 
         // On oublie les clients silencieux depuis plus de 5 s (déconnectés).
@@ -89,7 +86,7 @@ pub fn run_rendezvous() {
         clients.retain(|addr, info| {
             let keep = now.duration_since(info.seen) < Duration::from_secs(5);
             if !keep {
-                println!("Joueur {} parti ({addr}).", info.id);
+                println!("Joueur {} parti ({addr}).", info.id.short());
             }
             keep
         });

@@ -18,6 +18,7 @@
 //! synchronisé). Dès qu'on reçoit quoi que ce soit du pair (cf. `receive.rs`), le
 //! trou est « ouvert » et on arrête de percer.
 
+use super::crypto::{PeerId, PUBKEY_LEN};
 use super::link::NetLink;
 use super::wire::{KIND_PUNCH, PROTO_VERSION};
 use bevy::prelude::*;
@@ -30,17 +31,26 @@ const PUNCH_INTERVAL: f32 = 0.25;
 /// relais (TURN/supernœud), prévu plus tard.
 const PUNCH_LOG_LIMIT: u32 = 8;
 
-/// Fabrique un paquet PUNCH : type + version + notre identifiant.
-pub(crate) fn encode_punch(my_id: u8) -> [u8; 3] {
-    [KIND_PUNCH, PROTO_VERSION, my_id]
+/// Taille d'un PUNCH : type + version + identité (clé, 32) = 34.
+const PUNCH_SIZE: usize = 2 + PUBKEY_LEN;
+
+/// Fabrique un paquet PUNCH : type + version + notre identité (clé).
+pub(crate) fn encode_punch(my_id: PeerId) -> [u8; PUNCH_SIZE] {
+    let mut b = [0u8; PUNCH_SIZE];
+    b[0] = KIND_PUNCH;
+    b[1] = PROTO_VERSION;
+    b[2..2 + PUBKEY_LEN].copy_from_slice(my_id.bytes());
+    b
 }
 
-/// Lit un paquet PUNCH : renvoie l'identifiant du pair qui cherche à nous joindre.
-pub(crate) fn decode_punch(buf: &[u8]) -> Option<u8> {
-    if buf.len() < 3 || buf[0] != KIND_PUNCH || buf[1] != PROTO_VERSION {
+/// Lit un paquet PUNCH : renvoie l'identité (clé) du pair qui cherche à nous joindre.
+pub(crate) fn decode_punch(buf: &[u8]) -> Option<PeerId> {
+    if buf.len() < PUNCH_SIZE || buf[0] != KIND_PUNCH || buf[1] != PROTO_VERSION {
         return None;
     }
-    Some(buf[2])
+    let mut pk = [0u8; PUBKEY_LEN];
+    pk.copy_from_slice(&buf[2..2 + PUBKEY_LEN]);
+    Some(PeerId::from_bytes(pk))
 }
 
 /// L'état d'un « trou » vers un pair : confirmé ouvert ou non, nombre d'essais, et
@@ -62,7 +72,7 @@ impl Default for HoleState {
 /// un trou à `open = true` quand un paquet du pair nous parvient.
 #[derive(Resource, Default)]
 pub struct Holes {
-    pub(crate) map: HashMap<u8, HoleState>,
+    pub(crate) map: HashMap<PeerId, HoleState>,
 }
 
 /// SYSTÈME : pour chaque pair dont le trou n'est PAS confirmé ouvert, envoyer un
@@ -91,10 +101,11 @@ pub fn net_punch(time: Res<Time>, link: Res<NetLink>, mut holes: ResMut<Holes>) 
         let _ = link.socket.send_to(*addr, &punch);
 
         if hole.tries <= PUNCH_LOG_LIMIT {
-            println!("PUNCH vers le pair {id} (essai {}) — j'ouvre mon trou de retour.", hole.tries);
+            println!("PUNCH vers le pair {} (essai {}) — j'ouvre mon trou de retour.", id.short(), hole.tries);
             if hole.tries == PUNCH_LOG_LIMIT {
                 println!(
-                    "Pair {id} : toujours pas de réponse ; on continue en silence (NAT symétrique ? → relais plus tard)."
+                    "Pair {} : toujours pas de réponse ; on continue en silence (NAT symétrique ? → relais plus tard).",
+                    id.short()
                 );
             }
         }

@@ -1,6 +1,7 @@
 //! L'ÉTAT du netcode : les RÉGLAGES (constantes à tourner), l'instantané reçu,
 //! la fiche d'un joueur distant, et les marqueurs des entités 3D.
 
+use crate::net::crypto::PeerId;
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -44,23 +45,23 @@ pub(super) struct RemotePlayer {
     pub(super) smooth_vel: Vec3,
     pub(super) yaw_vel: f32,
     pub(super) pitch_vel: f32,
-    /// Rôle : id de SON tuteur (relais) si ce joueur est sous tutelle, sinon 0.
-    /// Alimente les badges de rôle (cf. `badges`).
-    pub(super) parent: u8,
+    /// Rôle : identité (clé) de SON tuteur (relais) si ce joueur est sous tutelle,
+    /// sinon `None`. Alimente les badges de rôle (cf. `nameplates`).
+    pub(super) parent: Option<PeerId>,
 }
 
-/// Mémorise tous les joueurs distants connus, par identifiant.
+/// Mémorise tous les joueurs distants connus, par identité (clé).
 #[derive(Resource, Default)]
 pub struct RemoteAvatars {
-    pub(super) map: std::collections::HashMap<u8, RemotePlayer>,
+    pub(super) map: std::collections::HashMap<PeerId, RemotePlayer>,
 }
 
 /// Marque le CORPS d'un joueur distant (position + orientation gauche/droite).
 /// `pub(crate)` car il apparaît dans la signature des systèmes publics du netcode.
 #[derive(Component)]
 pub(crate) struct RemoteAvatar {
-    /// Identifiant du joueur : sert à associer l'étiquette de rôle (cf. `nameplates`).
-    pub(super) id: u8,
+    /// Identité du joueur : sert à associer l'étiquette de rôle (cf. `nameplates`).
+    pub(super) id: PeerId,
 }
 
 /// Marque le pivot de la TÊTE d'un joueur distant (inclinaison haut/bas).

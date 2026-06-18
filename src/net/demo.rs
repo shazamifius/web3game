@@ -4,6 +4,7 @@
 //! position qui tourne en cercle et affichent ce qu'elles reçoivent. C'est resté
 //! volontairement simple (2 pairs codés en dur) pour observer le transport seul.
 
+use super::crypto::PeerId;
 use super::message::{decode, encode, PlayerState};
 use super::skin::random_color;
 use super::transport::Socket;
@@ -21,7 +22,7 @@ pub fn run_demo(role: &str) {
     };
     let remote = SocketAddr::from(([127, 0, 0, 1], remote_port));
     let (r, g, b) = random_color();
-    println!("Démo '{role}' : écoute {local_port}, parle à {remote_port}, joueur {id}.\n");
+    println!("Démo '{role}' : écoute {local_port}, parle à {remote_port}, joueur {}.\n", id.short());
 
     let start = Instant::now();
     loop {
@@ -40,7 +41,7 @@ pub fn run_demo(role: &str) {
             r,
             g,
             b,
-            parent: 0,
+            parent: None,
             seq: 0,
         };
         if let Err(e) = socket.send_to(remote, &encode(&me)) {
@@ -50,7 +51,7 @@ pub fn run_demo(role: &str) {
             if let Some(other) = decode(&bytes) {
                 println!(
                     "  ← reçu du joueur {} : x={:.2}  y={:.2}  z={:.2}",
-                    other.id, other.x, other.y, other.z
+                    other.id.short(), other.x, other.y, other.z
                 );
             }
         }
@@ -58,10 +59,12 @@ pub fn run_demo(role: &str) {
     }
 }
 
-/// Selon le rôle ('a' ou 'b'), choisit les ports et l'identifiant (démo seulement).
-fn ports_for_role(role: &str) -> (u16, u16, u8) {
+/// Selon le rôle ('a' ou 'b'), choisit les ports et une identité fixe (démo seulement,
+/// pas de signature ici : on observe juste le transport). L'id est un `PeerId`
+/// déterministe (32 octets identiques) pour que l'affichage reste stable.
+fn ports_for_role(role: &str) -> (u16, u16, PeerId) {
     match role {
-        "b" | "B" => (5001, 5000, 2),
-        _ => (5000, 5001, 1), // 'a' par défaut
+        "b" | "B" => (5001, 5000, PeerId::from_bytes([0xBB; 32])),
+        _ => (5000, 5001, PeerId::from_bytes([0xAA; 32])), // 'a' par défaut
     }
 }
