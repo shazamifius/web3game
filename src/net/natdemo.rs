@@ -18,7 +18,7 @@
 //!   RENDEZVOUS_ADDR=10.0.0.1:4000 cargo run -- nat-test alice
 
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::{Identity, PeerId};
+use super::crypto::{Identity, PeerId, POW_BITS};
 use super::link::rendezvous_addr;
 use super::message::{decode, encode, PlayerState};
 use super::punch::{decode_punch, encode_punch};
@@ -59,8 +59,9 @@ pub fn run_nat_test(label: &str) {
     println!("[{label}] prise locale {local:?}, rendez-vous {rendezvous}.");
     println!("[{label}] j'envoie HELLO au rendez-vous et j'attends la liste des pairs…\n");
 
-    // Identité de ce client de test : le rendez-vous exige une clé publique dans HELLO.
-    let identity = Identity::generate();
+    // Identité de ce client de test : minée (preuve de travail), sinon le rendez-vous
+    // l'ignore (chap. 6.2).
+    let identity = Identity::generate_pow(POW_BITS);
     let mut my_id: Option<PeerId> = None;
     let mut holes: HashMap<PeerId, Hole> = HashMap::new();
     let mut hello_acc = HELLO_PERIOD; // pour dire HELLO dès le premier tour

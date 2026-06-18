@@ -16,7 +16,7 @@ use super::state::{
 };
 use crate::net::anticheat::move_plausible;
 use crate::net::control::decode_welcome;
-use crate::net::crypto::PeerId;
+use crate::net::crypto::{PeerId, POW_BITS};
 use crate::net::link::NetLink;
 use crate::net::message::{claimed_id, decode_canonical, sig_ok, PlayerState};
 use crate::net::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply, OrbWire};
@@ -239,10 +239,13 @@ fn check_packet(bytes: &[u8]) -> Checked {
         return Checked::Unknown; // sceau invalide → non attribuable → jeté sans accuser
     }
     match decode_canonical(bytes) {
+        // 6.2 : une identité sans preuve de travail est tout bonnement ignorée
+        // (elle n'a pas « payé » son entrée) — et on ne la juge pas (pas de strike).
+        Some(state) if !state.id.has_pow(POW_BITS) => Checked::Unknown,
         Some(state) => Checked::Good(state),
         None => match claimed_id(bytes) {
-            Some(id) => Checked::Faulty(id), // signé MAIS contenu impossible → faute
-            None => Checked::Unknown,
+            Some(id) if id.has_pow(POW_BITS) => Checked::Faulty(id), // signé + payé MAIS contenu impossible
+            _ => Checked::Unknown,
         },
     }
 }
@@ -274,10 +277,11 @@ fn check_orb(bytes: &[u8]) -> OrbChecked {
         return OrbChecked::Unknown; // sceau invalide → jeté sans accuser
     }
     match decode_orb(bytes) {
+        Some(w) if !w.owner.has_pow(POW_BITS) => OrbChecked::Unknown, // identité non minée → ignorée
         Some(w) => OrbChecked::Good(w),
         None => match claimed_owner(bytes) {
-            Some(id) => OrbChecked::Faulty(id),
-            None => OrbChecked::Unknown,
+            Some(id) if id.has_pow(POW_BITS) => OrbChecked::Faulty(id),
+            _ => OrbChecked::Unknown,
         },
     }
 }

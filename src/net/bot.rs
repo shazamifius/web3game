@@ -14,7 +14,7 @@
 
 use super::anticheat::move_plausible;
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::PeerId;
+use super::crypto::{PeerId, POW_BITS};
 use super::link::NetLink;
 use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
@@ -148,7 +148,7 @@ pub fn run_bot(label: &str) {
                     }
                     match decode_canonical(&bytes) {
                         Some(state) => {
-                            if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
+                            if state.id.has_pow(POW_BITS) && !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
                                 let np = Vec3::new(state.x, state.y, state.z);
                                 let teleport = match last_state.get(&state.id) {
                                     Some((prev, t)) => !move_plausible(*prev, np, now - t),
@@ -178,7 +178,7 @@ pub fn run_bot(label: &str) {
                         continue;
                     }
                     if let Some(state) = decode_canonical(&bytes) {
-                        if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
+                        if state.id.has_pow(POW_BITS) && !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
                             let np = Vec3::new(state.x, state.y, state.z);
                             let teleport = match last_state.get(&state.id) {
                                 Some((prev, t)) => !move_plausible(*prev, np, now - t),
@@ -225,7 +225,7 @@ pub fn run_bot(label: &str) {
                     match decode_orb(&bytes) {
                         Some(w) => {
                             let owner = w.owner;
-                            if !link.is_muted(owner) {
+                            if owner.has_pow(POW_BITS) && !link.is_muted(owner) {
                                 let claimer_pos = last_state.get(&owner).map(|(p, _)| *p);
                                 match apply_incoming(&mut orb, w, now, claimer_pos) {
                                     OrbApply::Implausible => link.add_strike(owner, "orbe : saut de version aberrant"),

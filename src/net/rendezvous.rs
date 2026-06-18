@@ -10,7 +10,7 @@
 
 use super::aoi::within_radius;
 use super::control::{decode_hello, encode_welcome};
-use super::crypto::PeerId;
+use super::crypto::{PeerId, POW_BITS};
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -53,6 +53,10 @@ pub fn run_rendezvous() {
             let Some((px, pz, id)) = decode_hello(&bytes) else {
                 continue; // le rendez-vous ne comprend que HELLO
             };
+            // 6.2 : une identité sans preuve de travail n'est même pas listée.
+            if !id.has_pow(POW_BITS) {
+                continue;
+            }
             let pos = (px, pz);
             let now = Instant::now();
             // Nouveau venu (adresse jamais vue) ? On le signale une fois.

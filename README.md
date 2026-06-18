@@ -106,7 +106,7 @@ src/
     ├── mod.rs           assemble le module et expose l'API publique
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
     ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
-    ├── crypto.rs        Ed25519 + PeerId (identité = clé) — la SEULE boîte noire (chap. 5/6.1)
+    ├── crypto.rs        Ed25519 + PeerId (identité = clé) + preuve de travail — boîte noire (5/6.1/6.2)
     ├── anticheat.rs     le « Shield local » : règles de plausibilité physique (chap. 6.3+)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
@@ -166,10 +166,11 @@ anti-triche).
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques « rouges ») ;
->   **6.1** (identité = clé) ; **6.3** (anti-téléport) ; **6.4** (preuve de contact
->   orbe) ; **6.5** (DoS borné : mémoire + amplification). Build vert, 28 tests, 0 warning.
-> - **En cours / à venir :** 6.2 (anti-Sybil), 6.6 (échelle), 6.7 (quorum BFT),
->   6.8 (simu 55K). Chaque étape ferme un « trou » numéroté de l'audit.
+>   **6.1** (identité = clé) ; **6.2** (anti-Sybil : preuve de travail) ; **6.3**
+>   (anti-téléport) ; **6.4** (preuve de contact orbe) ; **6.5** (DoS borné). Build
+>   vert, 30 tests, 0 warning. **Les 8 trous « jouables » de l'audit sont fermés.**
+> - **À venir :** 6.6 (échelle : roster paginé, AoI bornée en nombre — lève les murs
+>   restants n°2 et n°3), 6.7 (quorum BFT / réputation partagée), 6.8 (simu 55K).
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -177,7 +178,7 @@ anti-triche).
 >   rend chaque attaque visible — rouge (réussie) aujourd'hui, verte une fois fermée.
 > - **Les 10 trous de l'audit** (cible de fermeture entre parenthèses) : 1 plafond
 >   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6)*, 3 maillage O(N²) *(6.6)*, 4 collision
->   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2)*, 7
+>   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2 ✓)*, 7
 >   téléport/speed-hack *(6.3 ✓)*, 8 vol d'orbe lent *(6.4 ✓)*, 9 DoS spoofing/mémoire
 >   *(6.5 ✓)*, 10 amplification relais *(6.5 ✓)*.
 
@@ -337,9 +338,17 @@ anti-triche).
         **Vérifié** (headless + 23 tests) : usurpation rejetée (clé embarquée ≠
         signataire), chemin honnête intact. Tailles : état signé 56→**182 o**,
         orbe signée 105→**136 o**.
-      - [ ] **6.2 — Coût d'entrée anti-Sybil.** Une identité doit COÛTER (preuve de
-        travail façon Hashcash sur la clé). Sans ça, un banni se reconnecte en une
-        milliseconde avec une clé neuve → la réputation/sourdine ne vaut rien.
+      - [x] **6.2 — Coût d'entrée anti-Sybil (preuve de travail).** *(fait)* Une
+        identité n'est VALIDE que si sa clé publique a `POW_BITS` (= 16) bits de tête
+        à zéro. En trouver une exige de « miner » ~2^16 paires de clés (`generate_pow`,
+        ~0,9 s mesuré) ; vérifier est gratuit (`PeerId::has_pow`). Pairs ET rendez-vous
+        **ignorent** une identité non minée. **Ce que ça ferme :** trou n°6 — un banni
+        ne se reconnecte plus gratuitement, il doit RE-MINER à chaque fois → la
+        réputation/sourdine reprend du sens. **Vérifié headless** : les identités
+        minées commencent visiblement par `0000…` ; le chemin honnête tourne ; l'attaque
+        `sybil` doit re-payer la preuve. *(MVP tunable : 16 bits ≈ quelques dixièmes de
+        s ; on peut monter la difficulté. Un attaquant à GPU mine plus vite — la vraie
+        défense forte combine PoW + réputation partagée du 6.7.)*
       - [x] **6.3 — Validation de mouvement (anti-téléport / speed-hack).** *(fait)*
         Nouveau module `net/anticheat.rs` (le « Shield local ») : à la réception, on
         compare la distance parcourue depuis le dernier état accepté d'un joueur au

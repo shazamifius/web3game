@@ -4,7 +4,7 @@
 //! du rendez-vous, notre identifiant (attribué par le rendez-vous → `Option`
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
-use super::crypto::{Identity, PeerId};
+use super::crypto::{Identity, PeerId, POW_BITS};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
@@ -48,8 +48,10 @@ impl NetLink {
     pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
         let rendezvous = rendezvous_addr();
-        // On tire notre paire de clés une fois, au lancement. La privée reste ici.
-        let identity = Identity::generate();
+        // On MINE notre identité (preuve de travail anti-Sybil, chap. 6.2) une fois,
+        // au lancement. La privée reste ici. Ce petit coût rend une identité « chère »
+        // → on ne peut plus se reconnecter gratuitement après un bannissement.
+        let identity = Identity::generate_pow(POW_BITS);
         println!(
             "Client réseau : port local {}, rendez-vous {}{}.",
             socket.local_addr()?,

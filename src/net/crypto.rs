@@ -29,6 +29,28 @@ pub(crate) const PUBKEY_LEN: usize = 32;
 /// Taille d'une signature Ed25519 (octets) : le « sceau » apposé sur un paquet.
 pub(crate) const SIG_LEN: usize = 64;
 
+/// DIFFICULTÉ anti-Sybil (chap. 6.2) : nombre de bits de tête à ZÉRO qu'une clé
+/// publique doit avoir pour être une identité VALIDE. Comme une clé Ed25519 est
+/// ~aléatoire, en trouver une qui satisfait ça exige d'en essayer ~2^bits (du
+/// « minage », façon Hashcash). Vérifier, en revanche, est gratuit. Conséquence :
+/// **créer une identité COÛTE** → un banni ne se reconnecte plus gratuitement avec
+/// une clé neuve (la réputation reprend du sens). Réglage MVP, à monter plus tard.
+pub(crate) const POW_BITS: u32 = 16;
+
+/// Compte les bits de tête à zéro d'une suite d'octets (gros-boutiste).
+fn leading_zero_bits(bytes: &[u8]) -> u32 {
+    let mut total = 0;
+    for &b in bytes {
+        if b == 0 {
+            total += 8;
+        } else {
+            total += b.leading_zeros();
+            break;
+        }
+    }
+    total
+}
+
 /// L'IDENTITÉ d'un joueur sur le réseau = sa clé publique Ed25519 (32 octets).
 ///
 /// # Auto-certifiante (le keystone du chapitre 6.1)
@@ -63,6 +85,12 @@ impl PeerId {
     pub(crate) fn is_none(&self) -> bool {
         self.0 == [0u8; PUBKEY_LEN]
     }
+
+    /// Cette identité porte-t-elle la PREUVE DE TRAVAIL exigée (chap. 6.2) ? Vrai si
+    /// sa clé a au moins `bits` bits de tête à zéro. Vérification gratuite (O(1)).
+    pub(crate) fn has_pow(&self, bits: u32) -> bool {
+        leading_zero_bits(&self.0) >= bits
+    }
 }
 
 impl std::fmt::Debug for PeerId {
@@ -78,12 +106,35 @@ pub(crate) struct Identity {
 }
 
 impl Identity {
-    /// Tire une nouvelle paire de clés au hasard. La graine (32 octets) vient du
-    /// générateur d'aléa du système d'exploitation (`/dev/urandom`) : c'est LUI la
-    /// source de hasard, on ne « fabrique » pas l'aléa nous-mêmes (autre règle d'or).
+    /// Tire une paire de clés au hasard, SANS preuve de travail (rapide). Réservé aux
+    /// TESTS : en vrai, une identité doit être minée (`generate_pow`) pour être
+    /// acceptée par les pairs et le rendez-vous (chap. 6.2).
+    #[cfg(test)]
     pub(crate) fn generate() -> Identity {
         let seed = os_random_seed();
         Identity { signing: SigningKey::from_bytes(&seed) }
+    }
+
+    /// Tire une identité qui SATISFAIT la preuve de travail (`bits` bits de tête à
+    /// zéro sur la clé publique) — chap. 6.2. On part d'une graine aléatoire et on
+    /// l'incrémente comme un compteur jusqu'à tomber sur une clé conforme (« minage »).
+    /// On lit `/dev/urandom` UNE seule fois (pas à chaque essai) : c'est l'incrément
+    /// qui balaie l'espace, pas des relectures coûteuses. Coût ≈ 2^bits essais.
+    pub(crate) fn generate_pow(bits: u32) -> Identity {
+        let mut seed = os_random_seed();
+        loop {
+            let signing = SigningKey::from_bytes(&seed);
+            if leading_zero_bits(&signing.verifying_key().to_bytes()) >= bits {
+                return Identity { signing };
+            }
+            // Incrémente la graine (grand compteur little-endian) pour l'essai suivant.
+            for byte in seed.iter_mut() {
+                *byte = byte.wrapping_add(1);
+                if *byte != 0 {
+                    break;
+                }
+            }
+        }
     }
 
     /// Notre clé PUBLIQUE (notre identité), prête à être envoyée sur le réseau.
@@ -145,6 +196,19 @@ mod tests {
         let sig = id.sign(b"je suis a la position A");
         // Le moindre octet changé → le sceau ne colle plus.
         assert!(!verify(b"je suis a la position B", &sig, &pubkey));
+    }
+
+    #[test]
+    fn pow_se_verifie() {
+        // Une identité minée à 8 bits satisfait has_pow(8) (rapide : ~256 essais).
+        let id = Identity::generate_pow(8);
+        assert!(id.id().has_pow(8));
+    }
+
+    #[test]
+    fn pow_rejette_une_cle_sans_travail() {
+        // Clé toute en 0xFF : aucun bit de tête à zéro → échoue dès la difficulté 1.
+        assert!(!PeerId::from_bytes([0xFF; PUBKEY_LEN]).has_pow(1));
     }
 
     #[test]

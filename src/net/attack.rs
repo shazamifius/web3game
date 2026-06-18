@@ -23,7 +23,7 @@
 //! justement ce qu'on veut rendre visible avant de les fermer.
 
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::{Identity, PeerId};
+use super::crypto::{Identity, PeerId, POW_BITS};
 use super::link::rendezvous_addr;
 use super::message::{encode_signed, mark_as_relay, PlayerState};
 use super::orb::{encode_orb_signed, OrbWire};
@@ -46,7 +46,9 @@ pub fn run_attack(attack: &str) {
             return;
         }
     };
-    let identity = Identity::generate();
+    // L'attaquant aussi doit MINER son identité (chap. 6.2), sinon il est ignoré
+    // partout : il « paie » donc son entrée comme tout le monde.
+    let identity = Identity::generate_pow(POW_BITS);
     let rv = rendezvous_addr();
     println!(
         "[attaquant] prise {:?}, rendez-vous {rv}. Attaque demandée : « {attack} ».",
@@ -250,7 +252,7 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[
         }
         sleep(Duration::from_millis(150));
     }
-    println!("[attaquant] SYBIL — phase 2 : je JETTE cette identité et j'en génère une NEUVE (coût ≈ 0).");
+    println!("[attaquant] SYBIL — phase 2 : je dois JETER cette identité et en MINER une NEUVE…");
     let socket2 = match Socket::bind(0) {
         Ok(s) => s,
         Err(e) => {
@@ -258,7 +260,8 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[
             return;
         }
     };
-    let id2 = Identity::generate();
+    // Depuis 6.2 : reconnexion = re-payer la preuve de travail. Ce n'est plus gratuit.
+    let id2 = Identity::generate_pow(POW_BITS);
     let (my_id2, victims2) = join_and_discover(&socket2, &id2, rv);
     if victims2.is_empty() {
         println!("[attaquant]   (pas de victimes à la reconnexion)");
@@ -272,8 +275,8 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[
         }
         sleep(Duration::from_millis(150));
     }
-    println!("[attaquant] Côté victimes : l'ANCIEN id reste en sourdine, mais le NOUVEL id est accepté normalement.");
-    println!("            → trou n°6 (bannissement gratuit à contourner) à fermer au chap. 6.2.");
+    println!("[attaquant] Le nouvel id est accepté — MAIS j'ai dû RE-MINER une identité (preuve de");
+    println!("            travail, 6.2). Le bannissement n'est plus gratuit à contourner : trou n°6 borné.");
 }
 
 /// ATTAQUE 7 (ROUGE) — ORB-CREEP : on vole l'orbe par incréments de +1. Chaque pas
