@@ -228,8 +228,8 @@ fn attack_teleport(socket: &Socket, identity: &Identity, my_id: PeerId, victims:
         println!("[attaquant]   saut #{k} → x={px} m (téléport instantané).");
         sleep(Duration::from_millis(300));
     }
-    println!("[attaquant] Côté victimes : TOUT est accepté (aucune borne de vitesse).");
-    println!("            → trou n°7 (téléport/speed-hack libre) à fermer au chap. 6.3.");
+    println!("[attaquant] Côté victimes (depuis 6.3) : le 1er point passe, puis chaque saut");
+    println!("            impossible est REFUSÉ + « 🛡 Faute… » → SOURDINE. Trou n°7 FERMÉ.");
 }
 
 /// ATTAQUE 6 (ROUGE) — SYBIL : l'identité est GRATUITE. On triche jusqu'au

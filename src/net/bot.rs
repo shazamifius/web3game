@@ -12,6 +12,7 @@
 //!
 //! Lancement (après `cargo run -- rendezvous`) :  cargo run -- bot alice
 
+use super::anticheat::move_plausible;
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::PeerId;
 use super::link::NetLink;
@@ -48,6 +49,8 @@ pub fn run_bot(label: &str) {
 
     let mut holes: HashMap<PeerId, bool> = HashMap::new();
     let mut buckets: HashMap<SocketAddr, f32> = HashMap::new();
+    // Dernière position acceptée de chaque pair (+ instant) : pour valider le mouvement.
+    let mut last_state: HashMap<PeerId, (Vec3, f32)> = HashMap::new();
     let mut orb = Orb::headless();
     let mut seq: u64 = 0;
 
@@ -135,8 +138,19 @@ pub fn run_bot(label: &str) {
                     match decode_canonical(&bytes) {
                         Some(state) => {
                             if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
-                                holes.insert(state.id, true);
-                                accepted += 1;
+                                let np = Vec3::new(state.x, state.y, state.z);
+                                let teleport = match last_state.get(&state.id) {
+                                    Some((prev, t)) => !move_plausible(*prev, np, now - t),
+                                    None => false,
+                                };
+                                if teleport {
+                                    link.add_strike(state.id, "téléport (vitesse impossible)");
+                                    rejected += 1;
+                                } else {
+                                    last_state.insert(state.id, (np, now));
+                                    holes.insert(state.id, true);
+                                    accepted += 1;
+                                }
                             }
                         }
                         None => {
@@ -154,21 +168,32 @@ pub fn run_bot(label: &str) {
                     }
                     if let Some(state) = decode_canonical(&bytes) {
                         if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
-                            let mut forward = bytes.clone();
-                            forward[0] = KIND_STATE;
-                            let targets: Vec<(PeerId, SocketAddr)> =
-                                link.peers.iter().map(|(i, a)| (*i, *a)).collect();
-                            let mut n = 0u32;
-                            for (id, addr) in targets {
-                                if id != state.id {
-                                    let _ = link.socket.send_to(addr, &forward);
-                                    n += 1;
+                            let np = Vec3::new(state.x, state.y, state.z);
+                            let teleport = match last_state.get(&state.id) {
+                                Some((prev, t)) => !move_plausible(*prev, np, now - t),
+                                None => false,
+                            };
+                            if teleport {
+                                link.add_strike(state.id, "relais : téléport (vitesse impossible)");
+                                rejected += 1;
+                            } else {
+                                last_state.insert(state.id, (np, now));
+                                let mut forward = bytes.clone();
+                                forward[0] = KIND_STATE;
+                                let targets: Vec<(PeerId, SocketAddr)> =
+                                    link.peers.iter().map(|(i, a)| (*i, *a)).collect();
+                                let mut n = 0u32;
+                                for (id, addr) in targets {
+                                    if id != state.id {
+                                        let _ = link.socket.send_to(addr, &forward);
+                                        n += 1;
+                                    }
                                 }
-                            }
-                            accepted += 1;
-                            relayed += n as u64;
-                            if n > 0 {
-                                println!("[bot {label}] ↪ RELAY de {} recopié à {n} pairs (amplification ×{n}).", state.id.short());
+                                accepted += 1;
+                                relayed += n as u64;
+                                if n > 0 {
+                                    println!("[bot {label}] ↪ RELAY de {} recopié à {n} pairs (amplification ×{n}).", state.id.short());
+                                }
                             }
                         }
                     }

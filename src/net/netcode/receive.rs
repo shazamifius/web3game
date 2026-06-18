@@ -14,6 +14,7 @@
 use super::state::{
     RemoteAvatar, RemoteAvatars, RemoteHead, RemotePlayer, Snapshot, INTERP_DELAY, REMOTE_TIMEOUT,
 };
+use crate::net::anticheat::move_plausible;
 use crate::net::control::decode_welcome;
 use crate::net::crypto::PeerId;
 use crate::net::link::NetLink;
@@ -107,17 +108,22 @@ pub fn net_receive(
             Some(KIND_RELAY) => match check_packet(&bytes) {
                 Checked::Good(state) => {
                     if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
-                        let mut forward = bytes.clone();
-                        forward[0] = KIND_STATE;
-                        for (id, addr) in &link.peers {
-                            if *id != state.id {
-                                let _ = link.socket.send_to(*addr, &forward);
+                        if teleported(&avatars, &state, now) {
+                            // On ne RECOPIE même pas un tricheur (pas d'amplification de triche).
+                            link.add_strike(state.id, "relais : téléport (vitesse impossible)");
+                        } else {
+                            let mut forward = bytes.clone();
+                            forward[0] = KIND_STATE;
+                            for (id, addr) in &link.peers {
+                                if *id != state.id {
+                                    let _ = link.socket.send_to(*addr, &forward);
+                                }
                             }
+                            ingest_state(
+                                state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                                &mut meshes, &mut materials,
+                            );
                         }
-                        ingest_state(
-                            state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                            &mut meshes, &mut materials,
-                        );
                     }
                 }
                 Checked::Faulty(id) => link.add_strike(id, "relais : état signé impossible (NaN)"),
@@ -142,10 +148,14 @@ pub fn net_receive(
             Some(KIND_STATE) => match check_packet(&bytes) {
                 Checked::Good(state) => {
                     if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
-                        ingest_state(
-                            state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                            &mut meshes, &mut materials,
-                        );
+                        if teleported(&avatars, &state, now) {
+                            link.add_strike(state.id, "téléport (vitesse impossible)");
+                        } else {
+                            ingest_state(
+                                state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                                &mut meshes, &mut materials,
+                            );
+                        }
                     }
                 }
                 Checked::Faulty(id) => link.add_strike(id, "état signé impossible (NaN)"),
@@ -193,6 +203,21 @@ fn check_packet(bytes: &[u8]) -> Checked {
             Some(id) => Checked::Faulty(id), // signé MAIS contenu impossible → faute
             None => Checked::Unknown,
         },
+    }
+}
+
+/// VALIDATION DE MOUVEMENT (chap. 6.3) : l'état reçu implique-t-il un déplacement
+/// physiquement impossible depuis le dernier qu'on a accepté de ce joueur ? On
+/// compare à son dernier instantané connu. Le tout premier paquet (aucun historique)
+/// n'est pas jugé (rien à comparer). Un « oui » est une faute ATTRIBUABLE : l'état
+/// est validement signé, mais sa téléportation trahit un triche.
+fn teleported(avatars: &RemoteAvatars, state: &PlayerState, now: f32) -> bool {
+    match avatars.map.get(&state.id).and_then(|p| p.buffer.back()) {
+        Some(prev) => {
+            let dt = now - prev.t;
+            !move_plausible(prev.pos, Vec3::new(state.x, state.y, state.z), dt)
+        }
+        None => false,
     }
 }
 

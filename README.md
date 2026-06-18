@@ -107,6 +107,7 @@ src/
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
     ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
     ├── crypto.rs        Ed25519 + PeerId (identité = clé) — la SEULE boîte noire (chap. 5/6.1)
+    ├── anticheat.rs     le « Shield local » : règles de plausibilité physique (chap. 6.3+)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
     ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
@@ -165,9 +166,10 @@ anti-triche).
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques « rouges ») ;
->   **6.1** (identité auto-certifiante = clé). Build vert, 23 tests, 0 warning.
-> - **En cours / à venir :** 6.2 → 6.8 (voir la liste ci-dessous, cochée au fur
->   et à mesure). Chaque étape ferme un « trou » numéroté de l'audit.
+>   **6.1** (identité auto-certifiante = clé) ; **6.3** (anti-téléport). Build vert,
+>   27 tests, 0 warning.
+> - **En cours / à venir :** 6.2, 6.4, 6.5, 6.6, 6.7, 6.8 (cochées au fur et à
+>   mesure). Chaque étape ferme un « trou » numéroté de l'audit.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -176,7 +178,7 @@ anti-triche).
 > - **Les 10 trous de l'audit** (cible de fermeture entre parenthèses) : 1 plafond
 >   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6)*, 3 maillage O(N²) *(6.6)*, 4 collision
 >   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2)*, 7
->   téléport/speed-hack *(6.3)*, 8 vol d'orbe lent *(6.4)*, 9 DoS spoofing/mémoire
+>   téléport/speed-hack *(6.3 ✓)*, 8 vol d'orbe lent *(6.4)*, 9 DoS spoofing/mémoire
 >   *(6.5)*, 10 amplification relais *(6.5)*.
 
 - [x] **Chapitre 0 — Le bac à sable 3D**
@@ -338,10 +340,15 @@ anti-triche).
       - [ ] **6.2 — Coût d'entrée anti-Sybil.** Une identité doit COÛTER (preuve de
         travail façon Hashcash sur la clé). Sans ça, un banni se reconnecte en une
         milliseconde avec une clé neuve → la réputation/sourdine ne vaut rien.
-      - [ ] **6.3 — Validation de mouvement (anti-téléport / speed-hack).** Un état
-        signé avec un saut de position physiquement impossible est refusé et compté
-        comme faute. La signature prouve QUI ; ici on prouve que le mouvement est
-        PLAUSIBLE.
+      - [x] **6.3 — Validation de mouvement (anti-téléport / speed-hack).** *(fait)*
+        Nouveau module `net/anticheat.rs` (le « Shield local ») : à la réception, on
+        compare la distance parcourue depuis le dernier état accepté d'un joueur au
+        temps écoulé ; au-delà de `MAX_SPEED` (30 m/s, généreux), c'est un téléport →
+        état **refusé** + **faute** (attribuable : il est validement signé). On ne
+        recopie même pas un tricheur relayé (pas d'amplification de triche). **Ce que
+        ça ferme :** trou n°7. La signature prouve QUI ; ceci prouve que le mouvement
+        est PLAUSIBLE. **Vérifié headless** : le téléporteur prend « 🛡 Faute…
+        téléport » à chaque saut → SOURDINE ; la marche normale passe. +4 tests.
       - [ ] **6.4 — Orbe : preuve de contact + version stricte.** On ferme le vol
         d'orbe par incréments +1 (revendiquer l'orbe sans l'avoir touchée) : le
         Shield vérifie la plausibilité (le revendiqueur était-il près de l'orbe ?).
