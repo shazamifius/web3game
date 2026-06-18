@@ -185,11 +185,21 @@ echo
 
 # Chaque joueur tourne dans SON namespace, derrière SON NAT, et joint le rendez-vous
 # par son adresse publique. Tous en parallèle ; chacun journalise dans son fichier.
+players=()
 for i in $(seq 1 "$N"); do
   ip netns exec "p$i" env LD_LIBRARY_PATH="$LIBS" RENDEZVOUS_ADDR="$RV_IP:$RV_PORT" \
     timeout "$DURATION" "$BIN" nat-test "p$i" > "$LOGDIR/p$i.log" 2>&1 &
+  players+=($!)
 done
-wait
+# On n'attend QUE les joueurs (ils s'arrêtent seuls via `timeout $DURATION`). Un `wait`
+# nu attendrait AUSSI le rendez-vous lancé en arrière-plan — or c'est un serveur qui ne
+# se termine jamais : le script restait alors bloqué bien après les 14 s (bug observé :
+# « ça a duré 25 min »). Le rendez-vous est tué par cleanup() au trap EXIT.
+#
+# `|| true` : quand `timeout` arrête un joueur à 14 s, il renvoie le code 124. Sous
+# `set -e` ce code ferait QUITTER le script avant d'imprimer le résumé — alors que
+# c'est l'arrêt NORMAL et attendu. On absorbe donc le code de sortie ici.
+wait "${players[@]}" || true
 
 # --- RÉSUMÉ du mesh : par joueur, combien de trous ouverts sur N−1 attendus ? ---
 echo
