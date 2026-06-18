@@ -177,6 +177,24 @@ pub struct Orb {
 #[derive(Component)]
 pub struct OrbBall;
 
+impl Orb {
+    /// Construit une `Orb` minimale pour un client SANS rendu 3D (le bot de test
+    /// headless du chapitre 6.0). Même logique d'autorité (`apply_incoming`,
+    /// `supersedes`, borne de version) que le jeu, sans handle de matériau réel.
+    pub(crate) fn headless() -> Orb {
+        Orb {
+            pos: ORB_START,
+            vel: Vec3::ZERO,
+            owner: None,
+            version: 0,
+            color: NEUTRAL_COLOR,
+            mat: Handle::default(),
+            shown: None,
+            last_heard: 0.0,
+        }
+    }
+}
+
 /// Décide si un état entrant (reçu du réseau) doit SUPPLANTER l'état courant.
 /// C'est toute la logique d'autorité, en une fonction :
 ///   - version plus haute        → touche plus récente, il l'emporte ;

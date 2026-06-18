@@ -291,11 +291,17 @@ anti-triche).
       byzantins, est à la frontière de la recherche — on ne promet pas l'inviolable
       absolu (ça n'existe pas). On vise : **chaque attaque devient soit impossible,
       soit chère, soit attribuable et bannie.** On avance fondation d'abord.
-      - [ ] **6.0 — Carte des menaces + harnais d'attaque « rouge ».** On écrit le
-        modèle de menace et on ajoute à `attack.rs` les attaques qui RÉUSSISSENT
-        encore aujourd'hui (téléport / speed-hack, Sybil-reconnexion, collision
-        d'id, amplification par relais) : autant de tests « rouges » à passer au
-        vert au fil des étapes suivantes.
+      - [x] **6.0 — Mode bot headless + harnais d'attaque « rouge ».** *(fait)*
+        Un client `cargo run -- bot <nom>` fait tourner le VRAI protocole **sans 3D**
+        (mêmes décisions de confiance que le jeu : sceau, anti-rejeu, réputation,
+        rate-limit, autorité d'orbe) et imprime un « ledger » de ce qu'il accepte /
+        refuse / relaie. On peut donc lancer « rendez-vous + N bots + 1 attaquant »
+        **en terminaux, sans GPU**. On a ajouté à `attack.rs` les attaques qui
+        RÉUSSISSENT encore (`teleport`, `sybil`, `orb-creep`, `amplify`) : autant de
+        preuves « rouges » à passer au vert aux étapes suivantes. **Vérifié en
+        headless** : orb-creep vole l'orbe (v30, 0 faute), amplify fait rediffuser
+        la victime, teleport est accepté sans borne. *(C'est l'embryon de la
+        simulation 55K du 6.8.)*
       - [ ] **6.1 — Identité auto-certifiante (le keystone « web3 »).** L'identité
         d'un joueur DEVIENT sa clé publique (ou son empreinte), au lieu d'un `u8`
         assigné par le rendez-vous. D'un coup : plus de mur des 255 joueurs, plus

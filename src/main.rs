@@ -34,12 +34,22 @@ fn main() {
         return;
     }
 
-    // `cargo run -- attack <type>`  lance le PROGRAMME ATTAQUANT (chapitre 5) : de
-    // vrais paquets malveillants sur de vraies sockets, pour prouver la robustesse.
-    // Types : forge | replay | flood | orb-steal | orb-freeze.
+    // `cargo run -- attack <type>`  lance le PROGRAMME ATTAQUANT : de vrais paquets
+    // malveillants sur de vraies sockets, pour prouver la robustesse.
+    // Chap. 5 (neutralisées) : forge | replay | flood | orb-steal | orb-freeze.
+    // Chap. 6 (encore RÉUSSIES — trous à fermer) : teleport | sybil | orb-creep | amplify.
     if mode == Some("attack") {
         let kind = args.get(2).map(String::as_str).unwrap_or("forge");
         net::run_attack(kind);
+        return;
+    }
+
+    // `cargo run -- bot alice`  lance un CLIENT HEADLESS (le vrai protocole, sans
+    // 3D) : sert à tester l'architecture à plusieurs sans GPU ni écran (chap. 6.0).
+    // C'est la « victime » honnête face au programme attaquant.
+    if mode == Some("bot") {
+        let label = args.get(2).map(String::as_str).unwrap_or("1");
+        net::run_bot(label);
         return;
     }
 
