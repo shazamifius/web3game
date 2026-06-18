@@ -822,6 +822,15 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   silhouettes sans le plafond plat de 64. **Preuve :** couverture (entendue) ~100 % MAIS le débit ↓
   reste **borné** (focus ≈ 32 pleins, la conscience ne coûte que des miettes) → la vraie preuve de
   D22 : couverture↑ **sans** explosion du débit ; et dans le vrai jeu 3D on voit > 64 silhouettes.
+  - **8.2a ✓ FAIT (19 juin)** — allocation à deux tiers `allocate_two_tier` dans [aoi.rs] (+ 3 tests :
+    focus émerge en foule dense, petit groupe tout au plein débit, le plus pertinent passe au focus),
+    branchée sur le jeu ([send.rs]) ET le bot ([bot.rs]). **Choix corrigé en codant : `K_FOCUS = 8`,
+    PAS 16** — à 240 Hz de budget, 16 focus (×20 = 320) videraient tout et tueraient la conscience ;
+    8 (×20 = 160) laissent **80 Hz garantis** à la conscience. Sanity `crowd 60` : essaim TENU, orbe
+    0/60, débit borné (↑45 Ko/s). 50 tests, 0 warning. *La preuve PARLANTE (focus net / conscience LOD
+    distingués) vient avec 8.2b — la métrique actuelle compte les CONNUS, pas la fidélité d'écoute.*
+  - [ ] **8.2b** — métrique « entendus récemment » + tiers focus/conscience au rapport `crowd`.
+  - [ ] **8.2c** — rendu à deux tiers ([receive.rs]) + `tools/foule-3d.sh` (amorce D24, vérif 3D par l'utilisateur).
 
 - [ ] 8.3 — **Cellules spatiales + hôte de cellule agrégateur (ce qui fait tenir l'invariant
   à 500/5000).** Partitionner le monde en cellules ; chaque cellule a un **hôte élu** (réutilise

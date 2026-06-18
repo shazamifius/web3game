@@ -5,7 +5,7 @@
 //!      pairs connus, à débit limité (SEND_HZ fois/s).
 
 use super::state::{RemoteAvatars, SEND_HZ};
-use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
+use crate::net::aoi::{allocate_two_tier, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::crypto::PeerId;
 use crate::net::gossip::{encode_gossip, sample_cards};
@@ -186,10 +186,10 @@ pub fn net_send(
         })
         .collect();
 
-    // 2) WATER-FILLING : un débit (Hz) par pair, plafonné à SEND_HZ, somme ≤ budget.
-    //    Budget non saturé (peu de monde) → tout le monde au plafond. Saturé → ça
-    //    se répartit par pertinence, en douceur, jamais zéro.
-    let rates = allocate_rates(&weights, SEND_BUDGET_HZ, SEND_HZ);
+    // 2) AoI À DEUX TIERS (chap. 8.2) : les K_FOCUS plus pertinents au plein débit (focus),
+    //    le reste en CONSCIENCE basse fidélité. Casse le « tout le monde flou » de la foule
+    //    dense que le water-filling simple laissait passer (poids ~égaux → étalement uniforme).
+    let rates = allocate_two_tier(&weights, SEND_BUDGET_HZ, SEND_HZ);
 
     // 3) CADENCEMENT par crédit : chaque pair accumule `débit × temps` ; dès qu'il
     //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace

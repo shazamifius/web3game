@@ -12,7 +12,7 @@
 
 use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
-use super::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
+use super::aoi::{allocate_two_tier, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, POW_BITS};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
@@ -393,8 +393,9 @@ impl Bot {
                         relevance_weight(d2)
                     })
                     .collect();
-                // b) WATER-FILLING : un débit (Hz) par pair, plafonné à SEND_HZ, somme ≤ budget.
-                let rates = allocate_rates(&weights, SEND_BUDGET_HZ, SEND_HZ);
+                // b) AoI À DEUX TIERS (chap. 8.2) : focus (K_FOCUS plus pertinents) au plein
+                //    débit, conscience (le reste) en basse fidélité — comme le vrai client.
+                let rates = allocate_two_tier(&weights, SEND_BUDGET_HZ, SEND_HZ);
                 // c) CADENCEMENT par crédit, vers les pairs au trou OUVERT seulement.
                 for ((id, addr), rate) in peers.iter().zip(&rates) {
                     if !*self.holes.get(id).unwrap_or(&false) {

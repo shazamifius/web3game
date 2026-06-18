@@ -108,6 +108,71 @@ pub(crate) fn allocate_rates(weights: &[f32], budget: f32, r_max: f32) -> Vec<f3
     rates
 }
 
+/// Nombre de pairs au FOCUS (chap. 8.2) : lien plein débit (jusqu'à `SEND_HZ`), prédiction,
+/// avatar 3D détaillé. C'est le sous-ensemble servi en PRIORITÉ ; tout le reste de la table
+/// est la CONSCIENCE (basse fidélité). **Pourquoi 8 et pas 16 :** le budget total est
+/// `SEND_BUDGET_HZ = 240` ; à `SEND_HZ = 20`, 16 pairs en focus mangeraient `16×20 = 320 > 240`
+/// → ils videraient TOUT le budget et la conscience tomberait à 0 (on ne verrait plus la foule).
+/// 8 focus = `8×20 = 160`, ce qui laisse **80 Hz garantis** à la conscience. (Réglage assumé, à
+/// recalibrer si besoin ; cf. registre des dettes — réglages AoI.)
+pub(crate) const K_FOCUS: usize = 8;
+
+/// Débit MAX d'un pair en CONSCIENCE (Hz, chap. 8.2) : basse fidélité — « il existe / il est
+/// là », pas de prédiction fine, rendu LOD/imposteur. Plafond bas exprès : la conscience ne
+/// prend que des miettes, le gros du budget va au focus.
+pub(crate) const CONSCIENCE_HZ: f32 = 2.0;
+
+/// AoI À DEUX TIERS (chap. 8.2) — l'extension de `allocate_rates` qui casse le « tout le monde
+/// également flou » de la foule dense. On trie les pairs par pertinence DÉCROISSANTE ; les
+/// `K_FOCUS` premiers forment le FOCUS (water-filling sur tout le budget, mais bornés à `r_max`
+/// chacun → ils ne peuvent prendre au plus que `K_FOCUS × r_max`), et le reste forme la
+/// CONSCIENCE, water-fillée avec le budget RÉSIDUEL et un plafond bas (`CONSCIENCE_HZ`).
+/// Renvoie un débit (Hz) par pair, dans l'ORDRE D'ENTRÉE.
+///
+/// **Pourquoi ça marche là où `allocate_rates` seul échoue :** en foule dense, tous les poids
+/// sont ~égaux → le water-filling simple étale 240 Hz uniformément (≈1,2 Hz/pair à 200 → tout
+/// flou). Ici on RÉSERVE de quoi rendre `K_FOCUS` proches NETS avant de saupoudrer le reste.
+/// Le tri stable choisit des focus reproductibles quand les poids sont égaux ; en vrai jeu (géométrie
+/// variée) c'est la distance qui les choisit naturellement.
+///
+/// **Invariant préservé :** un nœud est dans le FOCUS de ses ~`K_FOCUS` voisins proches
+/// (≈ `K_FOCUS × r_max` Hz reçus) + dans la CONSCIENCE de tous les autres (chaque émetteur lui
+/// donne `budget_conscience / (ses N−K_FOCUS conscients)` ; sommé sur ~N émetteurs ≈ le budget
+/// conscience d'UN émetteur, **indépendant de N**) → réception ≈ `K_FOCUS × r_max + budget_conscience`,
+/// PLATE quand N grandit.
+pub(crate) fn allocate_two_tier(weights: &[f32], budget: f32, r_max: f32) -> Vec<f32> {
+    let n = weights.len();
+    // Indices triés par poids DÉCROISSANT (les plus pertinents d'abord). Tri STABLE :
+    // quand les poids sont égaux (foule dense), le choix des focus est reproductible.
+    let mut idx: Vec<usize> = (0..n).collect();
+    idx.sort_by(|&a, &b| weights[b].partial_cmp(&weights[a]).unwrap_or(std::cmp::Ordering::Equal));
+
+    let focus_idx: Vec<usize> = idx.iter().copied().take(K_FOCUS).collect();
+    let consc_idx: Vec<usize> = idx.iter().copied().skip(K_FOCUS).collect();
+
+    // FOCUS : tout le budget leur est offert, mais bornés à `r_max` chacun (et ils ne sont que
+    // `K_FOCUS`) → ils en utilisent au plus `K_FOCUS × r_max`.
+    let focus_w: Vec<f32> = focus_idx.iter().map(|&i| weights[i]).collect();
+    let focus_rates = allocate_rates(&focus_w, budget, r_max);
+    let focus_used: f32 = focus_rates.iter().sum();
+
+    // CONSCIENCE : ce qui RESTE du budget, plafond bas. Le budget non dépensé par le focus
+    // (peu de pairs) profite ainsi à la conscience, sans jamais dépasser le total.
+    let consc_budget = (budget - focus_used).max(0.0);
+    let consc_w: Vec<f32> = consc_idx.iter().map(|&i| weights[i]).collect();
+    let consc_rates = allocate_rates(&consc_w, consc_budget, CONSCIENCE_HZ);
+
+    // Remappe vers l'ordre d'entrée.
+    let mut rates = vec![0.0f32; n];
+    for (k, &i) in focus_idx.iter().enumerate() {
+        rates[i] = focus_rates[k];
+    }
+    for (k, &i) in consc_idx.iter().enumerate() {
+        rates[i] = consc_rates[k];
+    }
+    rates
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +200,40 @@ mod tests {
         // Budget énorme (2 joueurs) → plein débit pour tous, peu importe le reste.
         let r = allocate_rates(&[1.0, 1.0], 1000.0, 20.0);
         assert!(r.iter().all(|&x| (x - 20.0).abs() < 0.01));
+    }
+
+    /// 8.2 — FOULE DENSE (poids égaux) : `K_FOCUS` pairs sortent au PLEIN débit (`r_max`),
+    /// le reste en CONSCIENCE à bas débit mais JAMAIS zéro, et le budget total est respecté.
+    /// C'est exactement ce que le water-filling simple ne faisait pas (tout le monde flou).
+    #[test]
+    fn deux_tiers_fait_emerger_le_focus_en_foule_dense() {
+        let weights = vec![1.0f32; 50]; // 50 pairs à pertinence identique (co-localisés)
+        let r = allocate_two_tier(&weights, 240.0, 20.0);
+        let focus = r.iter().filter(|&&x| (x - 20.0).abs() < 0.01).count();
+        assert_eq!(focus, K_FOCUS); // pile K_FOCUS pairs au plein débit
+        assert!(r.iter().all(|&x| x > 0.0)); // personne n'est muet (la foule reste perçue)
+        // Les conscients sont plafonnés bas.
+        let max_consc = r.iter().filter(|&&x| (x - 20.0).abs() >= 0.01).cloned().fold(0.0, f32::max);
+        assert!(max_consc <= CONSCIENCE_HZ + 0.01);
+        assert!(r.iter().sum::<f32>() <= 240.0 + 0.01); // budget respecté
+    }
+
+    /// 8.2 — peu de pairs (≤ `K_FOCUS`) : tout le monde est au focus, plein débit.
+    #[test]
+    fn deux_tiers_petit_groupe_tout_au_plein_debit() {
+        let r = allocate_two_tier(&[1.0, 1.0, 1.0], 240.0, 20.0);
+        assert!(r.iter().all(|&x| (x - 20.0).abs() < 0.01));
+    }
+
+    /// 8.2 — la pertinence DÉCIDE du focus : un pair très pertinent passe au plein débit même
+    /// noyé dans une foule de pairs peu pertinents (qui, eux, restent en conscience).
+    #[test]
+    fn deux_tiers_le_plus_pertinent_est_au_focus() {
+        let mut weights = vec![0.05f32; 30]; // 30 lointains
+        weights[17] = 10.0; // un pair très proche, au milieu de la liste
+        let r = allocate_two_tier(&weights, 240.0, 20.0);
+        assert!((r[17] - 20.0).abs() < 0.01); // le pertinent est servi plein
+        assert!(r.iter().sum::<f32>() <= 240.0 + 0.01);
     }
 
     #[test]
