@@ -47,6 +47,12 @@ pub struct NetLink {
     pub(crate) accusations: HashMap<PeerId, HashSet<PeerId>>,
     /// Tricheurs pour lesquels on a DÉJÀ diffusé NOTRE accusation (une seule fois).
     pub(crate) accused_broadcast: HashSet<PeerId>,
+    /// SEAU À JETONS PAR SOURCE DE GOSSIP (chap. 8.1b, ferme D23). Combien de NOUVEAUX
+    /// pairs cet expéditeur de cartes a-t-il encore le droit de nous faire apprendre ?
+    /// Un attaquant qui déverse des milliers de cartes ne peut plus nous faire percer
+    /// (réflexion) ni gonfler nos tables au-delà de ce débit borné — même protocole que
+    /// le rate-limit de réception (5.5), mais appliqué à l'APPRENTISSAGE, pas au paquet.
+    pub(crate) gossip_credit: HashMap<SocketAddr, f32>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
@@ -64,6 +70,18 @@ pub(crate) const ACCUSE_QUORUM: usize = 3;
 /// MÉMOIRE : au-delà de `MAX_KNOWN` cartes, on cesse d'en ajouter (anti-inondation de
 /// fausses cartes). Très large devant une foule réaliste ; l'éviction fine (TTL) est D16.
 pub(crate) const MAX_KNOWN: usize = 4096;
+
+/// NOUVEAUX pairs/s qu'UNE source de gossip peut nous faire apprendre (chap. 8.1b, D23).
+/// Au-delà, ses cartes inconnues sont ignorées : un attaquant ne peut plus nous faire
+/// percer 1000 victimes d'un coup (réflexion) ni saturer la table par rafale. Généreux
+/// pour la découverte honnête (un voisin présente ≤16 cartes/paquet à ~2 Hz = ~32/s en
+/// pointe, mais on n'apprend chaque pair qu'UNE fois → en régime, presque rien à dépenser).
+pub(crate) const GOSSIP_LEARN_RATE: f32 = 16.0;
+/// Réserve max du seau d'apprentissage (tolère une courte rafale de découverte au démarrage).
+pub(crate) const GOSSIP_LEARN_CAP: f32 = 64.0;
+/// Plafond du nombre de sources de gossip suivies (anti-saturation mémoire, comme
+/// `MAX_BUCKETS` au 6.5) : au-delà, on jette les seaux PLEINS (sources inactives).
+pub(crate) const MAX_GOSSIP_SOURCES: usize = 4096;
 
 /// Largeur de la fenêtre d'anti-rejeu, en nombre de `seq` (chap. 7.3). 64 = un masque
 /// `u64`, zéro allocation. À 20 paquets/s ça couvre ~3,2 s de ré-ordonnancement possible
@@ -148,33 +166,89 @@ impl NetLink {
             strikes: HashMap::new(),
             accusations: HashMap::new(),
             accused_broadcast: HashSet::new(),
+            gossip_credit: HashMap::new(),
             weak,
         })
     }
 
-    /// APPREND un pair (chap. 8.1) : depuis le WELCOME (amorçage) OU une carte de gossip.
-    /// L'ajoute à la table s'il est nouveau, en RAFRAÎCHISSANT son adresse et sa position
-    /// si fournie. Renvoie `true` SEULEMENT si c'était un INCONNU (→ l'appelant ouvrira un
-    /// trou NAT vers lui). On ne s'apprend jamais soi-même, ni l'identité nulle.
+    /// APPREND un pair depuis une source CORROBORÉE (chap. 8.1) : le WELCOME (amorçage par
+    /// le rendez-vous) ou un signal direct. L'ajoute s'il est nouveau, en RAFRAÎCHISSANT son
+    /// adresse et sa position si fournie. Renvoie `true` SEULEMENT si c'était un INCONNU (→
+    /// l'appelant ouvrira un trou NAT). On ne s'apprend jamais soi-même, ni l'identité nulle.
     ///
-    /// Borne MÉMOIRE (`MAX_KNOWN`) : la VISION n'est plus plafonnée (c'est tout l'intérêt
-    /// du gossip contre D22), mais la mémoire SI — sinon un menteur nous noierait sous de
-    /// fausses cartes. Table pleine → on refuse le nouveau (l'éviction fine par TTL est
-    /// le chap. 12 / D16 ; ici on se contente de la borne dure).
+    /// **PoW exigée (chap. 8.1b, D23) :** un id sans preuve de travail (`has_pow`) est ignoré —
+    /// même venant du rendez-vous (défense contre un rendez-vous menteur, D10). Une fausse
+    /// identité coûte donc ~2¹⁶ comme une vraie.
+    ///
+    /// Borne MÉMOIRE (`MAX_KNOWN`) : la VISION n'est plus plafonnée (l'intérêt du gossip contre
+    /// D22), mais la mémoire SI — sinon un menteur nous noierait. Table pleine → on refuse le
+    /// nouveau (l'éviction fine par TTL est le chap. 12 / D16 ; ici, borne dure).
     pub(crate) fn learn_peer(&mut self, id: PeerId, addr: SocketAddr, pos: Option<(f32, f32)>) -> bool {
-        if id.is_none() || Some(id) == self.my_id {
+        if id.is_none() || Some(id) == self.my_id || !id.has_pow(POW_BITS) {
             return false;
         }
         if let Some(xz) = pos {
             self.peer_pos.insert(id, xz);
         }
         if self.peers.contains_key(&id) {
-            self.peers.insert(id, addr); // adresse rafraîchie, pas un nouveau
+            self.peers.insert(id, addr); // adresse rafraîchie (source corroborée), pas un nouveau
             return false;
         }
         if self.peers.len() >= MAX_KNOWN {
             return false; // table pleine : on borne la mémoire (D16)
         }
+        self.peers.insert(id, addr);
+        true
+    }
+
+    /// RECHARGE les seaux d'apprentissage de gossip (chap. 8.1b) : à appeler une fois par
+    /// image, comme la recharge des seaux de réception (5.5). Évince les sources en trop
+    /// (seaux pleins = sources inactives) pour borner la mémoire.
+    pub(crate) fn recharge_gossip_credit(&mut self, dt: f32) {
+        for credit in self.gossip_credit.values_mut() {
+            *credit = (*credit + dt * GOSSIP_LEARN_RATE).min(GOSSIP_LEARN_CAP);
+        }
+        if self.gossip_credit.len() > MAX_GOSSIP_SOURCES {
+            self.gossip_credit.retain(|_, c| *c < GOSSIP_LEARN_CAP);
+        }
+    }
+
+    /// APPREND un pair depuis une CARTE DE GOSSIP — source NON corroborée, donc durcie
+    /// (chap. 8.1b, ferme D23). Trois gardes par rapport à `learn_peer` :
+    ///   - **(a) PoW** sur l'id (hérité, via la garde ci-dessous) → pas de pollution gratuite ;
+    ///   - **(b) jamais d'écrasement d'adresse** : pour un pair DÉJÀ connu, on ne touche PAS à
+    ///     son adresse (le ouï-dire ne peut pas rediriger notre trafic vers une victime) — on
+    ///     met juste à jour sa position (indice d'AoI, inoffensif) ;
+    ///   - **(d) rate-limit par source** : `from` (l'expéditeur du paquet de gossip) ne peut
+    ///     nous faire apprendre qu'`GOSSIP_LEARN_RATE` NOUVEAUX pairs/s.
+    /// Renvoie `true` seulement si un INCONNU a été ajouté (→ l'appelant ouvrira un trou).
+    pub(crate) fn learn_from_gossip(
+        &mut self,
+        from: SocketAddr,
+        id: PeerId,
+        addr: SocketAddr,
+        pos: (f32, f32),
+    ) -> bool {
+        if id.is_none() || Some(id) == self.my_id || !id.has_pow(POW_BITS) {
+            return false; // (a) identité nulle / soi-même / sans preuve de travail
+        }
+        if self.peers.contains_key(&id) {
+            // (b) pair déjà connu : on n'écrase PAS son adresse (anti-redirection). La
+            //     position n'est qu'un indice d'AoI → on peut la rafraîchir sans risque.
+            self.peer_pos.insert(id, pos);
+            return false;
+        }
+        if self.peers.len() >= MAX_KNOWN {
+            return false; // table pleine (D16)
+        }
+        // (d) seau par source : un seul expéditeur ne peut pas nous faire apprendre une foule
+        //     d'un coup (borne la réflexion + la pollution à la source).
+        let credit = self.gossip_credit.entry(from).or_insert(GOSSIP_LEARN_CAP);
+        if *credit < 1.0 {
+            return false; // cet expéditeur a épuisé son budget d'apprentissage
+        }
+        *credit -= 1.0;
+        self.peer_pos.insert(id, pos);
         self.peers.insert(id, addr);
         true
     }
@@ -256,6 +330,64 @@ mod tests {
 
     fn pid(seed: u8) -> PeerId {
         PeerId::from_bytes([seed; 32])
+    }
+
+    /// Un PeerId qui SATISFAIT la preuve de travail (2 octets de tête à zéro → ≥16 bits),
+    /// distinct par `tag`. Évite de miner une vraie clé dans les tests (coûteux).
+    fn pid_pow(tag: u16) -> PeerId {
+        let mut b = [0u8; 32];
+        b[2] = 1; // octets 0 et 1 à zéro → has_pow(16) garanti ; b[2]≠0 → jamais l'id nul
+        b[4] = (tag >> 8) as u8;
+        b[5] = tag as u8;
+        PeerId::from_bytes(b)
+    }
+
+    fn addr(port: u16) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    /// 8.1b (a) — une carte de gossip SANS preuve de travail est IGNORÉE (pas de
+    /// pollution gratuite de table). Idem pour `learn_peer` (rendez-vous menteur, D10).
+    #[test]
+    fn gossip_rejette_id_sans_pow() {
+        let mut link = link_de_test();
+        let sans_pow = pid(7); // 0x07… → 5 bits de tête à zéro < 16 → has_pow(16) faux
+        assert!(!sans_pow.has_pow(POW_BITS));
+        assert!(!link.learn_from_gossip(addr(9000), sans_pow, addr(5001), (0.0, 0.0)));
+        assert!(!link.learn_peer(sans_pow, addr(5001), None));
+        assert!(link.peers.is_empty()); // rien appris
+    }
+
+    /// 8.1b (b) — le gossip n'ÉCRASE JAMAIS l'adresse d'un pair déjà connu (anti-redirection
+    /// vers une victime). On apprend un pair par voie corroborée, puis une carte de gossip
+    /// prétend une AUTRE adresse pour lui : l'adresse en table ne bouge pas.
+    #[test]
+    fn gossip_n_ecrase_pas_l_adresse_d_un_pair_connu() {
+        let mut link = link_de_test();
+        let p = pid_pow(1);
+        assert!(link.learn_peer(p, addr(5001), None)); // corroboré (WELCOME) → adresse de confiance
+        // Carte de gossip menteuse : « p est à 6666 » (= adresse d'une victime).
+        assert!(!link.learn_from_gossip(addr(9000), p, addr(6666), (1.0, 2.0)));
+        assert_eq!(link.peers.get(&p), Some(&addr(5001))); // adresse INCHANGÉE
+    }
+
+    /// 8.1b (d) — une seule source de gossip ne peut nous faire apprendre qu'un nombre BORNÉ
+    /// de nouveaux pairs (seau par source) : un attaquant ne peut pas nous faire percer une
+    /// foule de victimes d'un coup. Sans recharge, le seau démarre plein (`GOSSIP_LEARN_CAP`).
+    #[test]
+    fn gossip_rate_limite_l_apprentissage_par_source() {
+        let mut link = link_de_test();
+        let source = addr(9000);
+        let mut appris = 0usize;
+        for i in 0..(GOSSIP_LEARN_CAP as u16 + 50) {
+            if link.learn_from_gossip(source, pid_pow(i + 1), addr(7000 + i), (0.0, 0.0)) {
+                appris += 1;
+            }
+        }
+        assert_eq!(appris, GOSSIP_LEARN_CAP as usize); // plafonné, pas tout appris
+        // Après recharge, la source récupère un peu de budget (apprentissage honnête possible).
+        link.recharge_gossip_credit(1.0);
+        assert!(link.learn_from_gossip(source, pid_pow(9999), addr(8999), (0.0, 0.0)));
     }
 
     /// ANTI-REJEU : on accepte des seq croissants, on refuse tout rejeu / paquet périmé.

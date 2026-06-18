@@ -19,7 +19,7 @@ use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::{NetLink, MAX_STRIKES};
 use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
-use super::punch::{decode_punch, encode_punch};
+use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
 use super::wire::{
     kind, KIND_ACCUSE, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME,
@@ -57,6 +57,9 @@ pub(crate) struct Bot {
     verbose: bool,
     link: NetLink,
     holes: HashMap<PeerId, bool>,
+    /// Nombre d'essais de perçage par pair non corroboré (chap. 8.1b) : au-delà de
+    /// `PUNCH_GIVEUP` (cf. [punch.rs]) on abandonne, comme le vrai jeu → anti-réflexion.
+    punch_tries: HashMap<PeerId, u32>,
     buckets: HashMap<SocketAddr, f32>,
     relay_credits: HashMap<PeerId, f32>,
     /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
@@ -91,6 +94,7 @@ impl Bot {
             verbose,
             link,
             holes: HashMap::new(),
+            punch_tries: HashMap::new(),
             buckets: HashMap::new(),
             relay_credits: HashMap::new(),
             send_credits: HashMap::new(),
@@ -171,6 +175,8 @@ impl Bot {
         if self.buckets.len() > MAX_BUCKETS {
             self.buckets.retain(|_, c| *c < BUCKET_CAP);
         }
+        // 8.1b : recharge des seaux d'apprentissage de gossip (rate-limit par source, D23).
+        self.link.recharge_gossip_credit(dt);
 
         // 3) Réception.
         let inbox = self.link.socket.poll();
@@ -212,7 +218,9 @@ impl Bot {
                 Some(KIND_GOSSIP) => {
                     if let Some(cards) = decode_gossip(&bytes) {
                         for c in cards {
-                            if self.link.learn_peer(c.id, c.addr, Some((c.x, c.z))) {
+                            // 8.1b : apprentissage DURCI (PoW + pas d'écrasement d'adresse +
+                            // rate-limit par source `from`) → ferme la porte DoS de D23.
+                            if self.link.learn_from_gossip(from, c.id, c.addr, (c.x, c.z)) {
                                 self.holes.entry(c.id).or_insert(false);
                                 if self.verbose {
                                     println!("[bot {}] pair {} appris par gossip.", self.label, c.id.short());
@@ -441,9 +449,15 @@ impl Bot {
                 let targets: Vec<(PeerId, SocketAddr)> =
                     self.link.peers.iter().map(|(i, a)| (*i, *a)).collect();
                 for (id, addr) in targets {
-                    if !*self.holes.get(&id).unwrap_or(&false) {
-                        let _ = self.link.socket.send_to(addr, &punch);
+                    let open = *self.holes.get(&id).unwrap_or(&false);
+                    let tries = *self.punch_tries.get(&id).unwrap_or(&0);
+                    // 8.1b : on ne perce ni un trou ouvert, ni un trou abandonné (jamais
+                    // corroboré → carte empoisonnée / NAT symétrique) → anti-réflexion.
+                    if open || punch_abandoned(tries) {
+                        continue;
                     }
+                    let _ = self.link.socket.send_to(addr, &punch);
+                    *self.punch_tries.entry(id).or_insert(0) += 1;
                 }
             }
         }

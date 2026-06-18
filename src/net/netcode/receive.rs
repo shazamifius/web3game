@@ -82,6 +82,8 @@ pub fn net_receive(
     if buckets.len() > MAX_BUCKETS {
         buckets.retain(|_, c| *c < BUCKET_CAP);
     }
+    // 8.1b : recharge des seaux d'apprentissage de gossip (rate-limit par source, D23).
+    link.recharge_gossip_credit(dt);
 
     let inbox = link.socket.poll();
     for (from, bytes) in inbox {
@@ -131,7 +133,9 @@ pub fn net_receive(
             Some(KIND_GOSSIP) => {
                 if let Some(cards) = decode_gossip(&bytes) {
                     for c in cards {
-                        if link.learn_peer(c.id, c.addr, Some((c.x, c.z))) {
+                        // 8.1b : apprentissage DURCI (PoW + pas d'écrasement d'adresse +
+                        // rate-limit par source `from`) → ferme la porte DoS de D23.
+                        if link.learn_from_gossip(from, c.id, c.addr, (c.x, c.z)) {
                             holes.map.entry(c.id).or_default();
                         }
                     }

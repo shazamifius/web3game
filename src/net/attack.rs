@@ -23,11 +23,12 @@
 //! justement ce qu'on veut rendre visible avant de les fermer.
 
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::{Identity, PeerId, POW_BITS};
+use super::crypto::{Identity, PeerId, POW_BITS, PUBKEY_LEN};
+use super::gossip::{encode_gossip, Card};
 use super::link::rendezvous_addr;
 use super::message::{encode_signed, mark_as_relay, PlayerState};
 use super::orb::{encode_orb_signed, OrbWire};
-use super::punch::encode_punch;
+use super::punch::{decode_punch, encode_punch};
 use super::transport::Socket;
 use super::wire::{kind, KIND_WELCOME};
 use std::net::SocketAddr;
@@ -81,9 +82,12 @@ pub fn run_attack(attack: &str) {
         "sybil" => attack_sybil(&socket, &identity, my_id, &victims, rv),
         "orb-creep" | "creep" => attack_orb_creep(&socket, &identity, my_id, &victims),
         "amplify" | "amp" => attack_amplify(&socket, &identity, my_id, &victims),
+        // --- Chapitre 8.1b : la porte DoS du gossip, désormais FERMÉE ---
+        "gossip-flood" | "gossip" => attack_gossip_flood(&socket, &victims),
         other => println!(
             "[attaquant] attaque inconnue « {other} ». Chap. 5 : forge | replay | flood | \
-             orb-steal | orb-freeze. Chap. 6 : teleport | sybil | orb-creep | amplify."
+             orb-steal | orb-freeze. Chap. 6 : teleport | sybil | orb-creep | amplify. \
+             Chap. 8 : gossip-flood."
         ),
     }
 }
@@ -319,4 +323,74 @@ fn attack_amplify(socket: &Socket, identity: &Identity, my_id: PeerId, victims: 
     }
     println!("[attaquant] 10 RELAY envoyés à 1 pair. Côté parent : « ↪ RELAY … recopié à N pairs » (1 entrée → N sorties).");
     println!("            → trou n°10 (amplification réfléchie) à fermer au chap. 6.5.");
+}
+
+// ============================================================================
+// CHAPITRE 8.1b — la porte DoS ouverte par le gossip (D23), désormais FERMÉE.
+// ============================================================================
+
+/// ATTAQUE 9 (chap. 8.1b) — GOSSIP-FLOOD : on détourne les « cartes de visite » du gossip
+/// pour (a) POLLUER les tables des victimes avec des ids-poubelle et (b) RÉFLÉCHIR un flot
+/// de perçage vers une CIBLE (toutes les cartes prétendent que tel pair est à l'adresse de
+/// la cible → chaque victime se met à percer la cible). C'était une vraie porte DoS au 8.1.
+///
+/// Depuis 8.1b, elle est fermée : PoW exigée sur chaque carte (poubelles jetées, défense a),
+/// l'adresse d'un pair déjà connu n'est jamais écrasée par ouï-dire (défense b), apprentissage
+/// rate-limité par source (d), et perçage spéculatif abandonné après ~10 s (c). On le PROUVE
+/// en ouvrant une 2ᵉ prise « cible » et en comptant les perçages RÉFLÉCHIS qui y atterrissent.
+fn attack_gossip_flood(socket: &Socket, victims: &[Victim]) {
+    let target = match Socket::bind(0) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("[attaquant] gossip-flood : impossible d'ouvrir la prise cible ({e}).");
+            return;
+        }
+    };
+    let Ok(target_addr) = target.local_addr() else {
+        println!("[attaquant] gossip-flood : pas d'adresse pour la cible.");
+        return;
+    };
+    println!("[attaquant] GOSSIP-FLOOD : je déverse des cartes empoisonnées pointant vers ma CIBLE {target_addr}");
+    println!("            (but : faire arroser la cible par les victimes = réflexion + polluer leurs tables).");
+
+    // Deux familles de cartes empoisonnées, TOUTES pointant vers la cible de réflexion :
+    //   - POUBELLE : id sans preuve de travail (1er octet 0xFF) → DOIT être jeté (8.1b-a) ;
+    //   - RÉEL : id d'une vraie victime → déjà connu d'elle/des autres → adresse NON écrasée (8.1b-b).
+    let mut cards: Vec<Card> = Vec::new();
+    for k in 0..8u8 {
+        let mut b = [0xFFu8; PUBKEY_LEN];
+        b[5] = k; // ids distincts, mais 0 bit de tête à zéro → has_pow faux → poubelle
+        cards.push(Card { id: PeerId::from_bytes(b), addr: target_addr, x: 0.0, z: 0.0 });
+    }
+    for (id, _) in victims.iter().take(8) {
+        cards.push(Card { id: *id, addr: target_addr, x: 0.0, z: 0.0 });
+    }
+    let poison = encode_gossip(&cards);
+
+    // On déverse ~6 s et on COMPTE les perçages réfléchis reçus par la cible.
+    let mut reflected = 0u64;
+    for _ in 0..60 {
+        for (_, addr) in victims {
+            let _ = socket.send_to(*addr, &poison);
+        }
+        sleep(Duration::from_millis(100));
+        for (_, bytes) in target.poll() {
+            if decode_punch(&bytes).is_some() {
+                reflected += 1;
+            }
+        }
+    }
+    for (_, bytes) in target.poll() {
+        if decode_punch(&bytes).is_some() {
+            reflected += 1;
+        }
+    }
+
+    println!("[attaquant] GOSSIP-FLOOD terminé. Perçages RÉFLÉCHIS reçus par la cible : {reflected}.");
+    if reflected == 0 {
+        println!("            → 0 : cartes poubelle JETÉES (PoW exigé, 8.1b-a) et ids réels NON redirigés (8.1b-b).");
+    } else {
+        println!("            → {reflected} mais BORNÉ (pas infini) : le perçage est abandonné après ~10 s (8.1b-c)");
+        println!("              et l'apprentissage est rate-limité par source (8.1b-d). Avant 8.1b : flot SANS FIN.");
+    }
 }

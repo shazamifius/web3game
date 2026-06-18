@@ -233,10 +233,16 @@ anti-triche).
 >   de l'écraser, et les pairs s'échangent à bas débit un sous-ensemble divers de pairs connus → la
 >   table s'enrichit **sans plafond**. **Mesuré : couverture 16 % → 98 %** à `crowd 200`, et l'INVARIANT
 >   est prouvé — le débit ↓ **ne grandit pas** de 200 à 500 nœuds (~plat, CPU ~0,7 %, orbe 0 volée).
->   42 tests, 0 warning. *Dettes assumées (registre dans la feuille de route) : le gossip apprend
->   des cartes sans preuve de travail → amplificateur de DDoS (**D23**) ; le vrai jeu 3D plafonne la
->   foule visible à 64 (**D24**) ; la métrique compte les pairs connus, pas entendus.* **Prochaine
->   action = 8.1b** (durcir le gossip / fermer D23) AVANT 8.2 (AoI à deux tiers). **Tout le plan
+>   **8.1b ✓ FAIT — la porte DoS du gossip est fermée (D23).** On avait échangé le plafond de 32
+>   contre une porte d'entrée DoS (cartes apprises sans preuve de travail ni corroboration). Quatre
+>   défenses en profondeur : PoW exigée sur chaque carte, l'adresse d'un pair connu n'est jamais
+>   écrasée par ouï-dire, abandon du perçage spéculatif après ~10 s (avant : à vie → flot réfléchi
+>   infini), rate-limit d'apprentissage par source. **Prouvé par un VRAI attaquant** `attack
+>   gossip-flood` : **0 perçage réfléchi** vers la cible, tables non polluées ; découverte honnête
+>   intacte (`crowd 60` → couverture 100 %), essaim tenu avec l'attaquant actif. **47 tests, 0 warning.**
+>   *Dette restante (registre dans la feuille de route) : le vrai jeu 3D plafonne la foule visible à
+>   64 (**D24**) ; la métrique compte les pairs connus, pas entendus.* **Prochaine
+>   action = 8.2** (AoI à deux tiers : focus net / conscience LOD). **Tout le plan
 >   post-chapitre-6 (chapitres
 >   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
 >   ci-dessous n'est qu'un aperçu.
@@ -473,7 +479,7 @@ anti-triche).
       - [x] **6.8 — Simulation massive + essaim d'attaquants.** *(fait)* Nouveau mode
         `cargo run -- sim [bots] [attaquants] [secondes]` (`net/sim.rs`) : il lance un
         rendez-vous + N nœuds headless (`Bot`, refactoré en brique réutilisable) + M
-        attaquants variés (orb-creep/teleport/flood/forge/sybil), en threads sur une
+        attaquants variés (orb-creep/teleport/flood/forge/sybil/gossip-flood), en threads sur une
         seule machine, et imprime un **rapport agrégé**. **Résultats mesurés** (release) :
         à **50** ET **300 bots** + attaquants → 100 % des nœuds montés, **voisins/nœud
         plafonnés à 32** (moy 32,0 — la borne d'échelle 6.6 tient), **orbe volée :

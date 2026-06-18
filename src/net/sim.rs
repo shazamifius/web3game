@@ -89,7 +89,7 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
 
     // 3) M attaquants, en boucle (variés), détachés : ils tapent sans relâche pendant
     //    toute la simulation et sont tués à la fin du process.
-    let variants = ["orb-creep", "teleport", "flood", "forge", "sybil"];
+    let variants = ["orb-creep", "teleport", "flood", "forge", "sybil", "gossip-flood"];
     for i in 0..n_attackers {
         let v = variants[i % variants.len()].to_string();
         thread::spawn(move || loop {

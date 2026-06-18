@@ -26,10 +26,24 @@ use std::collections::HashMap;
 
 /// Intervalle entre deux tentatives de perçage vers un même pair (s).
 const PUNCH_INTERVAL: f32 = 0.25;
-/// Au-delà de ce nombre d'essais sans réponse, on cesse de logguer (mais on
-/// continue d'essayer) : c'est sûrement un NAT symétrique → ce sera le rôle du
-/// relais (TURN/supernœud), prévu plus tard.
+/// Au-delà de ce nombre d'essais sans réponse, on cesse de logguer (le perçage, lui,
+/// continue jusqu'à `PUNCH_GIVEUP`).
 const PUNCH_LOG_LIMIT: u32 = 8;
+/// ABANDON DU PERÇAGE (chap. 8.1b, ferme D23) : au-delà de ce nombre d'essais jamais
+/// corroborés (≈ `PUNCH_GIVEUP × PUNCH_INTERVAL` = 10 s), on CESSE de percer cette
+/// adresse. Avant, on martelait à VIE → une carte de gossip empoisonnée pointant vers
+/// une victime faisait arroser celle-ci pour toujours (réflexion). Désormais une telle
+/// carte ne coûte que ~10 s de perçage, puis silence. *Contrepartie assumée : un pair
+/// derrière NAT symétrique (qui ne répond jamais au perçage direct) est lui aussi
+/// abandonné → il lui faudra un relais (D17, chapitre ultérieur), pas un perçage éternel.*
+const PUNCH_GIVEUP: u32 = 40;
+
+/// Faut-il ABANDONNER le perçage d'un trou jamais corroboré ? (chap. 8.1b) Vrai au-delà
+/// de `PUNCH_GIVEUP` essais. Fonction PURE, partagée par le jeu ([net_punch]) et le bot
+/// ([bot.rs]) → une seule règle, testée une fois (anti-divergence, cf. D2).
+pub(crate) fn punch_abandoned(tries: u32) -> bool {
+    tries >= PUNCH_GIVEUP
+}
 
 /// Taille d'un PUNCH : type + version + identité (clé, 32) = 34.
 const PUNCH_SIZE: usize = 2 + PUBKEY_LEN;
@@ -89,8 +103,10 @@ pub fn net_punch(time: Res<Time>, link: Res<NetLink>, mut holes: ResMut<Holes>) 
 
     for (id, addr) in &link.peers {
         let hole = holes.map.entry(*id).or_default();
-        if hole.open {
-            continue; // trou déjà ouvert : plus besoin de percer
+        // Trou ouvert (corroboré) OU abandonné (jamais corroboré → carte empoisonnée ou
+        // NAT symétrique) : on ne perce plus. L'abandon est l'anti-réflexion du 8.1b.
+        if hole.open || punch_abandoned(hole.tries) {
+            continue;
         }
         hole.acc += dt;
         if hole.acc < PUNCH_INTERVAL {
@@ -104,13 +120,40 @@ pub fn net_punch(time: Res<Time>, link: Res<NetLink>, mut holes: ResMut<Holes>) 
             println!("PUNCH vers le pair {} (essai {}) — j'ouvre mon trou de retour.", id.short(), hole.tries);
             if hole.tries == PUNCH_LOG_LIMIT {
                 println!(
-                    "Pair {} : toujours pas de réponse ; on continue en silence (NAT symétrique ? → relais plus tard).",
+                    "Pair {} : toujours pas de réponse ; on continue (en silence) jusqu'à l'abandon (NAT symétrique ? → relais plus tard).",
                     id.short()
                 );
             }
+        } else if hole.tries == PUNCH_GIVEUP {
+            println!(
+                "Pair {} : jamais corroboré après {PUNCH_GIVEUP} essais — ABANDON du perçage (carte de gossip empoisonnée ? NAT symétrique ?). On cesse d'arroser cette adresse (anti-réflexion 8.1b).",
+                id.short()
+            );
         }
     }
 
     // On oublie les trous des pairs qui ont quitté l'annuaire.
     holes.map.retain(|id, _| link.peers.contains_key(id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 8.1b (c) — on perce tant qu'on n'a pas atteint le seuil, puis on ABANDONNE. C'est
+    /// ce qui borne dans le temps un perçage réfléchi vers une victime (carte empoisonnée).
+    #[test]
+    fn perçage_abandonné_au_seuil() {
+        assert!(!punch_abandoned(0)); // premier essai : on perce
+        assert!(!punch_abandoned(PUNCH_GIVEUP - 1)); // juste avant le seuil : on perce encore
+        assert!(punch_abandoned(PUNCH_GIVEUP)); // au seuil : abandon
+        assert!(punch_abandoned(PUNCH_GIVEUP + 100)); // au-delà : toujours abandonné
+    }
+
+    /// Aller-retour d'un PUNCH (sérialisation à la main) : ce qu'on encode se redécode.
+    #[test]
+    fn punch_survit_a_l_aller_retour() {
+        let id = PeerId::from_bytes([42u8; PUBKEY_LEN]);
+        assert_eq!(decode_punch(&encode_punch(id)), Some(id));
+    }
 }

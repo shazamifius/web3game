@@ -99,17 +99,27 @@ vrai mur était la DÉCOUVERTE (le plafond 32). Le gossip l'enlève.*
 de l'autre (pseudos `0000…`, badge OWN BALLE, membres/ombres/néon OK) — le gossip n'a rien cassé en
 3D. *Ne prouve PAS la foule dense en 3D* (2 ≠ 200 ; le plafond `MAX_AVATARS = 64` n'est pas stressé → D24).
 
-**PROCHAINE ACTION CONCRÈTE = 8.1b** (durcir le gossip, ferme D23) AVANT 8.2 : on a échangé le
-plafond de 32 contre une porte DoS (cartes apprises sans preuve de travail ni corroboration → un
-attaquant peut faire arroser une victime / polluer les tables). On referme AVANT d'empiler 8.2 (pas
-de béton sur du sable). Puis 8.2 (AoI à deux tiers : focus net / conscience LOD). Voir §D, Chapitre 8.
+**8.1b ✓ FAIT (19 juin) — la porte DoS du gossip est FERMÉE (D23 fermé).** Quatre défenses en
+profondeur : (a) PoW exigée sur chaque carte apprise, (b) le gossip n'écrase jamais l'adresse d'un
+pair connu (anti-redirection), (c) abandon du perçage spéculatif après ~10 s (avant : à vie → flot
+réfléchi infini), (d) rate-limit d'apprentissage par source. Logique centralisée dans `NetLink`
+(`learn_from_gossip`) + fonction pure partagée `punch_abandoned` (bot ET jeu). **PROUVÉ par un VRAI
+attaquant** `attack gossip-flood` : **0 perçage réfléchi** reçu par la cible, tables non polluées ;
+découverte honnête intacte (`crowd 60` → couverture 100 %), essaim TENU avec l'attaquant actif
+(`sim 40 6 20`, orbe 0/40). **47 tests, 0 warning.**
+
+**PROCHAINE ACTION CONCRÈTE = 8.2** (AoI à deux tiers : focus plein débit / conscience LOD basse
+fidélité) + corriger la métrique de couverture (compter « entendus », pas « connus ») + amorcer D24
+(relier `MAX_AVATARS` au rendu à deux tiers). Voir §D, Chapitre 8.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
 > les limites se font oublier : ici elles ont le droit de pousser contre le plan. À vider au fil
 > de l'eau. La réalité a toujours raison contre ce document.*
-> - **D23 (🔴, ch.8.1b) — le gossip est un amplificateur de DDoS** : cartes apprises sans PoW ni
->   corroboration d'adresse. *La prochaine étape le ferme.*
+> - ~~**D23 (🔴, ch.8.1b) — le gossip est un amplificateur de DDoS**~~ → **FERMÉ au 8.1b** (PoW sur
+>   cartes + pas d'écrasement d'adresse + abandon du perçage + rate-limit par source ; prouvé :
+>   `gossip-flood` → 0 perçage réfléchi). *Résidus assumés : contournement partiel à multi-sources,
+>   NAT symétrique abandonné (→ relais D17), pas de plafond global de perçage (pas nécessaire pour l'instant).*
 > - **D24 (🟠, ch.8.2) — le vrai jeu 3D plafonne la foule visible à 64** (`MAX_AVATARS`) ; la métrique
 >   du bot (sans ce plafond) surévalue donc « voir la foule ».
 > - **Mesure (ch.8.2) — la couverture compte les pairs CONNUS, pas ENTENDUS** : un peu optimiste.
@@ -436,20 +446,23 @@ inonder le rendez-vous ne le met pas à genoux.
 
 ### Catégorie 9 — Doutes nés du chapitre 8 (la rançon honnête du gossip)
 
-**D23 — Le gossip est un amplificateur de DDoS et un vecteur de pollution de table.** 🔴 `[ch. 8.1b / 9]`
+**D23 — Le gossip est un amplificateur de DDoS et un vecteur de pollution de table.** ✅ `[8.1b FAIT]`
 *Constat (introduit au 8.1) :* une « carte de visite » porte `(id, adresse)` choisis par
-l'émetteur, et on l'apprend **sans vérifier la preuve de travail** ni **corroborer l'adresse**.
-Un attaquant peut donc (a) diffuser des cartes pointant toutes vers la machine d'une VICTIME →
-tout le monde se met à la percer/arroser (**réflexion/amplification DDoS**) ; (b) inonder de
-fausses cartes pour saturer les tables (bornées par `MAX_KNOWN`, mais au prix de trafic de perçage
-vers des adresses bidon). *Pourquoi ça compte :* on a échangé le plafond de 32 (D22) contre une
-porte d'entrée DoS — règle d'or : « chaque attaque doit devenir chère ». *Piste :* exiger
-`has_pow` sur l'id d'une carte (gratuit à vérifier) ; ne JAMAIS envoyer de trafic à une adresse
-connue *seulement* par ouï-dire avant de l'avoir corroborée (n'ouvrir le perçage qu'après un
-signal signé, ou plafonner fortement le perçage « spéculatif ») ; rate-limiter l'apprentissage
-par source ; corroborer une carte par plusieurs informateurs (relie D9 éclipse). *Vérif :* un
-attaquant qui inonde de fausses cartes ne fait NI flooder une victime, NI exploser les tables ;
-en simu, un `attack gossip-flood` est absorbé comme les autres.
+l'émetteur, et on l'apprenait **sans vérifier la preuve de travail** ni **corroborer l'adresse**.
+Trois sous-attaques isolées en relisant le code : (1) **pollution de table** par ids-poubelle
+gratuits ; (2) **réflexion de PUNCH** — une carte `(id, addr=victime)` faisait que chaque nœud
+perçait la victime 4×/s **pour toujours** ([net_punch] ne renonçait jamais) ; (3) **redirection
+d'un pair connu** — `learn_peer` écrasait l'adresse d'un pair connu depuis n'importe quelle carte.
+*Résolu (8.1b) :* défense en profondeur — **(a)** `has_pow` exigé sur chaque carte (ferme #1) ;
+**(b)** le gossip n'écrase jamais l'adresse d'un pair connu (ferme #3) ; **(c)** abandon du perçage
+spéculatif après ~10 s non corroborés (`PUNCH_GIVEUP`, ferme la DURÉE de #2) ; **(d)** rate-limit
+d'apprentissage par source (ferme le DÉBIT d'injection de #1/#2). Logique centralisée dans `NetLink`
+(`learn_from_gossip`) + fonction pure `punch_abandoned` partagée bot/jeu (anti-D2). *Prouvé :* un
+VRAI attaquant `attack gossip-flood` déverse des cartes pointant vers une cible → **0 perçage
+réfléchi** reçu, tables non polluées ; découverte honnête inchangée (`crowd 60` couverture 100 %),
+essaim TENU avec l'attaquant actif. **47 tests, 0 warning.** *Résidus assumés :* multi-sources
+contourne partiellement (d) ; NAT symétrique abandonné par (c) → relais (D17) ; pas de plafond
+GLOBAL de perçage (jugé inutile pour l'instant). *Amorce D9 (corroboration multi-informateurs : 8.8).*
 
 **D24 — Le client 3D plafonne la foule VISIBLE à 64 (`MAX_AVATARS`).** 🟠 `[ch. 8.2/8.3]`
 *Constat (révélé au 8.1) :* [receive.rs](src/net/netcode/receive.rs) refuse de créer plus de
@@ -707,16 +720,26 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
 > plafonne) et sur l'abandon de perçage. + `gossip-flood` ajouté aux variantes de `sim` : l'essaim TIENT,
 > couverture honnête inchangée.
 
-- [ ] 8.1b — **Durcir le gossip (ferme D23) — AVANT d'empiler 8.2.** Le 8.1 a échangé le plafond
-  de 32 contre une porte d'entrée DoS : on apprend des cartes `(id, adresse)` sans preuve de travail
-  ni corroboration → réflexion/amplification possible vers une victime, et pollution de table. On
-  referme AVANT de construire dessus (règle d'or : pas de béton sur du sable). Étapes : (a) `has_pow`
-  exigé sur l'id d'une carte apprise (gratuit, jette le gros du spam) ; (b) ne pas arroser une
-  adresse connue *seulement* par gossip — plafonner fortement le perçage spéculatif et n'« ouvrir »
-  vraiment un pair qu'après un signal SIGNÉ venant de lui ; (c) rate-limiter l'apprentissage par
-  source ; (d) un attaquant `gossip-flood` dans [attack.rs](src/net/attack.rs) pour le PROUVER en
-  simu. **Preuve :** un essaim d'attaquants qui inonde de fausses cartes ne fait NI flooder une
-  victime, NI exploser les tables ; couverture honnête inchangée. *Ferme D23 ; amorce D9.*
+- [x] 8.1b ✓ — **Durcir le gossip (ferme D23) — AVANT d'empiler 8.2.** Le 8.1 a échangé le plafond
+  de 32 contre une porte d'entrée DoS : on apprenait des cartes `(id, adresse)` sans preuve de travail
+  ni corroboration → réflexion/amplification possible vers une victime, et pollution de table. On a
+  refermé AVANT de construire dessus (règle d'or : pas de béton sur du sable). Quatre défenses en
+  profondeur : (a) `has_pow` exigé sur l'id d'une carte apprise (poubelles jetées) ; (b) le gossip
+  n'écrase JAMAIS l'adresse d'un pair déjà connu (anti-redirection) ; (c) abandon du perçage spéculatif
+  après ~10 s non corroborés (`PUNCH_GIVEUP`, [punch.rs]) — avant on arrosait à VIE ; (d) rate-limit de
+  l'apprentissage PAR SOURCE (seau à jetons dans `NetLink`). Logique centralisée dans `NetLink`
+  (`learn_from_gossip`) + une fonction pure partagée `punch_abandoned` → bot ET jeu, pas de re-D2.
+  **FAIT (19 juin) — la porte DoS est fermée, la découverte honnête intacte.** Nouvel attaquant RÉEL
+  `cargo run -- attack gossip-flood` ([attack.rs]) : il ouvre une 2ᵉ prise « cible » et déverse aux
+  victimes des cartes pointant toutes vers elle. **MESURÉ : 0 perçage réfléchi reçu par la cible**
+  (poubelles jetées par PoW, ids réels non redirigés), table de la victime NON polluée (reste à ses
+  vrais pairs). La découverte honnête est inchangée : `crowd 60` → couverture **100 % (min 90 %)**,
+  orbe 0/60. `sim 40 6 20` (avec `gossip-flood` ajouté aux variantes) → essaim TENU, orbe 0/40,
+  couverture 100 %. **47 tests, 0 warning** (+5 : `learn_from_gossip` PoW/no-overwrite/rate-limit,
+  abandon de perçage, aller-retour PUNCH). *Limites assumées (registre) : un attaquant à plusieurs
+  sources contourne partiellement le rate-limit (chaque source reste bornée) ; un pair NAT symétrique
+  est aussi abandonné par (c) → relais nécessaire (D17). Plafond GLOBAL de perçage NON ajouté
+  (anti-gold-plating) : (c)+(d) suffisent, on l'ajoutera si une mesure le réclame.* *Ferme D23 ; amorce D9.*
 
 - [ ] 8.2 — **AoI à DEUX TIERS : focus (≤K, plein débit) + conscience (basse fidélité).**
   Séparer dans le code « à qui je tiens un lien netcode complet » (borné ~16-32, prédiction/
