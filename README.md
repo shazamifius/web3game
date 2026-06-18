@@ -152,7 +152,7 @@ dans un sous-dossier. (Le compilateur Rust confirme l'inverse : si un fichier
 
 ---
 
-## Feuille de route (le cours en 6 chapitres)
+## Feuille de route (le cours, désormais en 7 chapitres)
 
 On avance **en codant pour de vrai**, chapitre par chapitre. On part du plus
 simple (deux PC qui se parlent) vers le plus dur (des centaines de joueurs,
@@ -283,7 +283,49 @@ anti-triche).
       - [x] **Harnais adversarial** : `cargo run -- attack <forge|replay|flood|orb-steal|orb-freeze>`
         — un VRAI programme attaquant, sur de vraies sockets, qui prouve la robustesse.
         + 22 tests unitaires adversariaux (sceau forgé, altéré, rejeu, saut de version…).
-- [ ] **Chapitre 6 — Voix spatiale**
+- [~] **Chapitre 6 — Refonte BÉTON : durcissement intégral** *(en cours)*
+      On reprend CHAQUE script et on ferme le fossé entre « 5 attaques connues
+      neutralisées » et l'objectif réel : **55 000 joueurs en P2P pur, avec un
+      maximum d'attaquants de tout genre, et que ça tienne**. Honnêteté assumée :
+      le P2P sans serveur central à cette échelle, face à des adversaires
+      byzantins, est à la frontière de la recherche — on ne promet pas l'inviolable
+      absolu (ça n'existe pas). On vise : **chaque attaque devient soit impossible,
+      soit chère, soit attribuable et bannie.** On avance fondation d'abord.
+      - [ ] **6.0 — Carte des menaces + harnais d'attaque « rouge ».** On écrit le
+        modèle de menace et on ajoute à `attack.rs` les attaques qui RÉUSSISSENT
+        encore aujourd'hui (téléport / speed-hack, Sybil-reconnexion, collision
+        d'id, amplification par relais) : autant de tests « rouges » à passer au
+        vert au fil des étapes suivantes.
+      - [ ] **6.1 — Identité auto-certifiante (le keystone « web3 »).** L'identité
+        d'un joueur DEVIENT sa clé publique (ou son empreinte), au lieu d'un `u8`
+        assigné par le rendez-vous. D'un coup : plus de mur des 255 joueurs, plus
+        de collision d'id, et surtout **le rendez-vous ne peut plus mentir** sur
+        « telle clé = tel joueur » (aujourd'hui toute la signature repose sur son
+        honnêteté). Touche tous les formats de paquet.
+      - [ ] **6.2 — Coût d'entrée anti-Sybil.** Une identité doit COÛTER (preuve de
+        travail façon Hashcash sur la clé). Sans ça, un banni se reconnecte en une
+        milliseconde avec une clé neuve → la réputation/sourdine ne vaut rien.
+      - [ ] **6.3 — Validation de mouvement (anti-téléport / speed-hack).** Un état
+        signé avec un saut de position physiquement impossible est refusé et compté
+        comme faute. La signature prouve QUI ; ici on prouve que le mouvement est
+        PLAUSIBLE.
+      - [ ] **6.4 — Orbe : preuve de contact + version stricte.** On ferme le vol
+        d'orbe par incréments +1 (revendiquer l'orbe sans l'avoir touchée) : le
+        Shield vérifie la plausibilité (le revendiqueur était-il près de l'orbe ?).
+      - [ ] **6.5 — DoS durci.** Rate-limit résistant au spoofing d'adresse source +
+        éviction des seaux (sinon 1 M de fausses adresses = mémoire saturée). Relais
+        avec consentement + AoI sur la rediffusion (sinon amplification réfléchie
+        avec l'upload de la victime).
+      - [ ] **6.6 — Passage à l'échelle.** Roster paginé / sharding spatial côté
+        rendez-vous, AoI qui borne le NOMBRE de voisins (pas seulement le débit),
+        WELCOME découpé. Lève le mur actuel (~52 pairs visibles, et O(N²)).
+      - [ ] **6.7 — Quorum BFT des Shields.** Accusations signées partagées entre
+        nœuds (réputation décentralisée, EigenTrust) : l'étage au-dessus du strike
+        purement local.
+      - [ ] **6.8 — Simulation 55 K + essaim d'attaquants.** Un harnais qui lance
+        des milliers de bots honnêtes ET N attaquants de tout type, et MESURE que
+        l'architecture tient.
+- [ ] **Chapitre 7 — Voix spatiale**
       Chat vocal P2P avec priorité au volume (*loudness priority*).
 
 ---
