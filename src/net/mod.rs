@@ -24,6 +24,7 @@
 //!   Terminal 2 :  nix-shell --run "cargo run -- a"
 //!   Terminal 3 :  nix-shell --run "cargo run -- b"   (… et autant qu'on veut)
 
+mod accuse;
 mod anticheat;
 mod aoi;
 mod attack;

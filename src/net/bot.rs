@@ -12,6 +12,7 @@
 //!
 //! Lancement (après `cargo run -- rendezvous`) :  cargo run -- bot alice
 
+use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, POW_BITS};
@@ -20,7 +21,9 @@ use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, Player
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch};
 use super::skin::random_color;
-use super::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION};
+use super::wire::{
+    kind, KIND_ACCUSE, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
+};
 use bevy::prelude::Vec3;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -155,7 +158,7 @@ pub fn run_bot(label: &str) {
                                     None => false,
                                 };
                                 if teleport {
-                                    link.add_strike(state.id, "téléport (vitesse impossible)");
+                                    link.punish(state.id, "téléport (vitesse impossible)");
                                     rejected += 1;
                                 } else {
                                     last_state.insert(state.id, (np, now));
@@ -166,7 +169,7 @@ pub fn run_bot(label: &str) {
                         }
                         None => {
                             if let Some(id) = claimed_id(&bytes) {
-                                link.add_strike(id, "état signé impossible (NaN)");
+                                link.punish(id, "état signé impossible (NaN)");
                                 rejected += 1;
                             }
                         }
@@ -185,7 +188,7 @@ pub fn run_bot(label: &str) {
                                 None => false,
                             };
                             if teleport {
-                                link.add_strike(state.id, "relais : téléport (vitesse impossible)");
+                                link.punish(state.id, "relais : téléport (vitesse impossible)");
                                 rejected += 1;
                             } else {
                                 last_state.insert(state.id, (np, now));
@@ -228,16 +231,24 @@ pub fn run_bot(label: &str) {
                             if owner.has_pow(POW_BITS) && !link.is_muted(owner) {
                                 let claimer_pos = last_state.get(&owner).map(|(p, _)| *p);
                                 match apply_incoming(&mut orb, w, now, claimer_pos) {
-                                    OrbApply::Implausible => link.add_strike(owner, "orbe : saut de version aberrant"),
-                                    OrbApply::NoContact => link.add_strike(owner, "orbe : revendiquée sans contact"),
+                                    OrbApply::Implausible => link.punish(owner, "orbe : saut de version aberrant"),
+                                    OrbApply::NoContact => link.punish(owner, "orbe : revendiquée sans contact"),
                                     _ => {}
                                 }
                             }
                         }
                         None => {
                             if let Some(id) = claimed_owner(&bytes) {
-                                link.add_strike(id, "orbe : état signé impossible (NaN)");
+                                link.punish(id, "orbe : état signé impossible (NaN)");
                             }
+                        }
+                    }
+                }
+                // Accusation d'un témoin (6.7) : on agit au QUORUM (anti-framing).
+                Some(KIND_ACCUSE) => {
+                    if let Some((accuser, offender)) = decode_accuse(&bytes) {
+                        if accuser.has_pow(POW_BITS) && accuser != offender && !link.is_muted(accuser) {
+                            link.record_accusation(offender, accuser);
                         }
                     }
                 }

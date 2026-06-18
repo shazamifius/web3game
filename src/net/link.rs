@@ -4,11 +4,12 @@
 //! du rendez-vous, notre identifiant (attribué par le rendez-vous → `Option`
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
+use super::accuse::encode_accuse;
 use super::crypto::{Identity, PeerId, POW_BITS};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
 #[derive(Resource)]
@@ -33,12 +34,22 @@ pub struct NetLink {
     /// impossible, orbe trichée…). Au-delà de `MAX_STRIKES`, le pair est mis en
     /// sourdine (« mute ») : on ignore tout ce qu'il envoie.
     pub(crate) strikes: HashMap<PeerId, u32>,
+    /// RÉPUTATION PARTAGÉE (chap. 6.7) : pour chaque tricheur, l'ensemble des nœuds
+    /// DISTINCTS qui l'ont accusé. Au-delà de `ACCUSE_QUORUM`, on le bannit aussi.
+    pub(crate) accusations: HashMap<PeerId, HashSet<PeerId>>,
+    /// Tricheurs pour lesquels on a DÉJÀ diffusé NOTRE accusation (une seule fois).
+    pub(crate) accused_broadcast: HashSet<PeerId>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
 /// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
 pub(crate) const MAX_STRIKES: u32 = 5;
+/// Nombre d'accusateurs DISTINCTS requis avant de bannir un tricheur qu'on n'a PAS
+/// vu soi-même (chap. 6.7). Anti-framing : un seul (ou quelques) menteur(s) ne suffit
+/// pas ; et chaque identité coûte une preuve de travail (6.2), donc fabriquer un
+/// quorum de fausses identités est coûteux.
+pub(crate) const ACCUSE_QUORUM: usize = 3;
 
 impl NetLink {
     /// Prépare le réseau d'un client : prise sur un port éphémère (choisi par
@@ -68,6 +79,8 @@ impl NetLink {
             peers: HashMap::new(),
             last_seq: HashMap::new(),
             strikes: HashMap::new(),
+            accusations: HashMap::new(),
+            accused_broadcast: HashSet::new(),
             weak,
         })
     }
@@ -87,6 +100,35 @@ impl NetLink {
         } else if *n < MAX_STRIKES {
             eprintln!("🛡 Faute de {} ({n}/{MAX_STRIKES}) : {reason}.", id.short());
         }
+    }
+
+    /// Inflige une faute ET, si elle vient de faire passer le tricheur en sourdine,
+    /// DIFFUSE une accusation signée à nos voisins (réputation partagée, chap. 6.7).
+    /// À utiliser partout où l'on sanctionne une triche ATTRIBUABLE.
+    pub(crate) fn punish(&mut self, offender: PeerId, reason: &str) {
+        self.add_strike(offender, reason);
+        // `insert` renvoie true la PREMIÈRE fois : on n'accuse qu'une fois par tricheur.
+        if self.is_muted(offender) && self.accused_broadcast.insert(offender) {
+            let bytes = encode_accuse(offender, &self.identity);
+            for addr in self.peers.values() {
+                let _ = self.socket.send_to(*addr, &bytes);
+            }
+        }
+    }
+
+    /// Enregistre une accusation REÇUE (`accuser` accuse `offender`). Renvoie `true`
+    /// si elle vient d'atteindre le QUORUM → on bannit `offender` à notre tour, même
+    /// sans l'avoir vu tricher. On ne RE-diffuse PAS (pas de cascade) : la réputation
+    /// se propage à un saut des témoins directs. Anti-framing : accusateurs DISTINCTS.
+    pub(crate) fn record_accusation(&mut self, offender: PeerId, accuser: PeerId) -> bool {
+        let set = self.accusations.entry(offender).or_default();
+        set.insert(accuser);
+        if set.len() >= ACCUSE_QUORUM && !self.is_muted(offender) {
+            self.strikes.insert(offender, MAX_STRIKES); // force la sourdine
+            eprintln!("🛡 Pair {} mis en SOURDINE par QUORUM ({} accusateurs).", offender.short(), ACCUSE_QUORUM);
+            return true;
+        }
+        false
     }
 
     /// ANTI-REJEU : accepte un `seq` seulement s'il est STRICTEMENT plus grand que le
@@ -141,6 +183,21 @@ mod tests {
         assert!(link.is_muted(tricheur)); // banni localement
         // Un pair sans faute reste audible.
         assert!(!link.is_muted(pid(10)));
+    }
+
+    /// RÉPUTATION PARTAGÉE (6.7) : un quorum d'accusateurs DISTINCTS met en sourdine,
+    /// même sans avoir vu le tricheur soi-même. Un accusateur qui se répète ne compte
+    /// qu'une fois (anti-framing à un seul menteur).
+    #[test]
+    fn quorum_d_accusations_met_en_sourdine() {
+        let mut link = link_de_test();
+        let tricheur = pid(50);
+        assert!(!link.record_accusation(tricheur, pid(1)));
+        assert!(!link.record_accusation(tricheur, pid(2)));
+        assert!(!link.record_accusation(tricheur, pid(2))); // doublon : ne compte pas
+        assert!(!link.is_muted(tricheur)); // 2 distincts < quorum (3)
+        assert!(link.record_accusation(tricheur, pid(3))); // 3e distinct → quorum
+        assert!(link.is_muted(tricheur));
     }
 }
 

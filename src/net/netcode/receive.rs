@@ -14,6 +14,7 @@
 use super::state::{
     RemoteAvatar, RemoteAvatars, RemoteHead, RemotePlayer, Snapshot, INTERP_DELAY, REMOTE_TIMEOUT,
 };
+use crate::net::accuse::decode_accuse;
 use crate::net::anticheat::move_plausible;
 use crate::net::control::decode_welcome;
 use crate::net::crypto::{PeerId, POW_BITS};
@@ -21,7 +22,9 @@ use crate::net::link::NetLink;
 use crate::net::message::{claimed_id, decode_canonical, sig_ok, PlayerState};
 use crate::net::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply, OrbWire};
 use crate::net::punch::{decode_punch, Holes};
-use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION};
+use crate::net::wire::{
+    kind, KIND_ACCUSE, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
+};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -133,7 +136,7 @@ pub fn net_receive(
                     if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
                         if teleported(&avatars, &state, now) {
                             // On ne RECOPIE même pas un tricheur (pas d'amplification de triche).
-                            link.add_strike(state.id, "relais : téléport (vitesse impossible)");
+                            link.punish(state.id, "relais : téléport (vitesse impossible)");
                         } else {
                             // 6.5 : on ne RECOPIE que dans la limite du budget de relais de
                             // ce protégé, et vers au plus MAX_RELAY_FANOUT voisins → le
@@ -162,7 +165,7 @@ pub fn net_receive(
                         }
                     }
                 }
-                Checked::Faulty(id) => link.add_strike(id, "relais : état signé impossible (NaN)"),
+                Checked::Faulty(id) => link.punish(id, "relais : état signé impossible (NaN)"),
                 Checked::Unknown => {}
             },
             // --- État de l'orbe : seul le maître l'émet, et il le SIGNE. On vérifie
@@ -176,13 +179,13 @@ pub fn net_receive(
                         let claimer_pos =
                             avatars.map.get(&owner).and_then(|p| p.buffer.back()).map(|s| s.pos);
                         match apply_incoming(&mut orb, w, now, claimer_pos) {
-                            OrbApply::Implausible => link.add_strike(owner, "orbe : saut de version aberrant"),
-                            OrbApply::NoContact => link.add_strike(owner, "orbe : revendiquée sans contact"),
+                            OrbApply::Implausible => link.punish(owner, "orbe : saut de version aberrant"),
+                            OrbApply::NoContact => link.punish(owner, "orbe : revendiquée sans contact"),
                             _ => {}
                         }
                     }
                 }
-                OrbChecked::Faulty(id) => link.add_strike(id, "orbe : état signé impossible (NaN)"),
+                OrbChecked::Faulty(id) => link.punish(id, "orbe : état signé impossible (NaN)"),
                 OrbChecked::Unknown => {}
             },
             // --- État d'un pair : sceau + anti-rejeu + réputation, puis on le range.
@@ -190,7 +193,7 @@ pub fn net_receive(
                 Checked::Good(state) => {
                     if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
                         if teleported(&avatars, &state, now) {
-                            link.add_strike(state.id, "téléport (vitesse impossible)");
+                            link.punish(state.id, "téléport (vitesse impossible)");
                         } else {
                             ingest_state(
                                 state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
@@ -199,9 +202,20 @@ pub fn net_receive(
                         }
                     }
                 }
-                Checked::Faulty(id) => link.add_strike(id, "état signé impossible (NaN)"),
+                Checked::Faulty(id) => link.punish(id, "état signé impossible (NaN)"),
                 Checked::Unknown => {}
             },
+            // --- ACCUSATION d'un témoin (chap. 6.7) : « j'ai banni ce tricheur ». On
+            //     n'agit qu'au QUORUM d'accusateurs distincts (anti-framing), et
+            //     l'accusateur doit avoir payé sa preuve de travail et ne pas être
+            //     déjà muet chez nous (un banni ne vote plus). ----------------------
+            Some(KIND_ACCUSE) => {
+                if let Some((accuser, offender)) = decode_accuse(&bytes) {
+                    if accuser.has_pow(POW_BITS) && accuser != offender && !link.is_muted(accuser) {
+                        link.record_accusation(offender, accuser);
+                    }
+                }
+            }
             _ => {}
         }
     }

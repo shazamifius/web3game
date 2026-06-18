@@ -108,6 +108,7 @@ src/
     ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
     ├── crypto.rs        Ed25519 + PeerId (identité = clé) + preuve de travail — boîte noire (5/6.1/6.2)
     ├── anticheat.rs     le « Shield local » : règles de plausibilité physique (chap. 6.3+)
+    ├── accuse.rs        accusations signées + quorum : réputation partagée (chap. 6.7)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
     ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
@@ -167,11 +168,13 @@ anti-triche).
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques) ; **6.1** (identité
 >   = clé) ; **6.2** (anti-Sybil PoW) ; **6.3** (anti-téléport) ; **6.4** (contact orbe) ;
->   **6.5** (DoS borné) ; **6.6** (voisinage borné, O(N·K)). Build vert, 31 tests, 0
->   warning. **Les 10 trous de l'audit sont fermés ou bornés.**
-> - **À venir :** 6.7 (quorum BFT / réputation partagée entre nœuds), 6.8 (simu 55K +
->   essaim d'attaquants). Plus loin : sharder le rendez-vous + relais TURN (échelle
->   planétaire réelle). Puis chapitre 7 (voix spatiale).
+>   **6.5** (DoS borné) ; **6.6** (voisinage borné, O(N·K)) ; **6.7** (réputation
+>   partagée : accusations signées + quorum). Build vert, 35 tests, 0 warning. **Les
+>   10 trous de l'audit sont fermés ou bornés.**
+> - **À venir :** 6.8 (simu 55K + essaim d'attaquants). Plus loin (gros chantiers) :
+>   AoI « vision » dense (concert virtuel = O(N²) local), sharder le rendez-vous +
+>   relais TURN décentralisés (NAT symétrique), quorum BFT 3f+1 sur l'orbe, CRDT +
+>   horodatage pour la synchro. Puis chapitre 7 (voix spatiale).
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -389,9 +392,19 @@ anti-triche).
         unique — pour une vraie échelle planétaire il faudrait LE sharder spatialement
         / le répliquer, et ajouter des relais TURN pour les NAT symétriques. C'est le
         gros chantier au-delà de cette étape.)*
-      - [ ] **6.7 — Quorum BFT des Shields.** Accusations signées partagées entre
-        nœuds (réputation décentralisée, EigenTrust) : l'étage au-dessus du strike
-        purement local.
+      - [x] **6.7 — Réputation partagée (accusations signées + quorum).** *(fait)*
+        Nouveau `net/accuse.rs` + paquet `KIND_ACCUSE`. Quand un nœud bannit un
+        tricheur (triche ATTRIBUABLE), il **diffuse une accusation signée** (`punish`).
+        Les autres n'y croient pas sur parole : ils attendent un **quorum**
+        (`ACCUSE_QUORUM` = 3) d'accusateurs **distincts** avant de bannir à leur tour
+        (`record_accusation`) — et chaque identité coûte une preuve de travail (6.2),
+        donc fabriquer un faux quorum est cher. **Anti-framing** : un seul (ou
+        quelques) menteur(s) ne peut rien ; on ne re-diffuse pas (pas de cascade) ;
+        un nœud déjà banni ne « vote » plus. C'est la version légère, byzantine-
+        tolérante, d'EigenTrust — l'étage « Shields » au-dessus du strike local.
+        **Vérifié** : round-trip + quorum testés unitairement ; en headless le
+        tricheur est banni et les accusations diffusées. *(Limite assumée : pas
+        encore de quorum BFT 3f+1 formel sur l'orbe elle-même — voir « au-delà ».)*
       - [ ] **6.8 — Simulation 55 K + essaim d'attaquants.** Un harnais qui lance
         des milliers de bots honnêtes ET N attaquants de tout type, et MESURE que
         l'architecture tient.
