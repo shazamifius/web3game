@@ -116,7 +116,8 @@ src/
     ├── skin.rs          la couleur de skin aléatoire
     ├── demo.rs          le mode texte net-demo (observer les paquets)
     ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5 & 6
-    ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) — vrai protocole sans 3D (chap. 6.0)
+    ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) + brique `Bot` réutilisable (6.0/6.8)
+    ├── sim.rs           la SIMULATION MASSIVE (cargo run -- sim N M T) : N nœuds + M attaquants (chap. 6.8)
     ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
     ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
     └── netcode/         LE RATTRAPAGE DE LATENCE
@@ -169,12 +170,12 @@ anti-triche).
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques) ; **6.1** (identité
 >   = clé) ; **6.2** (anti-Sybil PoW) ; **6.3** (anti-téléport) ; **6.4** (contact orbe) ;
 >   **6.5** (DoS borné) ; **6.6** (voisinage borné, O(N·K)) ; **6.7** (réputation
->   partagée : accusations signées + quorum). Build vert, 35 tests, 0 warning. **Les
->   10 trous de l'audit sont fermés ou bornés.**
-> - **À venir :** 6.8 (simu 55K + essaim d'attaquants). Plus loin (gros chantiers) :
->   AoI « vision » dense (concert virtuel = O(N²) local), sharder le rendez-vous +
->   relais TURN décentralisés (NAT symétrique), quorum BFT 3f+1 sur l'orbe, CRDT +
->   horodatage pour la synchro. Puis chapitre 7 (voix spatiale).
+>   partagée : accusations signées + quorum) ; **6.8** (simulation massive : 50 et
+>   300 bots + attaquants → ça tient, voisins plafonnés à 32, orbe intègre). Build
+>   vert, 35 tests, 0 warning. **CHAPITRE 6 TERMINÉ — les 10 trous fermés/bornés.**
+> - **À venir :** chapitre 7 (scalabilité réelle & adaptation au lien : de 0 à 2 Gb/s,
+>   parent/répartition de puissance, TURN, AoI vision), puis chapitre 8 (voix spatiale).
+>   Prochaine action conseillée : grosses campagnes de tests (attaques poussées + scale).
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -405,10 +406,30 @@ anti-triche).
         **Vérifié** : round-trip + quorum testés unitairement ; en headless le
         tricheur est banni et les accusations diffusées. *(Limite assumée : pas
         encore de quorum BFT 3f+1 formel sur l'orbe elle-même — voir « au-delà ».)*
-      - [ ] **6.8 — Simulation 55 K + essaim d'attaquants.** Un harnais qui lance
-        des milliers de bots honnêtes ET N attaquants de tout type, et MESURE que
-        l'architecture tient.
-- [ ] **Chapitre 7 — Voix spatiale**
+      - [x] **6.8 — Simulation massive + essaim d'attaquants.** *(fait)* Nouveau mode
+        `cargo run -- sim [bots] [attaquants] [secondes]` (`net/sim.rs`) : il lance un
+        rendez-vous + N nœuds headless (`Bot`, refactoré en brique réutilisable) + M
+        attaquants variés (orb-creep/teleport/flood/forge/sybil), en threads sur une
+        seule machine, et imprime un **rapport agrégé**. **Résultats mesurés** (release) :
+        à **50** ET **300 bots** + attaquants → 100 % des nœuds montés, **voisins/nœud
+        plafonnés à 32** (moy 32,0 — la borne d'échelle 6.6 tient), **orbe volée :
+        0/N**, ~83 000 paquets honnêtes/s à 300, attaquants mis en sourdine. **Pourquoi
+        ça vaut pour 55 K :** la charge PAR NŒUD ne dépend pas de N (chacun ne parle
+        qu'à ~32 voisins) → la vraie échelle se fait en ajoutant des MACHINES (chaque
+        joueur = un appareil réel), pas en surchargeant une seule. La simu valide la
+        correction + la résistance aux attaques ; le passage planétaire = le chapitre
+        suivant (adaptation au lien).
+- [ ] **Chapitre 7 — Scalabilité réelle & adaptation au lien** *(nouveau — pilier)*
+      Que **n'importe qui** joue, quel que soit son réseau : de **0 connexion** (via un
+      parent qui relaie tout pour lui) à **2 Gb/s** (fibre), chacun avec LA meilleure
+      expérience possible POUR SON LIEN. Pistes : débit/qualité adaptatifs (le budget
+      d'émission devient fonction du lien mesuré) ; le **système de parent** (chap. 4.1)
+      érigé en vrai pilier de **répartition de la puissance** (entraide, supernœuds élus
+      par upload+réputation) — avec le problème dur de l'**incitation** (anti free-riding,
+      façon donnant-donnant BitTorrent) ; relais TURN décentralisés + IPv6 pour les NAT
+      symétriques ; AoI par **vision** (foule dense = O(N²) local) avec paliers
+      focus/proche/foule-imposteur. C'est le grand chantier « échelle internationale ».
+- [ ] **Chapitre 8 — Voix spatiale**
       Chat vocal P2P avec priorité au volume (*loudness priority*).
 
 ---

@@ -53,6 +53,16 @@ fn main() {
         return;
     }
 
+    // `cargo run -- sim [bots] [attaquants] [secondes]`  lance la SIMULATION MASSIVE
+    // (chap. 6.8) : N nœuds headless + M attaquants en threads, et un rapport agrégé.
+    if mode == Some("sim") {
+        let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
+        let n_attackers = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3);
+        let secs = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(15);
+        net::run_sim(n_bots, n_attackers, secs);
+        return;
+    }
+
     // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
     // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
     if mode == Some("nat-test") {
