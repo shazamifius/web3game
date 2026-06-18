@@ -159,7 +159,12 @@ dans un sous-dossier. (Le compilateur Rust confirme l'inverse : si un fichier
 
 ---
 
-## Feuille de route (le cours, désormais en 7 chapitres)
+## Feuille de route (le cours)
+
+> 📋 **Le plan COMPLET et détaillé est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** :
+> l'inventaire honnête des 21 doutes/risques (D1→D21), et le programme chapitre par
+> chapitre (7→14) pour les fermer, avec la méthode de test « vraie mauvaise connexion
+> sur une seule machine » (`tc netem`). Le README ci-dessous reste le résumé.
 
 On avance **en codant pour de vrai**, chapitre par chapitre. On part du plus
 simple (deux PC qui se parlent) vers le plus dur (des centaines de joueurs,
