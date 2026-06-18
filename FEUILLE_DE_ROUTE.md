@@ -51,7 +51,8 @@ protocole. **Le protocole tient sous réseau réel.** Le cœur du chapitre 7 est
 crête **globale** du process (pas de RAM/nœud factice — un seul tas partagé). Mesuré à
 **saturation** (50 nœuds, voisinage au plafond 32) : **↑89/↓80 Ko/s/nœud, CPU ~1,5 %/cœur,
 37 Mo**. Bornés par le voisinage (~32), PAS par le total → constants à 55k (~0,7 Mbit/s ↑
-par joueur, tenable). **Ferme D19.** 37 tests, 0 warning.
+par joueur, tenable). **Ferme D19.** 36 tests (inchangé : `probe.rs` + compteurs sont
+prouvés empiriquement par la simu, pas par test unitaire), 0 warning.
 
 **PROCHAINE ACTION = 7.5** : généraliser `tools/test-nat.sh` (un faux NAT en namespaces) au
 scénario MULTI-joueurs (plusieurs nœuds derrière des NAT distincts qui se percent), pour
