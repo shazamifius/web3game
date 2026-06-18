@@ -233,8 +233,11 @@ anti-triche).
 >   de l'écraser, et les pairs s'échangent à bas débit un sous-ensemble divers de pairs connus → la
 >   table s'enrichit **sans plafond**. **Mesuré : couverture 16 % → 98 %** à `crowd 200`, et l'INVARIANT
 >   est prouvé — le débit ↓ **ne grandit pas** de 200 à 500 nœuds (~plat, CPU ~0,7 %, orbe 0 volée).
->   42 tests, 0 warning. **Prochaine action = 8.2** (AoI à deux tiers : *focus* plein débit pour les
->   proches, *conscience* LOD pour les lointains). **Tout le plan post-chapitre-6 (chapitres
+>   42 tests, 0 warning. *Dettes assumées (registre dans la feuille de route) : le gossip apprend
+>   des cartes sans preuve de travail → amplificateur de DDoS (**D23**) ; le vrai jeu 3D plafonne la
+>   foule visible à 64 (**D24**) ; la métrique compte les pairs connus, pas entendus.* **Prochaine
+>   action = 8.1b** (durcir le gossip / fermer D23) AVANT 8.2 (AoI à deux tiers). **Tout le plan
+>   post-chapitre-6 (chapitres
 >   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
 >   ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
