@@ -33,6 +33,19 @@ const BUCKET_CAP: f32 = 300.0;
 /// Plafond d'avatars distants affichés (anti-DoS : un attaquant ne peut pas nous
 /// faire créer trop d'avatars). Large pour un voisinage AoI normal.
 const MAX_AVATARS: usize = 64;
+/// Plafond du nombre de « seaux » d'adresses suivis (chap. 6.5). Sans borne, un
+/// attaquant qui USURPE des milliers d'adresses sources nous ferait créer autant
+/// d'entrées → mémoire saturée. Au-delà, on jette les seaux PLEINS (= adresses
+/// inactives, qui ont rechargé à fond) pour faire de la place.
+const MAX_BUCKETS: usize = 4096;
+/// Relais (chap. 6.5) : paquets RELAY qu'on accepte de recopier par protégé et par
+/// seconde, et réserve max. Petit exprès : un relais ne dédie qu'une fraction bornée
+/// de son upload à amplifier autrui → fin de l'amplification réfléchie illimitée.
+const RELAY_RATE: f32 = 30.0;
+const RELAY_CAP: f32 = 60.0;
+/// Nombre max de voisins à qui un relais ré-émet UN paquet (chap. 6.5). Borne le
+/// facteur d'amplification : 1 paquet entrant → au plus `MAX_RELAY_FANOUT` sortants.
+const MAX_RELAY_FANOUT: usize = 12;
 
 pub fn net_receive(
     time: Res<Time>,
@@ -45,14 +58,24 @@ pub fn net_receive(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut warned_version: Local<bool>,
     mut buckets: Local<std::collections::HashMap<std::net::SocketAddr, f32>>,
+    mut relay_credits: Local<std::collections::HashMap<PeerId, f32>>,
     mut flood_warned: Local<bool>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
 
-    // RATE-LIMIT (chap. 5.5) : on recharge le « seau à jetons » de chaque adresse.
+    // RATE-LIMIT (chap. 5.5) : on recharge le « seau à jetons » de chaque adresse,
+    // et (chap. 6.5) le budget de relais de chaque protégé.
     for credit in buckets.values_mut() {
         *credit = (*credit + dt * BUCKET_RATE).min(BUCKET_CAP);
+    }
+    for credit in relay_credits.values_mut() {
+        *credit = (*credit + dt * RELAY_RATE).min(RELAY_CAP);
+    }
+    // ÉVICTION (chap. 6.5) : si on suit trop d'adresses (usurpation de sources), on
+    // jette les seaux pleins — ce sont des adresses inactives → mémoire bornée.
+    if buckets.len() > MAX_BUCKETS {
+        buckets.retain(|_, c| *c < BUCKET_CAP);
     }
 
     let inbox = link.socket.poll();
@@ -112,13 +135,26 @@ pub fn net_receive(
                             // On ne RECOPIE même pas un tricheur (pas d'amplification de triche).
                             link.add_strike(state.id, "relais : téléport (vitesse impossible)");
                         } else {
-                            let mut forward = bytes.clone();
-                            forward[0] = KIND_STATE;
-                            for (id, addr) in &link.peers {
-                                if *id != state.id {
-                                    let _ = link.socket.send_to(*addr, &forward);
+                            // 6.5 : on ne RECOPIE que dans la limite du budget de relais de
+                            // ce protégé, et vers au plus MAX_RELAY_FANOUT voisins → le
+                            // facteur d'amplification réfléchie est borné.
+                            let rc = relay_credits.entry(state.id).or_insert(RELAY_CAP);
+                            if *rc >= 1.0 {
+                                *rc -= 1.0;
+                                let mut forward = bytes.clone();
+                                forward[0] = KIND_STATE;
+                                let mut sent = 0usize;
+                                for (id, addr) in &link.peers {
+                                    if *id != state.id {
+                                        let _ = link.socket.send_to(*addr, &forward);
+                                        sent += 1;
+                                        if sent >= MAX_RELAY_FANOUT {
+                                            break;
+                                        }
+                                    }
                                 }
                             }
+                            // On affiche le protégé chez nous même si le budget est épuisé.
                             ingest_state(
                                 state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
                                 &mut meshes, &mut materials,

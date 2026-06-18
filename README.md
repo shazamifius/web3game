@@ -166,10 +166,10 @@ anti-triche).
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques « rouges ») ;
->   **6.1** (identité auto-certifiante = clé) ; **6.3** (anti-téléport) ; **6.4**
->   (preuve de contact orbe). Build vert, 28 tests, 0 warning.
-> - **En cours / à venir :** 6.2, 6.5, 6.6, 6.7, 6.8 (cochées au fur et à mesure).
->   Chaque étape ferme un « trou » numéroté de l'audit.
+>   **6.1** (identité = clé) ; **6.3** (anti-téléport) ; **6.4** (preuve de contact
+>   orbe) ; **6.5** (DoS borné : mémoire + amplification). Build vert, 28 tests, 0 warning.
+> - **En cours / à venir :** 6.2 (anti-Sybil), 6.6 (échelle), 6.7 (quorum BFT),
+>   6.8 (simu 55K). Chaque étape ferme un « trou » numéroté de l'audit.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -179,7 +179,7 @@ anti-triche).
 >   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6)*, 3 maillage O(N²) *(6.6)*, 4 collision
 >   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2)*, 7
 >   téléport/speed-hack *(6.3 ✓)*, 8 vol d'orbe lent *(6.4 ✓)*, 9 DoS spoofing/mémoire
->   *(6.5)*, 10 amplification relais *(6.5)*.
+>   *(6.5 ✓)*, 10 amplification relais *(6.5 ✓)*.
 
 - [x] **Chapitre 0 — Le bac à sable 3D**
       Salle néon, personnage articulé, vue première personne. *(fait)*
@@ -358,10 +358,16 @@ anti-triche).
         **Vérifié headless** : le creeper prend « 🛡 … orbe revendiquée sans contact »
         → SOURDINE, l'orbe reste sans maître. +1 test. *(Limite assumée : la voie de
         migration reste plus permissive — durcissement au 6.7 quorum BFT.)*
-      - [ ] **6.5 — DoS durci.** Rate-limit résistant au spoofing d'adresse source +
-        éviction des seaux (sinon 1 M de fausses adresses = mémoire saturée). Relais
-        avec consentement + AoI sur la rediffusion (sinon amplification réfléchie
-        avec l'upload de la victime).
+      - [x] **6.5 — DoS durci.** *(fait)* Deux bornes : (a) **éviction des seaux** —
+        au-delà de `MAX_BUCKETS` adresses suivies (usurpation de sources), on jette
+        les seaux pleins (adresses inactives) → **mémoire bornée** (avant : 1 M de
+        fausses adresses = OOM). (b) **Relais borné** — un protégé a un budget de
+        relais (`RELAY_RATE`/s) et chaque paquet n'est ré-émis qu'à au plus
+        `MAX_RELAY_FANOUT` voisins → le **facteur d'amplification réfléchie est
+        plafonné** (avant : 1 paquet → N sortants illimités avec l'upload de la
+        victime). **Ce que ça ferme :** trous n°9 et n°10. *(Ce sont des BORNES,
+        pas un accept/reject binaire ; l'usurpation d'adresse source elle-même n'est
+        pas testable sur localhost. Consentement explicite du relais = 6.7.)*
       - [ ] **6.6 — Passage à l'échelle.** Roster paginé / sharding spatial côté
         rendez-vous, AoI qui borne le NOMBRE de voisins (pas seulement le débit),
         WELCOME découpé. Lève le mur actuel (~52 pairs visibles, et O(N²)).

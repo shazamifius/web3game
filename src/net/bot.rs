@@ -29,6 +29,10 @@ use std::time::{Duration, Instant};
 // Miroir des réglages de réception du jeu (cf. netcode/receive.rs et state.rs).
 const BUCKET_RATE: f32 = 150.0;
 const BUCKET_CAP: f32 = 300.0;
+const MAX_BUCKETS: usize = 4096;
+const RELAY_RATE: f32 = 30.0;
+const RELAY_CAP: f32 = 60.0;
+const MAX_RELAY_FANOUT: usize = 12;
 const SEND_HZ: f32 = 20.0;
 const HELLO_PERIOD: f32 = 1.0;
 const PUNCH_PERIOD: f32 = 0.25;
@@ -49,6 +53,7 @@ pub fn run_bot(label: &str) {
 
     let mut holes: HashMap<PeerId, bool> = HashMap::new();
     let mut buckets: HashMap<SocketAddr, f32> = HashMap::new();
+    let mut relay_credits: HashMap<PeerId, f32> = HashMap::new();
     // Dernière position acceptée de chaque pair (+ instant) : pour valider le mouvement.
     let mut last_state: HashMap<PeerId, (Vec3, f32)> = HashMap::new();
     let mut orb = Orb::headless();
@@ -85,9 +90,15 @@ pub fn run_bot(label: &str) {
             let _ = link.socket.send_to(link.rendezvous, &hello);
         }
 
-        // 2) Recharge des seaux à jetons (rate-limit), comme net_receive.
+        // 2) Recharge des seaux (rate-limit) + budget de relais ; éviction si trop d'adresses.
         for credit in buckets.values_mut() {
             *credit = (*credit + dt * BUCKET_RATE).min(BUCKET_CAP);
+        }
+        for credit in relay_credits.values_mut() {
+            *credit = (*credit + dt * RELAY_RATE).min(RELAY_CAP);
+        }
+        if buckets.len() > MAX_BUCKETS {
+            buckets.retain(|_, c| *c < BUCKET_CAP);
         }
 
         // 3) On relève le courrier et on applique LES VRAIES décisions de confiance.
@@ -178,21 +189,29 @@ pub fn run_bot(label: &str) {
                                 rejected += 1;
                             } else {
                                 last_state.insert(state.id, (np, now));
-                                let mut forward = bytes.clone();
-                                forward[0] = KIND_STATE;
-                                let targets: Vec<(PeerId, SocketAddr)> =
-                                    link.peers.iter().map(|(i, a)| (*i, *a)).collect();
+                                // 6.5 : budget de relais par protégé + plafond de ré-émission.
+                                let rc = relay_credits.entry(state.id).or_insert(RELAY_CAP);
                                 let mut n = 0u32;
-                                for (id, addr) in targets {
-                                    if id != state.id {
-                                        let _ = link.socket.send_to(addr, &forward);
-                                        n += 1;
+                                if *rc >= 1.0 {
+                                    *rc -= 1.0;
+                                    let mut forward = bytes.clone();
+                                    forward[0] = KIND_STATE;
+                                    let targets: Vec<(PeerId, SocketAddr)> =
+                                        link.peers.iter().map(|(i, a)| (*i, *a)).collect();
+                                    for (id, addr) in targets {
+                                        if id != state.id {
+                                            let _ = link.socket.send_to(addr, &forward);
+                                            n += 1;
+                                            if n as usize >= MAX_RELAY_FANOUT {
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                                 accepted += 1;
                                 relayed += n as u64;
                                 if n > 0 {
-                                    println!("[bot {label}] ↪ RELAY de {} recopié à {n} pairs (amplification ×{n}).", state.id.short());
+                                    println!("[bot {label}] ↪ RELAY de {} recopié à {n} pairs (≤ fanout {MAX_RELAY_FANOUT}).", state.id.short());
                                 }
                             }
                         }
