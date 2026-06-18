@@ -61,20 +61,27 @@ BOTS="${1:-50}"
 ATTAQUANTS="${2:-5}"
 SECONDES="${3:-20}"
 
+# File netem : nombre max de paquets que la qdisc retient. Le DÉFAUT de `tc netem`
+# (1000) plafonne le débit à ~limit/délai — ex. 1000/0,125 s ≈ 8000 paq/s à 125 ms.
+# Ce n'est PAS une limite du jeu mais du HARNAIS (découvert au ch. 7.3 : sans ça, le
+# profil « mauvais » faussait la mesure du débit). On la met très grande pour que SEULS
+# latence / jitter / perte / ré-ordonnancement façonnent le trafic, comme un vrai lien.
+NETEM_LIMIT=100000
+
 # Les délais ci-dessous sont des DEMI-pings (ping cible ÷ 2), à cause de l'effet
 # « double traversée » de `lo` décrit en tête de fichier.
 case "$PROFIL" in
     bon)
         PING=30
-        NETEM_ARGS=(delay 15ms 2ms)
+        NETEM_ARGS=(limit "$NETEM_LIMIT" delay 15ms 2ms)
         ;;
     moyen)
         PING=120
-        NETEM_ARGS=(delay 60ms 10ms distribution normal loss 2%)
+        NETEM_ARGS=(limit "$NETEM_LIMIT" delay 60ms 10ms distribution normal loss 2%)
         ;;
     mauvais)
         PING=250
-        NETEM_ARGS=(delay 125ms 25ms distribution normal loss 5% reorder 25% 50%)
+        NETEM_ARGS=(limit "$NETEM_LIMIT" delay 125ms 25ms distribution normal loss 5% reorder 25% 50%)
         ;;
     *)
         echo "Profil inconnu : « $PROFIL » (attendu : bon | moyen | mauvais)" >&2
