@@ -12,12 +12,21 @@ use super::state::{
 };
 use crate::net::control::decode_welcome;
 use crate::net::link::NetLink;
-use crate::net::message::{decode_verified, PlayerState};
-use crate::net::orb::{apply_incoming, decode_orb, Orb};
+use crate::net::message::{decode_canonical, sig_ok, PlayerState};
+use crate::net::orb::{apply_incoming, decode_orb, orb_sig_ok, Orb, OrbApply, OrbWire};
 use crate::net::punch::{decode_punch, Holes};
 use crate::net::wire::{kind, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION};
 use bevy::prelude::*;
 use std::collections::VecDeque;
+
+/// Jetons rechargés par seconde et par adresse (rate-limit). On attend ~45 paquets/s
+/// d'un pair honnête (état 20 Hz + orbe 20 Hz + extras) : 150 laisse de la marge.
+const BUCKET_RATE: f32 = 150.0;
+/// Réserve maximale de jetons (tolère une courte rafale sans pénaliser un pair honnête).
+const BUCKET_CAP: f32 = 300.0;
+/// Plafond d'avatars distants affichés (anti-DoS : un attaquant ne peut pas nous
+/// faire créer 255 avatars en variant l'id). Large pour un voisinage AoI normal.
+const MAX_AVATARS: usize = 64;
 
 pub fn net_receive(
     time: Res<Time>,
@@ -29,12 +38,34 @@ pub fn net_receive(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut warned_version: Local<bool>,
+    mut buckets: Local<std::collections::HashMap<std::net::SocketAddr, f32>>,
+    mut flood_warned: Local<bool>,
 ) {
     let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+
+    // RATE-LIMIT (chap. 5.5) : on recharge le « seau à jetons » de chaque adresse
+    // (BUCKET_RATE jetons/s, plafonné à BUCKET_CAP). Chaque paquet reçu coûte 1 jeton.
+    // Une adresse qui inonde épuise son seau → ses paquets en trop sont jetés, AVANT
+    // même d'être analysés : un attaquant ne peut plus saturer le CPU à 10 000 Hz.
+    for credit in buckets.values_mut() {
+        *credit = (*credit + dt * BUCKET_RATE).min(BUCKET_CAP);
+    }
 
     // On vide la prise d'un coup (le Vec est à nous : on peut ensuite modifier `link`).
     let inbox = link.socket.poll();
-    for (_from, bytes) in inbox {
+    for (from, bytes) in inbox {
+        // Débit : ce paquet a-t-il un jeton ? Sinon, c'est une inondation → on jette.
+        let credit = buckets.entry(from).or_insert(BUCKET_CAP);
+        if *credit < 1.0 {
+            if !*flood_warned {
+                *flood_warned = true;
+                eprintln!("🛡 Inondation détectée depuis {from} : paquets en excès ignorés.");
+            }
+            continue;
+        }
+        *credit -= 1.0;
+
         // GARDE DE VERSION : tout paquet a [type, version] en tête. S'il vient d'un
         // binaire d'une AUTRE version, on le rejette en bloc — et on le signale UNE
         // fois, pour rendre le piège visible (au lieu du « bonhomme invisible »
@@ -79,42 +110,64 @@ pub fn net_receive(
             //     quelle (octets verbatim), juste rebasculée en KIND_STATE. On ne
             //     ré-encode SURTOUT pas : ainsi on ne peut pas altérer son état (le
             //     sceau le prouve à ses voisins). Porteur d'octets, jamais faussaire.
-            Some(KIND_RELAY) => {
-                if let Some(state) = verify_packet(&bytes, &link) {
-                    // 1) on RECOPIE l'enveloppe scellée à nos voisins (sauf l'auteur),
-                    //    rebasculée en KIND_STATE (la forme que W a signée).
-                    let mut forward = bytes.clone();
-                    forward[0] = KIND_STATE;
-                    for (id, addr) in &link.peers {
-                        if *id != state.id {
-                            let _ = link.socket.send_to(*addr, &forward);
+            Some(KIND_RELAY) => match check_packet(&bytes, &link) {
+                Checked::Good(state) => {
+                    // muet, ou rejeu (seq périmé) → on jette en silence. Pas de strike
+                    // sur le rejeu : un tiers pourrait rejouer un vieux paquet VALIDE de
+                    // la victime → ce serait, là encore, l'accuser à tort.
+                    if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
+                        // 1) on RECOPIE l'enveloppe scellée à nos voisins (sauf l'auteur),
+                        //    rebasculée en KIND_STATE (la forme que W a signée).
+                        let mut forward = bytes.clone();
+                        forward[0] = KIND_STATE;
+                        for (id, addr) in &link.peers {
+                            if *id != state.id {
+                                let _ = link.socket.send_to(*addr, &forward);
+                            }
+                        }
+                        // 2) on l'affiche AUSSI chez nous : le parent voit son protégé.
+                        ingest_state(
+                            state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                            &mut meshes, &mut materials,
+                        );
+                    }
+                }
+                Checked::Faulty(id) => link.add_strike(id, "relais : état signé impossible (NaN)"),
+                Checked::Unknown => {}
+            },
+            // --- État de l'orbe : seul le maître l'émet, et il le SIGNE (chap. 5.3).
+            //     On vérifie le sceau avec la clé du maître revendiqué, puis on
+            //     applique si ça SUPPLANTE notre version (autorité) ET si le saut de
+            //     version reste plausible (anti-vol / anti-gel à version=65535). -----
+            Some(KIND_ORB) => match check_orb(&bytes, &link) {
+                OrbChecked::Good(w) => {
+                    let owner = w.owner;
+                    if !link.is_muted(owner) {
+                        // L'autorité + la borne de version vivent dans `apply_incoming` ;
+                        // un saut aberrant (vol/gel) en revient comme une faute.
+                        if let OrbApply::Implausible = apply_incoming(&mut orb, w, now) {
+                            link.add_strike(owner, "orbe : saut de version aberrant");
                         }
                     }
-                    // 2) on l'affiche AUSSI chez nous : le parent voit son protégé.
-                    ingest_state(
-                        state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                        &mut meshes, &mut materials,
-                    );
                 }
-            }
-            // --- État de l'orbe : seul le maître l'émet. On l'accepte si elle
-            //     SUPPLANTE notre version (cf. règle d'autorité dans `orb`). -------
-            //     (Signature de l'orbe : chapitre 5.3, avec les Shields.) ----------
-            Some(KIND_ORB) => {
-                if let Some(w) = decode_orb(&bytes) {
-                    apply_incoming(&mut orb, w, now);
+                OrbChecked::Faulty(id) => link.add_strike(id, "orbe : état signé impossible (NaN)"),
+                OrbChecked::Unknown => {}
+            },
+            // --- État d'un pair : sceau + anti-rejeu + réputation, puis on le range.
+            Some(KIND_STATE) => match check_packet(&bytes, &link) {
+                Checked::Good(state) => {
+                    // muet ou rejeu → on jette en silence (pas de strike sur le rejeu :
+                    // un tiers pourrait rejouer un paquet valide de la victime → framing).
+                    if !link.is_muted(state.id) && link.accept_seq(state.id, state.seq) {
+                        ingest_state(
+                            state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
+                            &mut meshes, &mut materials,
+                        );
+                    }
                 }
-            }
-            // --- État d'un pair : on VÉRIFIE son sceau, puis on le range. Un paquet
-            //     non signé / forgé / dont on n'a pas encore la clé est ignoré. -----
-            Some(KIND_STATE) => {
-                if let Some(state) = verify_packet(&bytes, &link) {
-                    ingest_state(
-                        state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                        &mut meshes, &mut materials,
-                    );
-                }
-            }
+                Checked::Faulty(id) => link.add_strike(id, "état signé impossible (NaN)"),
+                Checked::Unknown => {}
+            },
             _ => {}
         }
     }
@@ -134,17 +187,61 @@ pub fn net_receive(
     });
 }
 
-/// Vérifie le sceau d'un paquet d'état (direct ou relayé) avec la clé publique de
-/// l'émetteur revendiqué (son id est à l'octet 2). Renvoie `None` si :
-///   - on n'a pas ENCORE sa clé (annuaire du rendez-vous en retard) → ignoré en silence ;
-///   - le sceau ne colle PAS (forgé, altéré, ou mauvaise identité) → jeté.
-/// C'est ICI que meurt l'usurpation d'identité : un paquet « id = 3 » qui n'est pas
-/// signé par la clé privée de 3 est refusé — impossible de se faire passer pour autrui.
-/// (Chapitre 5.4 : compter les sceaux invalides par pair = la graine de la réputation.)
-fn verify_packet(bytes: &[u8], link: &NetLink) -> Option<PlayerState> {
-    let claimed_id = *bytes.get(2)?;
-    let pubkey = link.pubkeys.get(&claimed_id)?;
-    decode_verified(bytes, pubkey)
+/// Résultat de la vérification d'un paquet d'état. On sépare TROIS cas, et c'est
+/// volontaire pour la réputation :
+///   - `Good`    : sceau valide + contenu correct → on traite ;
+///   - `Faulty`  : sceau VALIDE mais contenu impossible (ex. NaN) → faute ATTRIBUABLE
+///                 (seul le détenteur de la clé a pu signer ça) → on inscrit un strike ;
+///   - `Unknown` : sceau invalide, ou clé pas encore connue → on JETTE sans accuser.
+/// Ce dernier point est capital : frapper l'id revendiqué sur un sceau invalide
+/// permettrait à un attaquant de FAIRE ACCUSER sa victime (forger « id=victime »
+/// pourri pour la faire bannir). On n'accuse donc JAMAIS sur une signature invalide.
+enum Checked {
+    Good(PlayerState),
+    Faulty(u8),
+    Unknown,
+}
+
+/// Vérifie le sceau d'un paquet d'état (direct ou relayé). L'id revendiqué est à
+/// l'octet 2. C'est ICI que meurt l'usurpation : un paquet « id = 3 » qui n'est pas
+/// signé par la clé privée de 3 a un sceau invalide → jeté (sans accuser le vrai 3).
+fn check_packet(bytes: &[u8], link: &NetLink) -> Checked {
+    let Some(&claimed_id) = bytes.get(2) else {
+        return Checked::Unknown;
+    };
+    let Some(pubkey) = link.pubkeys.get(&claimed_id) else {
+        return Checked::Unknown; // annuaire en retard : on n'a pas (encore) sa clé
+    };
+    if !sig_ok(bytes, pubkey) {
+        return Checked::Unknown; // sceau invalide → non attribuable → on jette sans accuser
+    }
+    match decode_canonical(bytes) {
+        Some(state) => Checked::Good(state),
+        None => Checked::Faulty(claimed_id), // signé MAIS contenu impossible → faute
+    }
+}
+
+/// Pendant pour l'orbe : l'id du maître revendiqué est aussi à l'octet 2.
+enum OrbChecked {
+    Good(OrbWire),
+    Faulty(u8),
+    Unknown,
+}
+
+fn check_orb(bytes: &[u8], link: &NetLink) -> OrbChecked {
+    let Some(&owner) = bytes.get(2) else {
+        return OrbChecked::Unknown;
+    };
+    let Some(pubkey) = link.pubkeys.get(&owner) else {
+        return OrbChecked::Unknown;
+    };
+    if !orb_sig_ok(bytes, pubkey) {
+        return OrbChecked::Unknown; // sceau invalide → jeté sans accuser
+    }
+    match decode_orb(bytes) {
+        Some(w) => OrbChecked::Good(w),
+        None => OrbChecked::Faulty(owner),
+    }
 }
 
 /// Range un état reçu (direct ou relayé) : marque le trou ouvert, empile
@@ -184,6 +281,12 @@ fn ingest_state(
             player.buffer.pop_front();
         }
     } else {
+        // Plafond anti-DoS : on refuse de créer un avatar de plus au-delà de la
+        // limite (un attaquant ne peut pas nous noyer sous 255 avatars en variant
+        // l'id). Les avatars déjà connus continuent d'être mis à jour normalement.
+        if avatars.map.len() >= MAX_AVATARS {
+            return;
+        }
         // Premier paquet de ce joueur : on crée son avatar, de SA couleur.
         let parts = spawn_avatar(commands, meshes, materials, &state);
         let mut buffer = VecDeque::new();

@@ -113,6 +113,7 @@ src/
     ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
     ├── skin.rs          la couleur de skin aléatoire
     ├── demo.rs          le mode texte net-demo (observer les paquets)
+    ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5
     ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
     ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
     └── netcode/         LE RATTRAPAGE DE LATENCE
@@ -131,15 +132,16 @@ src/
 le paquet **et le signale** au lieu de le lire de travers — fini le « bonhomme
 invisible » de deux binaires désynchronisés. Voir `net/wire.rs`.
 
-Depuis le chapitre 5.1, tout paquet d'état est **signé** : on émet le corps suivi
-d'un **sceau Ed25519 de 64 octets** (état signé = 48 + 64 = **112 octets**). Le
+Depuis le chapitre 5, tout paquet d'état est **signé** : on émet le corps suivi
+d'un **sceau Ed25519 de 64 octets** (état signé = 56 + 64 = **120 octets**). Le
 récepteur le **vérifie** avec la clé publique de l'émetteur (reçue via le
 rendez-vous) avant de l'accepter. Le corps lui-même reste :
 
-Un paquet de joueur fait **48 octets** : `type` (1) + `version` (1) + `id` (1) +
-`x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1, l'id de
-notre tuteur si on est sous tutelle, sinon 0). Voir `net/message.rs`. Un paquet
-d'orbe fait **41 octets** : `type` + `version` + `owner` + `version d'orbe` +
+Un paquet de joueur fait **56 octets** : `type` (1) + `version` (1) + `id` (1) +
+`x,y,z` + `vx,vy,vz` + `yaw,pitch` + `r,g,b` (11 × 4 octets) + `parent` (1) +
+`seq` (8, compteur anti-rejeu). Voir `net/message.rs`. Un paquet d'orbe **signé**
+fait **105 octets** (corps 41 + sceau 64). Le corps de **41 octets** :
+`type` + `version` + `owner` + `version d'orbe` +
 position, vitesse et couleur. Voir `net/orb.rs`.
 
 **Convention « fichier inactif »** : un fichier qui n'est plus utilisé est
@@ -261,12 +263,26 @@ anti-triche).
         verbatim, il ne peut plus modifier l'état de son protégé). La crypto vit
         dans un **seul** fichier (`net/crypto.rs`) : la seule « boîte noire »
         assumée du projet — on ne code JAMAIS sa propre crypto.
-      - [ ] **5.2 — Anti-rejeu** : compteur monotone dans la signature (empêche de
-        rejouer un vieux paquet).
-      - [ ] **5.3 — Orbe signée + Shields** : signer le transfert d'orbe et le faire
-        **témoigner** (ferme le vol à distance et le gel par `version = 65535`).
-      - [ ] **5.4 — Réputation** : compter les sceaux invalides par pair → **EigenTrust**.
-      - [ ] **5.5 — Sybil & NAT symétrique** : coût d'entrée, rate-limit, relais TURN.
+      - [x] **5.2 — Anti-rejeu.** Compteur `seq` monotone dans le corps signé ; on
+        refuse tout paquet de `seq` ≤ au dernier vu d'un pair → un vieux paquet
+        rejoué ne peut plus rembobiner un joueur.
+      - [x] **5.3 — Orbe signée + Shield local.** Le maître **signe** l'orbe (corps
+        41 o + sceau 64 o = 105 o) → plus de vol à distance. Et on **borne le saut de
+        version** (≤ 16) : un bond vers `65535` pour verrouiller l'orbe à vie est
+        refusé *et* compté comme faute. Chaque nœud est ainsi le « Shield » de ce
+        qu'il observe. *(MVP : le quorum BFT inter-nœuds — accusations signées
+        partagées — reste l'approfondissement.)*
+      - [x] **5.4 — Réputation locale.** Compteur de fautes par pair (orbe trichée,
+        état signé impossible) → **mise en sourdine** au-delà d'un seuil. Règle clé
+        anti-*framing* : on n'accuse JAMAIS sur une signature invalide (non
+        attribuable), seulement sur un paquet **valablement signé mais trichant**.
+        *(MVP : l'agrégation décentralisée des réputations — EigenTrust — reste à venir.)*
+      - [x] **5.5 — Rate-limit & plafond.** « Seau à jetons » par adresse (jette
+        l'excès d'une inondation) + plafond d'avatars distants (anti-DoS). *(MVP :
+        coût d'entrée anti-Sybil et relais TURN pour NAT symétrique restent à venir.)*
+      - [x] **Harnais adversarial** : `cargo run -- attack <forge|replay|flood|orb-steal|orb-freeze>`
+        — un VRAI programme attaquant, sur de vraies sockets, qui prouve la robustesse.
+        + 22 tests unitaires adversariaux (sceau forgé, altéré, rejeu, saut de version…).
 - [ ] **Chapitre 6 — Voix spatiale**
       Chat vocal P2P avec priorité au volume (*loudness priority*).
 

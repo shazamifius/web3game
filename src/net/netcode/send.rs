@@ -19,6 +19,7 @@ pub fn net_send(
     mut hello_acc: Local<f32>,
     mut last_pos: Local<Option<Vec3>>,
     mut credits: Local<HashMap<u8, f32>>,
+    mut seq: Local<u64>, // compteur anti-rejeu : +1 à chaque état émis (chap. 5.2)
     link: Res<NetLink>,
     avatars: Res<RemoteAvatars>,
     holes: Res<Holes>,
@@ -88,6 +89,11 @@ pub fn net_send(
     };
     let parent_id = parent.map(|(id, _)| *id).unwrap_or(0);
 
+    // Un numéro de séquence STRICTEMENT croissant par paquet : le récepteur refusera
+    // tout paquet de `seq` ≤ au dernier vu de notre part → un vieux paquet rejoué ne
+    // peut plus nous rembobiner (anti-rejeu, chap. 5.2).
+    *seq += 1;
+
     let me = PlayerState {
         id: my_id,
         x: pos.x,
@@ -102,6 +108,7 @@ pub fn net_send(
         g,
         b,
         parent: parent_id,
+        seq: *seq,
     };
     // MODE FAIBLE UPLOAD : on n'émet PAS à tous les pairs. On envoie une seule fois
     // notre état (RELAY) au parent choisi plus haut, qui le recopiera à nos voisins

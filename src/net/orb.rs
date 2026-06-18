@@ -19,6 +19,7 @@
 //! Règle d'émission : SEUL le maître émet. Règle de réception : on accepte l'état
 //! entrant s'il SUPPLANTE le nôtre (version plus haute, ou égale mais id plus petit).
 
+use super::crypto::{verify, Identity, PUBKEY_LEN, SIG_LEN};
 use super::link::NetLink;
 use super::punch::Holes;
 use super::wire::{KIND_ORB, PROTO_VERSION};
@@ -44,6 +45,13 @@ const ORB_SEND_HZ: f32 = 20.0;
 const MASTER_TIMEOUT: f32 = 2.0;
 /// Couleur de l'orbe tant que personne ne l'a touchée (blanc bleuté néon).
 const NEUTRAL_COLOR: (f32, f32, f32) = (0.85, 0.85, 1.0);
+/// Saut de version maximal toléré entre deux états d'orbe acceptés (chap. 5.3).
+/// L'orbe est diffusée à 20 Hz à tous les pairs joignables : on voit donc presque
+/// tous les transferts (+1 chacun). Un saut bien plus grand (ex. vers 65535 pour
+/// VERROUILLER l'orbe à vie) est ABERRANT → on le refuse et on inscrit une faute.
+/// 16 laisse une marge confortable pour quelques transferts manqués, sans rien
+/// laisser passer de l'attaque (qui saute de ~65000).
+const MAX_ORB_VERSION_JUMP: u16 = 16;
 
 /// Le paquet « état de l'orbe » tel qu'il voyage sur le réseau (avant/après octets).
 pub(crate) struct OrbWire {
@@ -108,6 +116,48 @@ pub(crate) fn decode_orb(buf: &[u8]) -> Option<OrbWire> {
         return None;
     }
     Some(OrbWire { owner, version, x, y, z, vx, vy, vz, r, g, b })
+}
+
+/// Taille d'un état d'orbe SIGNÉ : corps (41 o) + sceau Ed25519 (64 o) = 105.
+pub(crate) const SIGNED_ORB_SIZE: usize = ORB_SIZE + SIG_LEN;
+
+/// Scelle l'état de l'orbe : le maître SIGNE le corps avec sa clé privée. Personne
+/// ne peut plus se proclamer maître à sa place (chap. 5.3).
+pub(crate) fn encode_orb_signed(o: &OrbWire, identity: &Identity) -> [u8; SIGNED_ORB_SIZE] {
+    let body = encode_orb(o);
+    let sig = identity.sign(&body);
+    let mut out = [0u8; SIGNED_ORB_SIZE];
+    out[..ORB_SIZE].copy_from_slice(&body);
+    out[ORB_SIZE..].copy_from_slice(&sig);
+    out
+}
+
+/// Le sceau d'un état d'orbe est-il valide pour cette clé ? (séparé du décodage,
+/// pour n'accuser que l'ATTRIBUABLE : signé mais trichant ≠ simple sceau bidon.)
+pub(crate) fn orb_sig_ok(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> bool {
+    if buf.len() < SIGNED_ORB_SIZE {
+        return false;
+    }
+    let mut sig = [0u8; SIG_LEN];
+    sig.copy_from_slice(&buf[ORB_SIZE..SIGNED_ORB_SIZE]);
+    verify(&buf[..ORB_SIZE], &sig, pubkey)
+}
+
+/// Vérifie le sceau PUIS décode (combo pratique pour les tests ; la réception sépare
+/// `orb_sig_ok` et `decode_orb`). `None` si le sceau ne colle pas OU corps invalide.
+#[cfg(test)]
+pub(crate) fn decode_orb_verified(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> Option<OrbWire> {
+    if !orb_sig_ok(buf, pubkey) {
+        return None;
+    }
+    decode_orb(buf)
+}
+
+/// Verdict de l'application d'un état d'orbe reçu (pour la réputation).
+pub(crate) enum OrbApply {
+    Applied,     // accepté : il supplante notre état
+    Ignored,     // ignoré : ne supplante pas (plus ancien) — bénin
+    Implausible, // refusé : saut de version aberrant (tentative de vol/gel) → faute
 }
 
 /// L'état logique de l'orbe, partagé par tout le client (une seule par monde).
@@ -303,19 +353,23 @@ pub fn orb_send(
     }
     *acc = 0.0;
 
-    let bytes = encode_orb(&OrbWire {
-        owner: my_id,
-        version: orb.version,
-        x: orb.pos.x,
-        y: orb.pos.y,
-        z: orb.pos.z,
-        vx: orb.vel.x,
-        vy: orb.vel.y,
-        vz: orb.vel.z,
-        r: orb.color.0,
-        g: orb.color.1,
-        b: orb.color.2,
-    });
+    // On SCELLE l'état de l'orbe : seul nous (clé privée) pouvons signer ce maître.
+    let bytes = encode_orb_signed(
+        &OrbWire {
+            owner: my_id,
+            version: orb.version,
+            x: orb.pos.x,
+            y: orb.pos.y,
+            z: orb.pos.z,
+            vx: orb.vel.x,
+            vy: orb.vel.y,
+            vz: orb.vel.z,
+            r: orb.color.0,
+            g: orb.color.1,
+            b: orb.color.2,
+        },
+        &link.identity,
+    );
 
     for (id, addr) in &link.peers {
         if holes.map.get(id).map_or(false, |h| h.open) {
@@ -328,25 +382,35 @@ pub fn orb_send(
 /// le seul à vider la prise UDP). On n'écrase notre état QUE s'il est supplanté.
 /// `now` sert à dater ce battement : c'est lui qui prouve que le maître est vivant
 /// (cf. `orb_migrate`).
-pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) {
-    if supersedes(w.version, w.owner, orb.version, orb.owner) {
-        // Trace : on ne log QUE lorsque le maître change vraiment (pas à chaque
-        // battement du maître courant). Avec les logs de `orb_grab` (frappe) et
-        // `orb_migrate` (reprise), la console explique alors CHAQUE changement de
-        // couleur : frappe / migration / adoption d'un maître distant.
-        if orb.owner != Some(w.owner) {
-            println!(
-                "Orbe : j'adopte le maître {} (v{}) reçu du réseau.",
-                w.owner, w.version
-            );
-        }
-        orb.owner = Some(w.owner);
-        orb.version = w.version;
-        orb.pos = Vec3::new(w.x, w.y, w.z);
-        orb.vel = Vec3::new(w.vx, w.vy, w.vz);
-        orb.color = (w.r, w.g, w.b);
-        orb.last_heard = now; // le maître vient de se manifester : il est vivant
+pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) -> OrbApply {
+    if !supersedes(w.version, w.owner, orb.version, orb.owner) {
+        return OrbApply::Ignored; // état plus ancien : on garde le nôtre (bénin)
     }
+    // SHIELD (chap. 5.3) : même signé, on refuse un SAUT de version aberrant. Un
+    // maître honnête incrémente de +1 par transfert, et on les voit presque tous
+    // (orbe à 20 Hz). Un bond vers 65535 (pour verrouiller l'orbe à vie) ou très
+    // loin devant est impossible légitimement → faute. `wrapping_sub` gère le
+    // débordement naturel 65535→0 d'une migration (distance 1, plausible).
+    if orb.owner.is_some() {
+        let jump = w.version.wrapping_sub(orb.version);
+        if jump > MAX_ORB_VERSION_JUMP {
+            return OrbApply::Implausible;
+        }
+    }
+    // Trace : on ne log QUE lorsque le maître change vraiment (pas à chaque
+    // battement du maître courant). Avec les logs de `orb_grab` (frappe) et
+    // `orb_migrate` (reprise), la console explique alors CHAQUE changement de
+    // couleur : frappe / migration / adoption d'un maître distant.
+    if orb.owner != Some(w.owner) {
+        println!("Orbe : j'adopte le maître {} (v{}) reçu du réseau.", w.owner, w.version);
+    }
+    orb.owner = Some(w.owner);
+    orb.version = w.version;
+    orb.pos = Vec3::new(w.x, w.y, w.z);
+    orb.vel = Vec3::new(w.vx, w.vy, w.vz);
+    orb.color = (w.r, w.g, w.b);
+    orb.last_heard = now; // le maître vient de se manifester : il est vivant
+    OrbApply::Applied
 }
 
 /// UPDATE (client) : la MIGRATION D'HÔTE de l'orbe — le cœur du chapitre 4.
@@ -462,5 +526,57 @@ mod tests {
         let mut bytes = encode_orb(&w);
         bytes[1] = PROTO_VERSION.wrapping_add(1);
         assert!(decode_orb(&bytes).is_none());
+    }
+
+    fn orbe_exemple(owner: u8, version: u16) -> OrbWire {
+        OrbWire {
+            owner, version,
+            x: 0.0, y: 1.5, z: 0.0, vx: 1.0, vy: 0.0, vz: 0.0,
+            r: 1.0, g: 0.0, b: 0.0,
+        }
+    }
+
+    /// Une orbe SIGNÉE se vérifie avec la bonne clé ; un autre signataire est rejeté.
+    #[test]
+    fn orbe_signee_se_verifie() {
+        let maitre = Identity::generate();
+        let signed = encode_orb_signed(&orbe_exemple(3, 7), &maitre);
+        assert!(decode_orb_verified(&signed, &maitre.public()).is_some());
+        let imposteur = Identity::generate();
+        assert!(decode_orb_verified(&signed, &imposteur.public()).is_none());
+    }
+
+    /// Une `Orb` minimale pour tester l'autorité (sans Bevy/3D).
+    fn orb_test(owner: Option<u8>, version: u16) -> Orb {
+        Orb {
+            pos: Vec3::ZERO, vel: Vec3::ZERO, owner, version,
+            color: NEUTRAL_COLOR, mat: Handle::default(),
+            shown: None, last_heard: 0.0,
+        }
+    }
+
+    /// Un transfert normal (+1) est appliqué ; un SAUT vers 65535 (verrou) est refusé.
+    #[test]
+    fn apply_borne_le_saut_de_version() {
+        // +1 depuis la version 5 → accepté.
+        let mut orb = orb_test(Some(2), 5);
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(9, 6), 1.0), OrbApply::Applied));
+
+        // Saut vers 65535 (tentative de verrouiller l'orbe à vie) → refusé comme faute.
+        let mut orb = orb_test(Some(2), 5);
+        assert!(matches!(
+            apply_incoming(&mut orb, orbe_exemple(9, 65535), 1.0),
+            OrbApply::Implausible
+        ));
+        // … et l'état n'a PAS bougé : l'attaque n'a rien obtenu.
+        assert_eq!(orb.owner, Some(2));
+        assert_eq!(orb.version, 5);
+    }
+
+    /// Un état plus ancien est simplement ignoré (bénin, pas une faute).
+    #[test]
+    fn apply_ignore_un_etat_plus_ancien() {
+        let mut orb = orb_test(Some(2), 10);
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(9, 4), 1.0), OrbApply::Ignored));
     }
 }

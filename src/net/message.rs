@@ -27,12 +27,13 @@ pub struct PlayerState {
     pub g: f32,     // couleur du skin : vert
     pub b: f32,     // couleur du skin : bleu
     pub parent: u8, // rôle : id de notre tuteur (relais) si on est sous tutelle, sinon 0
+    pub seq: u64,   // compteur monotone ANTI-REJEU : +1 à chaque paquet émis (chap. 5.2)
 }
 
 // Taille exacte d'un paquet d'état, calculée à la main pour bien comprendre :
 //   1 (type) + 1 (version) + 1 (id) + 11 nombres f32 de 4 octets
-//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) + 1 (parent) = 3 + 44 + 1 = 48 octets.
-const STATE_SIZE: usize = 3 + 4 * 11 + 1;
+//   (x,y,z, vx,vy,vz, yaw,pitch, r,g,b) + 1 (parent) + 8 (seq u64) = 3 + 44 + 1 + 8 = 56.
+const STATE_SIZE: usize = 3 + 4 * 11 + 1 + 8;
 
 /// « Sérialiser » : transformer la fiche `PlayerState` en octets bruts à envoyer.
 /// `to_le_bytes` découpe chaque nombre en 4 octets (sens « little-endian »).
@@ -54,7 +55,8 @@ pub(crate) fn encode(p: &PlayerState) -> [u8; STATE_SIZE] {
     buf[35..39].copy_from_slice(&p.r.to_le_bytes());
     buf[39..43].copy_from_slice(&p.g.to_le_bytes());
     buf[43..47].copy_from_slice(&p.b.to_le_bytes());
-    buf[47] = p.parent; // rôle (tuteur) sur le tout dernier octet
+    buf[47] = p.parent; // rôle (tuteur)
+    buf[48..56].copy_from_slice(&p.seq.to_le_bytes()); // compteur anti-rejeu
     buf
 }
 
@@ -80,6 +82,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
     let g = f32::from_le_bytes(buf[39..43].try_into().ok()?);
     let b = f32::from_le_bytes(buf[43..47].try_into().ok()?);
     let parent = buf[47];
+    let seq = u64::from_le_bytes(buf[48..56].try_into().ok()?);
     // ON NE FAIT JAMAIS CONFIANCE AU RÉSEAU, suite : on rejette tout NaN/Inf. Un
     // seul flottant non fini corromprait DÉFINITIVEMENT le lissage (`smooth_damp`
     // garde un état interne qui reste NaN). Mieux vaut jeter le paquet entier.
@@ -89,7 +92,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<PlayerState> {
     {
         return None;
     }
-    Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent })
+    Some(PlayerState { id, x, y, z, vx, vy, vz, yaw, pitch, r, g, b, parent, seq })
 }
 
 // ----------------------------------------------------------------------------
@@ -123,28 +126,44 @@ pub(crate) fn mark_as_relay(signed: &mut [u8; SIGNED_STATE_SIZE]) {
     signed[0] = KIND_RELAY;
 }
 
-/// Vérifie le sceau d'un état signé avec la clé publique de l'émetteur, PUIS le
-/// décode. Renvoie `None` au moindre problème : trop court, signature qui ne colle
-/// pas (forgé ou altéré), ou corps invalide. Accepte les deux types en tête
-/// (`KIND_STATE` direct ou `KIND_RELAY` recopié) : on ramène à la forme canonique
-/// `KIND_STATE` — celle qui a été signée — avant de vérifier.
-pub(crate) fn decode_verified(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> Option<PlayerState> {
+/// Le sceau d'un paquet signé est-il valide pour cette clé publique ? On ramène
+/// d'abord le 1er octet à la forme canonique `KIND_STATE` (celle qui a été signée,
+/// que le paquet arrive en direct ou via un relais). Sépare la question « est-ce
+/// VRAIMENT cet émetteur ? » (sceau) de « le contenu est-il correct ? » (décodage) :
+/// c'est crucial pour la réputation — on n'accuse que ce qui est ATTRIBUABLE.
+pub(crate) fn sig_ok(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> bool {
     if buf.len() < SIGNED_STATE_SIZE {
-        return None;
+        return false;
     }
-    // Corps canonique : copie des 48 octets, 1er octet forcé à KIND_STATE (la forme
-    // qui a été signée, que le paquet arrive en direct ou via un relais).
     let mut body = [0u8; STATE_SIZE];
     body.copy_from_slice(&buf[..STATE_SIZE]);
     body[0] = KIND_STATE;
-
     let mut sig = [0u8; SIG_LEN];
     sig.copy_from_slice(&buf[STATE_SIZE..SIGNED_STATE_SIZE]);
+    verify(&body, &sig, pubkey)
+}
 
-    if !verify(&body, &sig, pubkey) {
-        return None; // sceau invalide : forgé, altéré, ou mauvaise identité
+/// Décode le corps d'un paquet signé (ramené en forme `KIND_STATE`), SANS revérifier
+/// le sceau — à n'appeler qu'après un `sig_ok` positif. Revalide type/version/finitude.
+pub(crate) fn decode_canonical(buf: &[u8]) -> Option<PlayerState> {
+    if buf.len() < STATE_SIZE {
+        return None;
     }
-    decode(&body) // re-valide type + version + finitude
+    let mut body = [0u8; STATE_SIZE];
+    body.copy_from_slice(&buf[..STATE_SIZE]);
+    body[0] = KIND_STATE;
+    decode(&body)
+}
+
+/// Vérifie le sceau PUIS décode (combo pratique, utilisé par les tests ; la
+/// réception, elle, sépare `sig_ok` et `decode_canonical` pour la réputation).
+/// `None` si le sceau ne colle pas OU si le corps est invalide.
+#[cfg(test)]
+pub(crate) fn decode_verified(buf: &[u8], pubkey: &[u8; PUBKEY_LEN]) -> Option<PlayerState> {
+    if !sig_ok(buf, pubkey) {
+        return None;
+    }
+    decode_canonical(buf)
 }
 
 #[cfg(test)]
@@ -161,11 +180,12 @@ mod tests {
             vx: -2.0, vy: 0.1, vz: 4.0,
             yaw: 1.2, pitch: -0.3,
             r: 0.8, g: 0.2, b: 1.1,
-            parent: 3,
+            parent: 3, seq: 99,
         };
         let d = decode(&encode(&p)).expect("doit se décoder");
         assert_eq!(d.id, p.id);
         assert_eq!(d.parent, p.parent);
+        assert_eq!(d.seq, 99);
         assert_eq!(d.x, p.x);
         assert_eq!(d.z, p.z);
         assert_eq!(d.vz, p.vz);
@@ -177,7 +197,7 @@ mod tests {
     fn version_differente_est_rejetee() {
         let p = PlayerState {
             id: 1, x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
-            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0,
+            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0, seq: 0,
         };
         let mut bytes = encode(&p);
         bytes[1] = PROTO_VERSION.wrapping_add(1); // on falsifie la version
@@ -189,7 +209,7 @@ mod tests {
     fn nan_est_rejete() {
         let mut p = PlayerState {
             id: 1, x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0,
-            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0,
+            yaw: 0.0, pitch: 0.0, r: 0.0, g: 0.0, b: 0.0, parent: 0, seq: 0,
         };
         p.x = f32::NAN;
         assert!(decode(&encode(&p)).is_none());
@@ -201,7 +221,7 @@ mod tests {
     fn etat_exemple() -> PlayerState {
         PlayerState {
             id: 5, x: 1.0, y: 0.7, z: -2.0, vx: 0.5, vy: 0.0, vz: -1.0,
-            yaw: 0.3, pitch: 0.1, r: 0.9, g: 0.4, b: 0.2, parent: 0,
+            yaw: 0.3, pitch: 0.1, r: 0.9, g: 0.4, b: 0.2, parent: 0, seq: 1,
         }
     }
 

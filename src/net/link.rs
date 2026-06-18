@@ -26,8 +26,19 @@ pub struct NetLink {
     /// permet de VÉRIFIER les signatures : un paquet d'un id dont on n'a pas la clé,
     /// ou dont le sceau ne colle pas, est rejeté.
     pub(crate) pubkeys: HashMap<u8, [u8; PUBKEY_LEN]>,
+    /// ANTI-REJEU (chap. 5.2) : dernier numéro de séquence accepté par pair. On
+    /// refuse tout paquet de `seq` ≤ : un vieux paquet rejoué ne passe plus.
+    pub(crate) last_seq: HashMap<u8, u64>,
+    /// RÉPUTATION (chap. 5.4) : nombre de « fautes » constatées par pair (sceau
+    /// invalide, rejeu, état impossible, inondation…). Au-delà de `MAX_STRIKES`,
+    /// le pair est mis en sourdine (« mute ») : on ignore tout ce qu'il envoie.
+    pub(crate) strikes: HashMap<u8, u32>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
+
+/// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
+/// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
+pub(crate) const MAX_STRIKES: u32 = 5;
 
 impl NetLink {
     /// Prépare le réseau d'un client : prise sur un port éphémère (choisi par
@@ -54,8 +65,75 @@ impl NetLink {
             world_hue: None,
             peers: HashMap::new(),
             pubkeys: HashMap::new(),
+            last_seq: HashMap::new(),
+            strikes: HashMap::new(),
             weak,
         })
+    }
+
+    /// Ce pair est-il en sourdine (trop de fautes) ? Si oui, on ignore ses paquets.
+    pub(crate) fn is_muted(&self, id: u8) -> bool {
+        self.strikes.get(&id).copied().unwrap_or(0) >= MAX_STRIKES
+    }
+
+    /// Inscrit une faute au compteur d'un pair et la journalise. Quand le seuil est
+    /// franchi, on l'annonce : le pair est désormais ignoré (banni localement).
+    pub(crate) fn add_strike(&mut self, id: u8, reason: &str) {
+        let n = self.strikes.entry(id).or_insert(0);
+        *n += 1;
+        if *n == MAX_STRIKES {
+            eprintln!("🛡 Pair {id} mis en SOURDINE après {n} fautes (dernière : {reason}).");
+        } else if *n < MAX_STRIKES {
+            eprintln!("🛡 Faute de {id} ({n}/{MAX_STRIKES}) : {reason}.");
+        }
+    }
+
+    /// ANTI-REJEU : accepte un `seq` seulement s'il est STRICTEMENT plus grand que le
+    /// dernier vu de ce pair (et le mémorise). Un rejeu (seq déjà vu ou plus ancien)
+    /// renvoie `false`. Le premier paquet d'un pair (aucun seq mémorisé) est accepté.
+    pub(crate) fn accept_seq(&mut self, id: u8, seq: u64) -> bool {
+        match self.last_seq.get(&id) {
+            Some(&last) if seq <= last => false, // rejeu ou paquet périmé
+            _ => {
+                self.last_seq.insert(id, seq);
+                true
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link_de_test() -> NetLink {
+        NetLink::new((1.0, 1.0, 1.0), false).expect("socket de test")
+    }
+
+    /// ANTI-REJEU : on accepte des seq croissants, on refuse tout rejeu / paquet périmé.
+    #[test]
+    fn accept_seq_refuse_les_rejeus() {
+        let mut link = link_de_test();
+        assert!(link.accept_seq(3, 1)); // premier paquet de 3 : accepté
+        assert!(link.accept_seq(3, 2)); // strictement croissant : accepté
+        assert!(!link.accept_seq(3, 2)); // même seq rejoué : refusé
+        assert!(!link.accept_seq(3, 1)); // seq plus ancien : refusé
+        assert!(link.accept_seq(3, 5)); // on saute en avant : accepté
+        // Un AUTRE pair a son propre compteur, indépendant.
+        assert!(link.accept_seq(4, 1));
+    }
+
+    /// RÉPUTATION : au bout de MAX_STRIKES fautes, le pair passe en sourdine.
+    #[test]
+    fn mute_apres_max_strikes() {
+        let mut link = link_de_test();
+        assert!(!link.is_muted(9));
+        for _ in 0..MAX_STRIKES {
+            link.add_strike(9, "test");
+        }
+        assert!(link.is_muted(9)); // banni localement
+        // Un pair sans faute reste audible.
+        assert!(!link.is_muted(10));
     }
 }
 

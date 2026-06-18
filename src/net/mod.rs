@@ -13,6 +13,8 @@
 //!   - `rendezvous` : le serveur d'annuaire qui présente les joueurs entre eux
 //!   - `skin`       : la couleur de skin aléatoire d'une session
 //!   - `demo`       : le mode texte `net-demo` (observer les paquets sans la 3D)
+//!   - `attack`     : un VRAI programme attaquant (`cargo run -- attack …`) qui prouve
+//!                    la robustesse en envoyant de vrais paquets malveillants (chap. 5)
 //!   - `link`       : `NetLink`, la ressource qui relie le réseau au jeu
 //!   - `netcode/`   : le rattrapage de latence (interpolation, prédiction,
 //!                    réconciliation, horloge adaptative)
@@ -23,6 +25,7 @@
 //!   Terminal 3 :  nix-shell --run "cargo run -- b"   (… et autant qu'on veut)
 
 mod aoi;
+mod attack;
 mod control;
 mod crypto;
 mod demo;
@@ -38,6 +41,7 @@ mod transport;
 mod wire;
 
 // L'API publique du module réseau, utilisée par le reste du jeu (main, player).
+pub use attack::run_attack;
 pub use demo::run_demo;
 pub use link::NetLink;
 pub use natdemo::run_nat_test;

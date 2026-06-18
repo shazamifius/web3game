@@ -34,6 +34,15 @@ fn main() {
         return;
     }
 
+    // `cargo run -- attack <type>`  lance le PROGRAMME ATTAQUANT (chapitre 5) : de
+    // vrais paquets malveillants sur de vraies sockets, pour prouver la robustesse.
+    // Types : forge | replay | flood | orb-steal | orb-freeze.
+    if mode == Some("attack") {
+        let kind = args.get(2).map(String::as_str).unwrap_or("forge");
+        net::run_attack(kind);
+        return;
+    }
+
     // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
     // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
     if mode == Some("nat-test") {
