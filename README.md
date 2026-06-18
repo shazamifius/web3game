@@ -178,9 +178,15 @@ anti-triche).
 >   partagée : accusations signées + quorum) ; **6.8** (simulation massive : 50 et
 >   300 bots + attaquants → ça tient, voisins plafonnés à 32, orbe intègre). Build
 >   vert, 35 tests, 0 warning. **CHAPITRE 6 TERMINÉ — les 10 trous fermés/bornés.**
-> - **À venir :** chapitre 7 (scalabilité réelle & adaptation au lien : de 0 à 2 Gb/s,
->   parent/répartition de puissance, TURN, AoI vision), puis chapitre 8 (voix spatiale).
->   Prochaine action conseillée : grosses campagnes de tests (attaques poussées + scale).
+> - **Décisions de direction prises** (détail dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)) :
+>   ① on chiffre tout ; ② preuve de travail anti-Sybil réglable ; ③ ordre normal
+>   7→8→9→10 ; ④ identité persistante (clé sauvée dans un fichier).
+> - **PROCHAINE ACTION = chapitre 7 (confrontation au réel)**, sous-étape **7.1** :
+>   écrire `tools/sim-netem.sh` (applique `tc netem` latence/perte sur `lo`, lance la
+>   simu, nettoie à la fin), puis mesurer que l'essaim tient avec une *vraie* mauvaise
+>   connexion. **Tout le plan post-chapitre-6 (chapitres 7→14 + les 21 doutes D1→D21)
+>   est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste ci-dessous n'est
+>   qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
@@ -424,18 +430,16 @@ anti-triche).
         joueur = un appareil réel), pas en surchargeant une seule. La simu valide la
         correction + la résistance aux attaques ; le passage planétaire = le chapitre
         suivant (adaptation au lien).
-- [ ] **Chapitre 7 — Scalabilité réelle & adaptation au lien** *(nouveau — pilier)*
-      Que **n'importe qui** joue, quel que soit son réseau : de **0 connexion** (via un
-      parent qui relaie tout pour lui) à **2 Gb/s** (fibre), chacun avec LA meilleure
-      expérience possible POUR SON LIEN. Pistes : débit/qualité adaptatifs (le budget
-      d'émission devient fonction du lien mesuré) ; le **système de parent** (chap. 4.1)
-      érigé en vrai pilier de **répartition de la puissance** (entraide, supernœuds élus
-      par upload+réputation) — avec le problème dur de l'**incitation** (anti free-riding,
-      façon donnant-donnant BitTorrent) ; relais TURN décentralisés + IPv6 pour les NAT
-      symétriques ; AoI par **vision** (foule dense = O(N²) local) avec paliers
-      focus/proche/foule-imposteur. C'est le grand chantier « échelle internationale ».
-- [ ] **Chapitre 8 — Voix spatiale**
-      Chat vocal P2P avec priorité au volume (*loudness priority*).
+- [ ] **Chapitres 7 → 14 — le grand chantier post-BÉTON.**
+      Découpage **détaillé dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** (avec les
+      21 doutes/risques qu'ils ferment) :
+      **7** confrontation au réel (`tc netem` : latence/perte/NAT — *prochaine étape*) ·
+      **8** inclusivité & adaptation au lien (de 0 à 2 Gb/s, parent/répartition de
+      puissance, anti free-riding) · **9** durcissement de la confiance (Sybil, éclipse,
+      rendez-vous décentralisé) · **10** identité persistante + chiffrement de tout ·
+      **11** autorité généralisée (au-delà de l'orbe) & ordre temporel · **12**
+      robustesse/longévité (éviction mémoire, TURN, IPv6) · **13** voix spatiale ·
+      **14** (plus tard) portabilité Unreal/Unity.
 
 ---
 

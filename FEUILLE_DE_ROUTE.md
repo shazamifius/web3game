@@ -18,6 +18,44 @@
 
 ---
 
+## 0. ▶️ POINT DE REPRISE (lis ça en premier, surtout si nouvelle session)
+
+**Où on en est :** le **chapitre 6 (refonte BÉTON) est TERMINÉ** — les 10 trous de
+l'audit fermés/bornés (0.0→6.8), **35 tests, 0 warning**, et **le jeu 3D réel
+fonctionne** (avatars + pseudos `0000…` + badge OWN BALLE visibles à l'écran). Tout
+est poussé sur GitHub (`shazamifius/web3game`, branche `main`).
+
+**Les 4 décisions de direction sont prises** (détail section G) : ① **on chiffre
+tout** (ch. 10) ; ② **PoW anti-Sybil réglable** (on durcit si les tests l'exigent) ;
+③ **ordre normal** 7→8→9→10 (pas de priorité forcée au 0-connexion) ; ④ **identité
+persistante = clé sauvée dans un fichier** (ch. 10).
+
+**La prochaine action concrète = commencer le CHAPITRE 7 (confrontation au réel).**
+Première sous-étape **7.1** : écrire `tools/sim-netem.sh` — un script qui applique
+`tc netem` (latence/jitter/perte) sur l'interface `lo`, lance la simulation
+(`cargo run --release -- sim <bots> <attaquants> <s>`), puis **retire proprement** le
+netem à la fin (même schéma que `tools/sim-cool.sh` avec un `trap`). Puis **7.2** :
+faire tourner la simu sous 3 profils (bon 30 ms / moyen 120 ms+2 % / mauvais
+250 ms+5 %+jitter) et MESURER (orbe intègre ? fausses migrations ? débit honnête
+stable ? rejets anti-rejeu dus au ré-ordonnancement ?). Puis **7.3** corriger ce que
+netem révèle (probable : l'anti-rejeu strict casse sur paquets re-ordonnés → fenêtre
+de tolérance). Détail complet : section D, chapitre 7.
+
+**Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
+uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
+**critique honnête d'ingénieur, jamais de flatterie** ; **toujours exprimer ses doutes** ;
+on **écrit le plan avant de coder** (cette phase de plan est faite — on peut coder le
+ch. 7) ; **petites étapes** (chacune compilée + testée + prouvée en headless/simu, puis
+commitée et écrite dans ce doc / le README) ; **toujours sauver sur GitHub** à chaque
+étape. La vérification se fait **sans GPU** via les bots/simu (le jeu 3D, c'est
+l'utilisateur qui le lance). Avant tout gros run de simu : `tools/sim-cool.sh` pousse
+les ventilos au max (PC tour ASUS — sinon BIOS Q-Fan « Full Speed »).
+
+**Comment lancer / tester :** voir le `README.md` (section « Comment lancer ») et les
+modes `rendezvous | a | b | bot <nom> | attack <type> | sim <bots> <attaquants> <s>`.
+
+---
+
 ## A. Les principes directeurs (la boussole)
 
 1. **Aucun serveur de jeu central.** Un rendez-vous d'annuaire est toléré, mais il ne
@@ -402,21 +440,22 @@ un labo réseau complet. C'est ça qui transforme nos tests « localhost » en v
 
 ---
 
-## G. Les décisions qui t'appartiennent (j'ai besoin de toi)
+## G. Décisions PRISES (juin 2026)
 
-Ces choix changent le plan — je ne les tranche pas tout seul :
+Ces choix ont été tranchés avec l'utilisateur. Ils orientent le plan :
 
-1. **Niveau de vie privée visé ?** Chiffrer tout (positions + voix) coûte un peu de
-   perf et de complexité. On vise « confidentialité forte » (chap. 10.2 prioritaire) ou
-   « ça viendra plus tard » ?
-2. **Jusqu'où pousser l'anti-Sybil ?** Une PoW très dure gêne les joueurs honnêtes au
-   lancement (plusieurs secondes de minage). Vouching social = plus complexe mais plus
-   doux. Tu préfères quelle philosophie ?
-3. **Le 0-connexion : priorité haute ou confort ?** 8.3 est emblématique mais lourd. On
-   le met tôt ou on consolide d'abord la base (7/9) ?
-4. **Persistance d'identité = un « compte ».** OK pour sauver une clé sur le disque
-   (donc un fichier à protéger), ou tu veux y réfléchir (ex. clé sur clé USB, mot de
-   passe) ?
+1. **Vie privée → ON CHIFFRE TOUT.** Direction ferme : positions + voix chiffrées.
+   Décidé par l'utilisateur (« en vrai il faudrait tout chiffrer »). Réalisé au
+   **chapitre 10.2** (X25519 par paire) — pas avant, la base passe d'abord.
+2. **Anti-Sybil → preuve de travail RÉGLABLE.** On garde la PoW, on rend sa difficulté
+   ajustable, et on ne l'augmente QUE si les tests montrent que les attaquants gagnent.
+   Le *vouching* social reste en réserve (chap. 9.1).
+3. **0-connexion → on suit l'ordre normal.** Pas de priorité forcée : chapitre 7
+   (mesurer) puis chapitre 8 (inclusivité, déjà priorité 2) ; le 0-connexion (8.3) vient
+   dans le 8, après ses briques de base.
+4. **Identité persistante → OUI, clé sauvée dans un fichier** (comme une clé SSH).
+   Simple d'abord ; protection par mot de passe plus tard, avec le chiffrement du
+   chapitre 10. Réalisé au **chapitre 10.1**.
 
 ---
 
