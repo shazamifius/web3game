@@ -8,7 +8,7 @@
 //!
 //! Lancement :  cargo run -- rendezvous
 
-use super::aoi::within_radius;
+use super::aoi::{dist2, keep_nearest, within_radius, MAX_NEIGHBORS};
 use super::control::{decode_hello, encode_welcome};
 use super::crypto::{PeerId, POW_BITS};
 use super::skin::random_hue;
@@ -68,15 +68,17 @@ pub fn run_rendezvous() {
                 }
             };
 
-            // Borne GROSSIÈRE de candidats : on ne garde que les joueurs dans un
-            // très grand rayon (ici ça revient à « tout le monde » dans une salle).
-            // Ce n'est PAS la règle de jeu : la vraie répartition (qui reçoit quel
-            // débit) se fait côté client par water-filling. Personne n'est exclu.
-            let roster: Vec<(PeerId, SocketAddr)> = clients
+            // VOISINAGE BORNÉ (chap. 6.6) : pré-filtre grossier par rayon, puis on ne
+            // garde que les MAX_NEIGHBORS pairs les PLUS PROCHES. C'est la borne
+            // d'échelle : le WELCOME ne déborde plus (trou n°2) et chacun ne parle qu'à
+            // ~K voisins → O(N·K) au lieu d'O(N²) (trou n°3). Le water-filling côté
+            // client répartit ensuite le débit entre ces voisins.
+            let cands: Vec<((PeerId, SocketAddr), f32)> = clients
                 .iter()
                 .filter(|(addr, info)| **addr != from && within_radius(info.pos, pos))
-                .map(|(addr, info)| (info.id, *addr))
+                .map(|(addr, info)| ((info.id, *addr), dist2(info.pos, pos)))
                 .collect();
+            let roster: Vec<(PeerId, SocketAddr)> = keep_nearest(cands, MAX_NEIGHBORS);
 
             if roster.len() != last_count {
                 println!("Joueur {} : {} a portee.", id.short(), roster.len());

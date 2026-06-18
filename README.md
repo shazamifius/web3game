@@ -165,19 +165,20 @@ anti-triche).
 
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
-> - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques « rouges ») ;
->   **6.1** (identité = clé) ; **6.2** (anti-Sybil : preuve de travail) ; **6.3**
->   (anti-téléport) ; **6.4** (preuve de contact orbe) ; **6.5** (DoS borné). Build
->   vert, 30 tests, 0 warning. **Les 8 trous « jouables » de l'audit sont fermés.**
-> - **À venir :** 6.6 (échelle : roster paginé, AoI bornée en nombre — lève les murs
->   restants n°2 et n°3), 6.7 (quorum BFT / réputation partagée), 6.8 (simu 55K).
+> - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques) ; **6.1** (identité
+>   = clé) ; **6.2** (anti-Sybil PoW) ; **6.3** (anti-téléport) ; **6.4** (contact orbe) ;
+>   **6.5** (DoS borné) ; **6.6** (voisinage borné, O(N·K)). Build vert, 31 tests, 0
+>   warning. **Les 10 trous de l'audit sont fermés ou bornés.**
+> - **À venir :** 6.7 (quorum BFT / réputation partagée entre nœuds), 6.8 (simu 55K +
+>   essaim d'attaquants). Plus loin : sharder le rendez-vous + relais TURN (échelle
+>   planétaire réelle). Puis chapitre 7 (voix spatiale).
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
 >   bots impriment un « ledger » (acceptés / rejetés / relayés / muets / orbe) qui
 >   rend chaque attaque visible — rouge (réussie) aujourd'hui, verte une fois fermée.
 > - **Les 10 trous de l'audit** (cible de fermeture entre parenthèses) : 1 plafond
->   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6)*, 3 maillage O(N²) *(6.6)*, 4 collision
+>   255 *(6.1 ✓)*, 2 WELCOME tronqué *(6.6 ✓)*, 3 maillage O(N²) *(6.6 ✓)*, 4 collision
 >   d'id *(6.1 ✓)*, 5 rendez-vous menteur *(6.1 ✓)*, 6 Sybil gratuit *(6.2 ✓)*, 7
 >   téléport/speed-hack *(6.3 ✓)*, 8 vol d'orbe lent *(6.4 ✓)*, 9 DoS spoofing/mémoire
 >   *(6.5 ✓)*, 10 amplification relais *(6.5 ✓)*.
@@ -377,9 +378,17 @@ anti-triche).
         victime). **Ce que ça ferme :** trous n°9 et n°10. *(Ce sont des BORNES,
         pas un accept/reject binaire ; l'usurpation d'adresse source elle-même n'est
         pas testable sur localhost. Consentement explicite du relais = 6.7.)*
-      - [ ] **6.6 — Passage à l'échelle.** Roster paginé / sharding spatial côté
-        rendez-vous, AoI qui borne le NOMBRE de voisins (pas seulement le débit),
-        WELCOME découpé. Lève le mur actuel (~52 pairs visibles, et O(N²)).
+      - [x] **6.6 — Passage à l'échelle : voisinage borné.** *(fait)* Le rendez-vous
+        ne renvoie plus TOUS les joueurs mais seulement les `MAX_NEIGHBORS` (= 32) les
+        plus PROCHES (`keep_nearest` trie par distance et tronque). **Ce que ça ferme :**
+        le WELCOME ne peut plus déborder le tampon (trou n°2), et chacun ne suit/parle
+        qu'à ≤ 32 voisins → **O(N·K) au lieu d'O(N²)** (trou n°3) : c'est LA borne qui
+        rend l'échelle possible (des milliers de petits voisinages de ~32, pas un
+        maillage géant). **Vérifié** : sélection des K plus proches testée unitairement ;
+        3 bots se voient tous (< 32). *(Limite assumée : le rendez-vous reste un point
+        unique — pour une vraie échelle planétaire il faudrait LE sharder spatialement
+        / le répliquer, et ajouter des relais TURN pour les NAT symétriques. C'est le
+        gros chantier au-delà de cette étape.)*
       - [ ] **6.7 — Quorum BFT des Shields.** Accusations signées partagées entre
         nœuds (réputation décentralisée, EigenTrust) : l'étage au-dessus du strike
         purement local.
