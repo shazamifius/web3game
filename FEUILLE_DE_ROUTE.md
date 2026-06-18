@@ -106,7 +106,9 @@ réfléchi infini), (d) rate-limit d'apprentissage par source. Logique centralis
 (`learn_from_gossip`) + fonction pure partagée `punch_abandoned` (bot ET jeu). **PROUVÉ par un VRAI
 attaquant** `attack gossip-flood` : **0 perçage réfléchi** reçu par la cible, tables non polluées ;
 découverte honnête intacte (`crowd 60` → couverture 100 %), essaim TENU avec l'attaquant actif
-(`sim 40 6 20`, orbe 0/40). **47 tests, 0 warning.**
+(`sim 40 6 20`, orbe 0/40). **47 tests, 0 warning.** **Doute #1 fermé bout-en-bout (8.1b-preuve) :**
+même avec de vraies identités PoW minées pointées sur une victime, la réflexion est BORNÉE — mesuré
+**96 perçages/2 s pendant ~10 s puis 0** (l'abandon mord), au lieu du flot infini d'avant.
 
 **PROCHAINE ACTION CONCRÈTE = 8.2** (AoI à deux tiers : focus plein débit / conscience LOD basse
 fidélité) + corriger la métrique de couverture (compter « entendus », pas « connus ») + amorcer D24
@@ -741,15 +743,20 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   est aussi abandonné par (c) → relais nécessaire (D17). Plafond GLOBAL de perçage NON ajouté
   (anti-gold-plating) : (c)+(d) suffisent, on l'ajoutera si une mesure le réclame.* *Ferme D23 ; amorce D9.*
 
-- [ ] 8.1b-preuve — **Compléter la preuve RÉELLE de l'abandon de perçage (ferme le doute #1).**
-  *Honnêteté :* le « 0 perçage réfléchi » prouvé ci-dessus couvre les cartes-poubelle (jetées par PoW)
-  et les ids déjà connus (non redirigés). Le cas le plus DUR — un attaquant qui **mine de vraies
-  identités PoW neuves** et les pointe vers une victime — n'est aujourd'hui prouvé que par TESTS
-  UNITAIRES (`punch_abandoned` + seau par source), **pas bout-en-bout**. C'est un trou de *démonstration*,
-  pas de *défense*. *Plan :* enrichir `attack gossip-flood` pour qu'il mine quelques identités PoW
-  neuves pointant vers la cible, puis mesurer les perçages réfléchis **par fenêtres de temps** sur ~20 s.
-  **Preuve attendue :** une RAFALE bornée (≤ ~10 s) PUIS le SILENCE (le perçage est abandonné, 8.1b-c) —
-  alors qu'AVANT 8.1b ça aurait été un flot SANS FIN. *Ferme le doute #1 (preuve), confirme 8.1b-c en réel.*
+- [x] 8.1b-preuve ✓ — **Preuve RÉELLE de l'abandon de perçage (doute #1 FERMÉ).**
+  *Honnêteté :* le « 0 perçage réfléchi » du 8.1b couvrait les cartes-poubelle (jetées par PoW) et les
+  ids déjà connus (non redirigés). Le cas le plus DUR — un attaquant qui **mine de vraies identités PoW
+  neuves** et les pointe vers une victime — n'était prouvé que par TESTS UNITAIRES (`punch_abandoned` +
+  seau par source), pas bout-en-bout. Trou de *démonstration*, pas de *défense*. **FAIT (19 juin) :**
+  `attack gossip-flood` mine maintenant `N_POW = 4` identités PoW neuves pointant vers la cible et compte
+  les perçages réfléchis **par fenêtres de 2 s sur ~20 s**, EN inondant sans arrêt. **MESURÉ (3 bots) :**
+  rafale CONSTANTE de **96 perçages/2 s de t=0 à t=10 s, puis 0 de t=10 à t=20 s** (total 480, queue 0).
+  L'abandon mord **pile à ~10 s** (`PUNCH_GIVEUP = 40 × 0,25 s`), **même en continuant d'inonder** —
+  re-déverser une carte ne réarme pas le perçage (un id connu n'est pas réappris). Avant 8.1b : 96/2 s
+  **SANS FIN**. *La réflexion par ids PoW minés est donc BORNÉE dans le temps, prouvé en réel — pas
+  seulement en test unitaire. Doute #1 fermé.* *(Résidu inchangé : un attaquant peut relancer une
+  rafale en minant de NOUVELLES identités, mais chacune coûte un PoW et ne dure que ~10 s → plus une
+  amplification, juste un coût attaquant linéaire ; la corroboration multi-informateurs du 8.8 le réduira encore.)*
 
 - [ ] 8.2 — **AoI à DEUX TIERS : focus (≤K, plein débit) + conscience (basse fidélité).**
   Séparer dans le code « à qui je tiens un lien netcode complet » (borné ~16-32, prédiction/

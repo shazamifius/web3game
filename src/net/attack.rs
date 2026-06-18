@@ -33,7 +33,7 @@ use super::transport::Socket;
 use super::wire::{kind, KIND_WELCOME};
 use std::net::SocketAddr;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Une victime découverte via le rendez-vous : son identité (clé) et son adresse.
 /// Depuis le chap. 6.1, l'identité EST la clé — plus besoin de la transporter à part.
@@ -353,44 +353,63 @@ fn attack_gossip_flood(socket: &Socket, victims: &[Victim]) {
     println!("[attaquant] GOSSIP-FLOOD : je déverse des cartes empoisonnées pointant vers ma CIBLE {target_addr}");
     println!("            (but : faire arroser la cible par les victimes = réflexion + polluer leurs tables).");
 
-    // Deux familles de cartes empoisonnées, TOUTES pointant vers la cible de réflexion :
+    // TROIS familles de cartes empoisonnées, TOUTES pointant vers la cible de réflexion :
     //   - POUBELLE : id sans preuve de travail (1er octet 0xFF) → DOIT être jeté (8.1b-a) ;
-    //   - RÉEL : id d'une vraie victime → déjà connu d'elle/des autres → adresse NON écrasée (8.1b-b).
+    //   - RÉEL CONNU : id d'une vraie victime → déjà connu → adresse NON écrasée (8.1b-b) ;
+    //   - PoW NEUF : identités VALIDES que je MINE → inconnues des victimes, donc APPRISES puis
+    //     percées… mais ABANDONNÉES après ~10 s (8.1b-c). C'est le cas le plus DUR — celui que
+    //     la preuve précédente ne couvrait pas (doute #1). On veut voir une RAFALE puis le SILENCE.
+    const N_POW: usize = 4;
+    println!("[attaquant]   je MINE {N_POW} identités PoW neuves (le cas dur du doute #1)…");
+    let pow_ids: Vec<PeerId> = (0..N_POW).map(|_| Identity::generate_pow(POW_BITS).id()).collect();
+
     let mut cards: Vec<Card> = Vec::new();
-    for k in 0..8u8 {
+    for k in 0..4u8 {
         let mut b = [0xFFu8; PUBKEY_LEN];
         b[5] = k; // ids distincts, mais 0 bit de tête à zéro → has_pow faux → poubelle
         cards.push(Card { id: PeerId::from_bytes(b), addr: target_addr, x: 0.0, z: 0.0 });
     }
-    for (id, _) in victims.iter().take(8) {
+    for (id, _) in victims.iter().take(4) {
+        cards.push(Card { id: *id, addr: target_addr, x: 0.0, z: 0.0 });
+    }
+    for id in &pow_ids {
         cards.push(Card { id: *id, addr: target_addr, x: 0.0, z: 0.0 });
     }
     let poison = encode_gossip(&cards);
 
-    // On déverse ~6 s et on COMPTE les perçages réfléchis reçus par la cible.
-    let mut reflected = 0u64;
-    for _ in 0..60 {
-        for (_, addr) in victims {
-            let _ = socket.send_to(*addr, &poison);
-        }
-        sleep(Duration::from_millis(100));
-        for (_, bytes) in target.poll() {
-            if decode_punch(&bytes).is_some() {
-                reflected += 1;
+    // On déverse EN CONTINU et on compte les perçages réfléchis par FENÊTRES de 2 s, sur ~20 s.
+    // Attendu : une rafale les ~10 premières secondes (les victimes percent les ids PoW neufs),
+    // puis le SILENCE (perçage abandonné). Re-déverser la carte ne RÉARME PAS le perçage : un id
+    // déjà connu n'est pas réappris → le compteur d'essais continue vers l'abandon (8.1b-c).
+    const WINDOW: Duration = Duration::from_secs(2);
+    const WINDOWS: usize = 10; // ~20 s
+    let mut timeline = Vec::with_capacity(WINDOWS);
+    for w in 0..WINDOWS {
+        let mut count = 0u64;
+        let start = Instant::now();
+        while start.elapsed() < WINDOW {
+            for (_, addr) in victims {
+                let _ = socket.send_to(*addr, &poison);
+            }
+            sleep(Duration::from_millis(100));
+            for (_, bytes) in target.poll() {
+                if decode_punch(&bytes).is_some() {
+                    count += 1;
+                }
             }
         }
-    }
-    for (_, bytes) in target.poll() {
-        if decode_punch(&bytes).is_some() {
-            reflected += 1;
-        }
+        timeline.push(count);
+        println!("[attaquant]   t={:>2}–{:<2}s : {count} perçages réfléchis reçus par la cible.", w * 2, w * 2 + 2);
     }
 
-    println!("[attaquant] GOSSIP-FLOOD terminé. Perçages RÉFLÉCHIS reçus par la cible : {reflected}.");
-    if reflected == 0 {
-        println!("            → 0 : cartes poubelle JETÉES (PoW exigé, 8.1b-a) et ids réels NON redirigés (8.1b-b).");
+    let total: u64 = timeline.iter().sum();
+    // « Queue » = les 3 dernières fenêtres (14–20 s) : bien APRÈS le seuil d'abandon (~10 s).
+    let tail: u64 = timeline[WINDOWS - 3..].iter().sum();
+    println!("[attaquant] GOSSIP-FLOOD terminé. Total réfléchi : {total} ; sur les 6 dernières s : {tail}.");
+    if tail == 0 {
+        println!("            → BORNÉ : rafale ≤ ~10 s PUIS SILENCE — le perçage est abandonné (8.1b-c),");
+        println!("              MÊME en continuant d'inonder. Avant 8.1b : ç'aurait été un flot SANS FIN. Doute #1 fermé.");
     } else {
-        println!("            → {reflected} mais BORNÉ (pas infini) : le perçage est abandonné après ~10 s (8.1b-c)");
-        println!("              et l'apprentissage est rate-limité par source (8.1b-d). Avant 8.1b : flot SANS FIN.");
+        println!("            → ⚠ encore {tail} après 14 s : l'abandon ne mord pas comme attendu — À INVESTIGUER.");
     }
 }
