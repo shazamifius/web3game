@@ -27,9 +27,12 @@ pub struct NetLink {
     pub(crate) identity: Identity,
     pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<PeerId, SocketAddr>, // les autres joueurs : identité → adresse
-    /// ANTI-REJEU (chap. 5.2) : dernier numéro de séquence accepté par pair. On
-    /// refuse tout paquet de `seq` ≤ : un vieux paquet rejoué ne passe plus.
-    pub(crate) last_seq: HashMap<PeerId, u64>,
+    /// ANTI-REJEU (chap. 5.2, durci au 7.3) : une FENÊTRE GLISSANTE par pair (style
+    /// IPsec/DTLS). On retient le plus grand `seq` vu + un masque des 64 derniers déjà
+    /// acceptés → on tolère le ré-ordonnancement du réseau (un paquet en retard mais
+    /// jamais vu, dans la fenêtre, passe) SANS rouvrir le rejeu (un seq déjà vu, ou trop
+    /// vieux pour la fenêtre, est refusé).
+    pub(crate) replay: HashMap<PeerId, ReplayWindow>,
     /// RÉPUTATION (chap. 5.4) : nombre de « fautes » constatées par pair (état
     /// impossible, orbe trichée…). Au-delà de `MAX_STRIKES`, le pair est mis en
     /// sourdine (« mute ») : on ignore tout ce qu'il envoie.
@@ -50,6 +53,58 @@ pub(crate) const MAX_STRIKES: u32 = 5;
 /// pas ; et chaque identité coûte une preuve de travail (6.2), donc fabriquer un
 /// quorum de fausses identités est coûteux.
 pub(crate) const ACCUSE_QUORUM: usize = 3;
+
+/// Largeur de la fenêtre d'anti-rejeu, en nombre de `seq` (chap. 7.3). 64 = un masque
+/// `u64`, zéro allocation. À 20 paquets/s ça couvre ~3,2 s de ré-ordonnancement possible
+/// — bien plus que ce qu'un vrai réseau (ou `tc netem`) produit. Choix standard
+/// IPsec/DTLS/WireGuard.
+const REPLAY_WINDOW: u64 = 64;
+
+/// FENÊTRE GLISSANTE D'ANTI-REJEU pour un pair (chap. 7.3). `top` = le plus grand `seq`
+/// accepté ; `mask` = un masque où le bit `i` signale que le `seq` (`top` − `i`) a déjà
+/// été vu (bit 0 = `top` lui-même). On accepte : tout `seq` > `top` (on fait glisser la
+/// fenêtre), et tout `seq` DANS la fenêtre `[top−63, top]` pas encore vu (← c'est ce qui
+/// répare le ré-ordonnancement). On refuse : un `seq` déjà vu (vrai rejeu) et un `seq`
+/// trop vieux (< `top` − 63). Remplace l'ancien « `seq` ≤ dernier → rejet » strict, qui
+/// jetait les paquets honnêtes ré-ordonnés par le réseau (bug mesuré au 7.2 : −70 % de
+/// débit honnête sous `mauvais`).
+pub(crate) struct ReplayWindow {
+    top: u64,
+    mask: u64,
+}
+
+impl ReplayWindow {
+    /// Crée la fenêtre sur le premier `seq` vu d'un pair (marqué comme déjà reçu).
+    fn new(seq: u64) -> ReplayWindow {
+        ReplayWindow { top: seq, mask: 1 }
+    }
+
+    /// Tente d'accepter `seq`. `true` s'il est neuf (et on le mémorise), `false` si
+    /// c'est un rejeu ou s'il est trop vieux pour la fenêtre.
+    fn accept(&mut self, seq: u64) -> bool {
+        if seq > self.top {
+            // Plus récent que tout : on fait glisser la fenêtre vers l'avant. Les seq
+            // déjà vus reculent de `diff` bits ; au-delà de 64 ils sortent de la fenêtre.
+            let diff = seq - self.top;
+            self.mask = if diff >= REPLAY_WINDOW { 1 } else { (self.mask << diff) | 1 };
+            self.top = seq;
+            true
+        } else {
+            // Égal ou plus ancien : neuf seulement si jamais vu ET encore dans la fenêtre.
+            let diff = self.top - seq;
+            if diff >= REPLAY_WINDOW {
+                return false; // trop vieux : hors de la fenêtre
+            }
+            let bit = 1u64 << diff;
+            if self.mask & bit != 0 {
+                false // déjà vu : vrai rejeu
+            } else {
+                self.mask |= bit;
+                true // en retard mais légitime → accepté (le fix du 7.3)
+            }
+        }
+    }
+}
 
 impl NetLink {
     /// Prépare le réseau d'un client : prise sur un port éphémère (choisi par
@@ -77,7 +132,7 @@ impl NetLink {
             identity,
             world_hue: None,
             peers: HashMap::new(),
-            last_seq: HashMap::new(),
+            replay: HashMap::new(),
             strikes: HashMap::new(),
             accusations: HashMap::new(),
             accused_broadcast: HashSet::new(),
@@ -131,14 +186,15 @@ impl NetLink {
         false
     }
 
-    /// ANTI-REJEU : accepte un `seq` seulement s'il est STRICTEMENT plus grand que le
-    /// dernier vu de ce pair (et le mémorise). Un rejeu (seq déjà vu ou plus ancien)
-    /// renvoie `false`. Le premier paquet d'un pair (aucun seq mémorisé) est accepté.
+    /// ANTI-REJEU (durci au 7.3) : accepte un `seq` s'il est NEUF dans la fenêtre
+    /// glissante de ce pair (et le mémorise). Tolère le ré-ordonnancement réseau ;
+    /// refuse les vrais rejeus (seq déjà vu) et les paquets trop vieux (hors fenêtre).
+    /// Le premier paquet d'un pair (fenêtre vierge) initialise la fenêtre et est accepté.
     pub(crate) fn accept_seq(&mut self, id: PeerId, seq: u64) -> bool {
-        match self.last_seq.get(&id) {
-            Some(&last) if seq <= last => false, // rejeu ou paquet périmé
-            _ => {
-                self.last_seq.insert(id, seq);
+        match self.replay.get_mut(&id) {
+            Some(w) => w.accept(seq),
+            None => {
+                self.replay.insert(id, ReplayWindow::new(seq));
                 true
             }
         }
@@ -169,6 +225,27 @@ mod tests {
         assert!(link.accept_seq(a, 5)); // on saute en avant : accepté
         // Un AUTRE pair a son propre compteur, indépendant.
         assert!(link.accept_seq(pid(4), 1));
+    }
+
+    /// ANTI-REJEU À FENÊTRE GLISSANTE (7.3) : un paquet honnête arrivé EN RETARD (mais
+    /// jamais vu, dans la fenêtre) est accepté — c'est ce que l'ancien anti-rejeu strict
+    /// jetait à tort (bug du 7.2). Le rejeu et le trop-vieux restent refusés.
+    #[test]
+    fn accept_seq_tolere_le_reordonnancement() {
+        let mut link = link_de_test();
+        let a = pid(7);
+        assert!(link.accept_seq(a, 10)); // premier paquet : fenêtre sur top=10
+        assert!(link.accept_seq(a, 12)); // 12 arrive avant 11 (ré-ordo) : accepté, top=12
+        assert!(link.accept_seq(a, 11)); // 11 arrive EN RETARD, dans la fenêtre : ACCEPTÉ
+                                         //   (avant le 7.3, c'était refusé → perte honnête)
+        assert!(!link.accept_seq(a, 11)); // rejouer 11 : refusé (déjà vu)
+        assert!(!link.accept_seq(a, 12)); // rejouer 12 : refusé (déjà vu)
+        assert!(!link.accept_seq(a, 10)); // rejouer 10 : refusé (déjà vu)
+        // Un seq jamais vu mais TROP VIEUX (hors fenêtre de 64) reste refusé : on saute
+        // loin en avant, puis on tente un seq distant de plus de 64.
+        assert!(link.accept_seq(a, 200)); // top = 200
+        assert!(!link.accept_seq(a, 100)); // 200 − 100 = 100 ≥ 64 → trop vieux → refusé
+        assert!(link.accept_seq(a, 180)); // 200 − 180 = 20 < 64, jamais vu → accepté
     }
 
     /// RÉPUTATION : au bout de MAX_STRIKES fautes, le pair passe en sourdine.

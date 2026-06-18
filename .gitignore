@@ -1,2 +1,4 @@
 /target
 /graphify-out
+# Tampon de sortie de simu/tests collé par l'utilisateur (voir flux ch.7) — jamais versionné.
+result.md

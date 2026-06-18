@@ -30,23 +30,23 @@ tout** (ch. 10) ; ② **PoW anti-Sybil réglable** (on durcit si les tests l'exi
 ③ **ordre normal** 7→8→9→10 (pas de priorité forcée au 0-connexion) ; ④ **identité
 persistante = clé sauvée dans un fichier** (ch. 10).
 
-**On est dans le CHAPITRE 7 (confrontation au réel). 7.1 et 7.2 sont FAITS.**
-**7.1 ✓** — `tools/sim-netem.sh` (3 profils `bon|moyen|mauvais`) applique `tc netem` sur
-`lo`, lance la simu, retire toujours le netem (`trap`). Piège tranché : sur `lo` le délai
-compte double → profils en ping cible, `delay = ping ÷ 2`.
-**7.2 ✓** — mesuré sous les 3 profils (`sim 50 5 30`). Sécurité INTACTE partout (orbe
-0/50, attaques neutralisées même à 250 ms + reorder). MAIS le débit honnête s'effondre
-(−70 % sous `mauvais`) → cause = anti-rejeu strict `accept_seq` qui jette les paquets
-honnêtes ré-ordonnés.
+**On est dans le CHAPITRE 7 (confrontation au réel). 7.1, 7.2 et 7.3 sont FAITS.**
+**7.1 ✓** — `tools/sim-netem.sh` (3 profils) applique `tc netem` sur `lo`, retire toujours
+le netem (`trap`). Piège : sur `lo` le délai compte double → profils en ping, `delay/2`.
+**7.2 ✓** — mesuré (`sim 50 5 30`). Sécurité INTACTE partout (orbe 0/50, attaques
+neutralisées même à 250 ms + reorder). Débit honnête : `bon` ~22,7k/s, `mauvais` ~6,8k/s
+(−70 %). Diagnostic initial (anti-rejeu strict) → **s'est révélé FAUX au 7.3.**
+**7.3 ✓** — anti-rejeu à fenêtre glissante (64, masque `u64`) dans `accept_seq` ; tolère
+le ré-ordo, refuse rejeu + trop-vieux ; 36 tests, 0 warning. Re-mesuré : `mauvais` remonte
+de ~6,8k à ~7,9k/s (**+15 % seulement**) → l'anti-rejeu n'était PAS le goulot. Vraie cause
+identifiée : le `limit 1000` par défaut de netem plafonne à ~limit/délai ≈ 8 000/s à
+125 ms (= pile la mesure). Le fix reste correct (vrais réseaux ré-ordonnent).
 
-**PROCHAINE ACTION = 7.3** : remplacer l'anti-rejeu strict (`seq ≤ last → rejet`) par une
-**fenêtre glissante** d'anti-rejeu (style IPsec/DTLS) : on garde le plus grand `seq` vu +
-un masque de bits des N derniers `seq` ; on accepte tout `seq` dans la fenêtre non encore
-vu, on rejette seulement les vrais rejeus (déjà vus) et les trop vieux (< plus_grand − N).
-Ça tolère le ré-ordonnancement SANS rouvrir le rejeu. Modifie `NetLink::accept_seq`
-(link.rs) + tests (rejeu refusé, ré-ordo dans la fenêtre accepté), puis **re-mesurer**
-sous `mauvais` : le débit honnête doit remonter (= preuve causale du diagnostic 7.2).
-Détail complet : section D, chapitre 7. Décisions à prendre : taille de fenêtre N.
+**PROCHAINE ACTION = 7.3b** : dans `tools/sim-netem.sh`, ajouter un `limit` large à la règle
+netem (file non bloquante), puis re-mesurer les 3 profils → PROUVER que le débit honnête
+remonte vers `bon` (donc le −70 % était bien l'artefact `limit 1000`, pas le protocole).
+Ensuite seulement : regarder s'il reste un vrai défaut réseau à corriger. Détail : section
+D, chapitre 7 (7.3b). Puis 7.4 (instrumenter Ko/s ↑↓, CPU, RAM par nœud → ferme D19).
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -355,8 +355,29 @@ inonder le rendez-vous ne le met pas à genoux.
   > Limite de preuve : mécanisme (code) + symptôme (débit) prouvés ; le rapport ne
   > COMPTE pas encore les rejets `accept_seq` séparément. Le fix 7.3 (débit qui remonte)
   > sera la preuve causale — ou on instrumente un compteur (7.4).
-- [ ] 7.3 — Corriger ce que netem révèle (très probable : l'anti-rejeu strict casse sur
-  paquets re-ordonnés → fenêtre de tolérance ; la prédiction/migration à régler).
+  > **⚠ CORRECTION (mesurée au 7.3) : ce diagnostic était FAUX.** Le fix anti-rejeu ne
+  > récupère que **+15 %** du débit, pas le −70 %. La vraie cause est le `limit 1000` par
+  > défaut de `tc netem` (plafond ≈ limit/délai ≈ 8 000/s à 125 ms = la mesure), pas le
+  > protocole. Détail et preuve à venir : voir 7.3 et 7.3b.
+- [x] 7.3 — Anti-rejeu à FENÊTRE GLISSANTE (style IPsec/DTLS/WireGuard), fenêtre = 64
+  (masque `u64`). `NetLink::accept_seq` (link.rs) : on retient le plus grand `seq` + un
+  masque des 64 derniers ; on accepte tout `seq` neuf dans la fenêtre (← tolère le
+  ré-ordonnancement), on refuse le rejeu (déjà vu) et le trop-vieux (hors fenêtre).
+  +1 test (`accept_seq_tolere_le_reordonnancement`) ; l'ancien test anti-rejeu passe
+  toujours. 36 tests, 0 warning, release vert. *(fait)*
+  **Résultat honnête — mon pari du 7.2 était FAUX.** Re-mesuré : `mauvais` ~6 832 →
+  ~7 876/s (**+15 % seulement**, pas ×2–×3) ; `bon` ~23 026/s (aucune régression). Donc
+  **l'anti-rejeu n'était PAS la cause dominante du −70 %.** Le fix reste correct et
+  nécessaire (les vrais réseaux ré-ordonnent), mais il ne résout pas le débit.
+  **Vraie cause trouvée (arithmétique, à confirmer en 7.3b) :** `tc netem` a `limit 1000`
+  PAR DÉFAUT → plafond de débit ≈ `limit/délai` = 1000/0,125 s ≈ **8 000/s** à 125 ms =
+  pile la mesure (7 876). Recoupé : `moyen` (60 ms) plafond ≈ 16 667 (mesuré 14 553, sous
+  le plafond) ; `bon` (15 ms) plafond ≈ 66 667 (pas bridé). Le goulot était la **file du
+  harnais**, pas le protocole.
+- [ ] 7.3b — Relever le `limit` netem dans `tools/sim-netem.sh` (file large, non bloquante)
+  et re-mesurer les 3 profils : prouver que le débit honnête remonte vers `bon` (= le
+  protocole tient sous latence ; le −70 % était l'artefact `limit 1000`). Puis voir s'il
+  reste un vrai effet réseau à corriger une fois le harnais hors de cause.
 - [ ] 7.4 — Instrumenter `sim` : Ko/s ↑↓, CPU, RAM **par nœud** (ferme D19).
 - [ ] 7.5 — NAT : généraliser `tools/test-nat.sh` au scénario multi-joueurs.
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels). **Vérif :** rapport de simu

@@ -181,14 +181,17 @@ anti-triche).
 > - **Décisions de direction prises** (détail dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)) :
 >   ① on chiffre tout ; ② preuve de travail anti-Sybil réglable ; ③ ordre normal
 >   7→8→9→10 ; ④ identité persistante (clé sauvée dans un fichier).
-> - **Chapitre 7 en cours (confrontation au réel). 7.1 + 7.2 ✓** : `tools/sim-netem.sh`
+> - **Chapitre 7 en cours (confrontation au réel). 7.1 + 7.2 + 7.3 ✓** : `tools/sim-netem.sh`
 >   applique une *vraie* mauvaise connexion (`tc netem` : latence/jitter/perte/ré-ordo sur
 >   `lo`, 3 profils `bon|moyen|mauvais`), lance la simu, et retire toujours le netem à la
->   fin. Mesuré sous les 3 profils (`sim 50 5 30`) : la **sécurité tient partout** (orbe
->   0/50 volée, attaques neutralisées même à 250 ms + ré-ordonnancement), mais le **débit
->   honnête s'effondre** (−70 % sous `mauvais`) car l'anti-rejeu strict jette les paquets
->   ré-ordonnés. **PROCHAINE ACTION = 7.3** : anti-rejeu à fenêtre glissante (tolère le
->   ré-ordo sans rouvrir le rejeu). **Tout le plan post-chapitre-6 (chapitres 7→14 + les
+>   fin. Mesuré (`sim 50 5 30`) : la **sécurité tient partout** (orbe 0/50 volée, attaques
+>   neutralisées même à 250 ms + ré-ordonnancement). **7.3** durcit l'anti-rejeu en
+>   **fenêtre glissante** (style IPsec/DTLS : tolère le ré-ordo sans rouvrir le rejeu).
+>   Honnêteté : on pensait que l'anti-rejeu strict expliquait l'effondrement du débit
+>   honnête sous `mauvais` (−70 %) — **c'était faux** (le fix ne récupère que +15 %). La
+>   vraie cause est le `limit 1000` par défaut de `tc netem` (plafond ≈ limit/délai ≈
+>   8 000/s à 125 ms), pas le protocole. **PROCHAINE ACTION = 7.3b** : relever ce `limit`
+>   et re-mesurer pour le prouver. **Tout le plan post-chapitre-6 (chapitres 7→14 + les
 >   21 doutes D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
 >   ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
