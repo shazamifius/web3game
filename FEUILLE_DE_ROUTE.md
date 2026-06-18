@@ -70,13 +70,21 @@ réel) : `wait` nu attendait le rendez-vous sans fin (test « durait 25 min ») 
 les joueurs ; et `set -e` + code 124 de `timeout` coupait avant le résumé → absorbé par
 `|| true`. Le hole punching multi-joueurs est donc prouvé pour de vrai, pas juste sur localhost.
 
-**PROCHAINE ACTION = chapitre DENSITÉ dédié (D22)** — le chapitre 7 (« confrontation au réel »)
-est bouclé : le lien tient sous mauvais réseau (7.1→7.3b), le coût/nœud est chiffré honnêtement
-(7.4/7.4b), le NAT multi-joueurs marche (7.5). Reste LE gros morceau, désormais écrit noir sur
-blanc : **D22 — en foule dense, on est aveugle au-delà de 32 voisins.** C'est une question
-d'architecture (AoI par VISION + découverte décentralisée sans plafond dur type gossip/DHT +
-relais/parent), à ouvrir proprement comme un chapitre à part entière. Voir D22 (section
-Catégorie 8) pour le constat mesuré et la piste.
+**PLAN DU CHAPITRE 8 (densité, D22) ÉCRIT — prochaine action = CODER 8.0.** Le chapitre 7
+(« confrontation au réel ») est bouclé : le lien tient sous mauvais réseau (7.1→7.3b), le
+coût/nœud est chiffré honnêtement (7.4/7.4b), le NAT multi-joueurs marche (7.5). Le gros
+morceau d'archi — **D22 : en foule dense, aveugle au-delà de 32** — a maintenant son chapitre
+dédié, écrit AVANT de coder (règle d'or). Voir **§D, Chapitre 8 — La foule dense & l'inclusivité**.
+Le diagnostic est net : le plafond est au rendez-vous ([rendezvous.rs](src/net/rendezvous.rs) :
+`keep_nearest(…, 32)`) et le client écrase `link.peers` avec ce roster ([receive.rs](src/net/netcode/receive.rs))
+→ le 33e n'est jamais appris. La réponse (architecture, pas réglage) : **séparer FOCUS (lien plein,
+borné ~32) de CONSCIENCE (perception LOD, non plafonnée)**, découverte par **gossip** (le rendez-vous
+démoté à l'amorçage), **cellules + hôte agrégateur** pour tenir l'invariant *réception = O(K + cellules),
+indépendant de N*. **PROCHAINE ACTION CONCRÈTE = 8.0** : mode `sim crowd <N>` + métriques de
+**couverture de perception** et de **tiers de fidélité**, pour CHIFFRER le mur (≈16 % de couverture
+à 200) avant de le casser. NB : l'ancien « Chapitre 8 — Inclusivité » a été FUSIONNÉ dans ce
+chapitre densité (même problème vu des deux bouts : « je ne vois pas la foule » ↔ « je ne peux pas
+tout recevoir de la foule ») — D3/D4/D5 y deviennent la Phase B.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -357,7 +365,7 @@ bougent PAS à 55k ; l'échelle se fait en AJOUTANT des machines. Un nœud deman
 (2) compteur = charge utile UDP, le fil réel ajoute ~28 o/paquet ; (3) **CE « constant à 55k »
 suppose qu'il SUFFIT de voir ~32 voisins — faux en foule dense : voir D22.**
 
-**D22 — La foule DENSE n'est pas résolue : au-delà de 32 voisins, on est AVEUGLE.** 🔴 `[chapitre densité dédié]`
+**D22 — La foule DENSE n'est pas résolue : au-delà de 32 voisins, on est AVEUGLE.** 🔴 `[ch. 8 — la foule dense]`
 *Constat (révélé au 7.4b) :* le « coût constant à 55k » est acheté par un **plafond dur** au
 rendez-vous (`keep_nearest(…, 32)`, [rendezvous.rs]) : il ne présente que les 32 plus proches,
 « au-delà, on n'existe pas pour vous » ([aoi.rs]). Comme les bots de `sim` sont co-localisés
@@ -465,21 +473,104 @@ inonder le rendez-vous ne le met pas à genoux.
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels + le doute densité D22).
 **Vérif :** rapport de simu sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.
 
-### Chapitre 8 — Inclusivité & adaptation au lien (0 → 2 Gb/s) 🔴 *priorité 2 — ta vision*
-**But :** que le 0-connexion et le 2-Gb/s aient chacun LA meilleure expérience.
-- [ ] 8.1 — **Budget de réception annoncé** : chaque joueur publie son débit descendant
-  soutenable + son rayon d'intérêt ; les émetteurs en tiennent compte (water-filling
-  **bilatéral**). Ferme D3.
-- [ ] 8.2 — **Dégradation gracieuse** : au-delà du budget, on baisse la fréquence des
-  lointains avant les proches (paliers focus / proche / foule).
-- [ ] 8.3 — **Parent agrégateur** pour très faibles : le parent reçoit le voisinage et
-  n'envoie au protégé qu'un résumé basse fréquence. Le 0-connexion joue *via* son parent.
-- [ ] 8.4 — **Économie du parent (anti free-riding)** : réciprocité façon BitTorrent
-  (choking/optimistic unchoke pondéré par la réputation). Ferme D4.
-- [ ] 8.5 — **Anti-censure du parent** : multi-parents + détection du « trou noir ».
-  Ferme D5.
-**Ferme :** D3, D4, D5, (amorce D17). **Vérif :** sous netem throttlé à 5 Ko/s, le joueur
-reste fonctionnel ; un nœud égoïste est servi en dégradé.
+### Chapitre 8 — La foule dense & l'inclusivité (fermer D22) 🔴 *priorité 2 — LE gros morceau d'archi*
+**But :** que dans une foule de 200, 500, 5000, chacun **perçoive la foule entière**
+(proches nets, lointains dégradés) **sans plafond dur à 32** et **sans exploser son
+débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure expérience.
+
+> **Pourquoi ce chapitre existe (constat mesuré au 7.4b, voir D22).** Tout notre passage
+> à l'échelle (6.6) achète son « coût constant à 55k » par un **plafond dur** :
+> [rendezvous.rs](src/net/rendezvous.rs) ne présente que les `MAX_NEIGHBORS = 32` plus
+> proches, et [receive.rs](src/net/netcode/receive.rs) **écrase** `link.peers` avec ce
+> roster (les clients ne s'échangent RIEN entre eux). Donc le **33e voisin n'existe pas
+> et ne peut jamais exister** — le water-filling d'[aoi.rs](src/net/aoi.rs) répartit le
+> débit entre 32 connus mais n'apprend jamais le 33e. À une foule de 200, chacun est
+> **aveugle à 168**. Dans un monde social type VRChat, VOIR la foule EST le jeu.
+
+> **L'idée directrice — séparer deux choses que le plafond à 32 confond :**
+> 1. le **FOCUS** = à qui je tiens un lien netcode plein débit (prédiction/20 Hz). Ça
+>    DOIT rester borné (~16-32). C'est, en gros, le système actuel.
+> 2. la **CONSCIENCE** = qui je perçois / sais exister (des centaines), en LOD/basse
+>    fidélité. Ça ne doit **PAS** être plafonné. C'est ton « **AoI par vision** » : pas
+>    besoin d'un lien 20 Hz avec un type à 80 m, juste de savoir qu'il est là, pour pas cher.
+
+> **⚠ L'INVARIANT À TENIR (le piège à ne JAMAIS se cacher).** Le coût de réception doit
+> rester **O(K_focus + C_cellules)**, *indépendant de N* (la taille de la foule). Sinon on
+> a juste rebaptisé le problème. La PREUVE de réussite n'est donc pas « la couverture
+> monte » seule — c'est **couverture → ~100 % ET débit ↓ qui reste PLAT quand la foule
+> grandit**. Augmenter `MAX_NEIGHBORS` est interdit : ça rouvre l'O(N²) (trou n°3), le
+> WELCOME débordé (trou n°2) et surtout D3 (le faible noyé). On déplacerait le mur, pas
+> on ne le casserait.
+
+**— Phase A : VOIR la foule sans plafond dur (le cœur de D22) —**
+
+- [ ] 8.0 — **Scénario de foule + métriques de perception dans `sim` (mesurer le mur AVANT
+  de le casser).** Nouveau mode `sim crowd <N>` (N bots vraiment co-localisés) et DEUX
+  mesures neuves au rapport, à côté du probe 7.4 (Ko/s ↓, CPU) :
+  • **Couverture de perception** = sur les N pairs réellement à portée, combien ce nœud
+    perçoit-il (à n'importe quelle fidélité) ? Aujourd'hui : plafonné → `32/N`.
+  • **Tiers de fidélité** = combien en *focus* (lien plein) vs en *conscience* (basse
+    fidélité) ? Aujourd'hui : conscience = 0 (le tier n'existe pas encore).
+  **Preuve attendue (ROUGE, c'est le but) :** à `crowd 200`, couverture ≈ 16 %, aveugle à
+  168. *Rien n'est « résolu » ici — on rend le mur chiffrable, sinon on ne saura pas si on
+  l'a cassé.*
+
+- [ ] 8.1 — **Découverte décentralisée par gossip (le 33e devient APPRENABLE).** Le
+  rendez-vous cesse d'être l'énumérateur autoritaire et redevient un simple **amorçage** :
+  le WELCOME n'**écrase** plus `link.peers`, il l'**amorce**. Ensuite, chaque pair annonce
+  à bas débit, à ses voisins, quelques AUTRES pairs qu'il connaît (id + dernière position
+  connue) — des « cartes de visite ». La table de pairs s'enrichit ainsi **sans** plafond à
+  32 et **sans** serveur central qui énumère. Table bornée en MÉMOIRE (lié D16) mais pas en
+  VISION. **Anti-éclipse dès le départ (amorce D9) :** diversité forcée des informateurs, on
+  corrobore une position par plusieurs sources (un menteur seul ne peut pas te cacher/inventer
+  la foule). *Ferme une partie de D10 (rendez-vous démoté à l'amorçage) ; amorce D9.*
+  **Preuve :** à `crowd 200`, couverture 16 % → ~100 % (chacun finit par apprendre les 200),
+  sans que le rendez-vous ne les énumère. *Risque à surveiller : le gossip lui-même coûte du
+  débit — c'est 8.2 + 8.3 qui le bornent ; à 200 c'est tenable, à 5000 il FAUDRA l'agrégation.*
+
+- [ ] 8.2 — **AoI à DEUX TIERS : focus (≤K, plein débit) + conscience (basse fidélité).**
+  Séparer dans le code « à qui je tiens un lien netcode complet » (borné ~16-32, prédiction/
+  réconciliation/20 Hz, ≈ aujourd'hui) de « qui je perçois » (tout le reste de la table :
+  position échantillonnée ~1 Hz, pas de prédiction fine, rendu LOD/imposteur). Le
+  water-filling d'[aoi.rs](src/net/aoi.rs) s'étend : il sert d'ABORD le focus, puis saupoudre
+  un PETIT budget résiduel sur la conscience. *C'est ton « AoI par vision » concrétisée.*
+  **Preuve :** couverture ~100 % MAIS le débit ↓ reste **borné** (focus ≈ 32 pleins, la
+  conscience ne coûte que des miettes) → la vraie preuve de D22 : couverture↑ **sans**
+  explosion du débit.
+
+- [ ] 8.3 — **Cellules spatiales + hôte de cellule agrégateur (ce qui fait tenir l'invariant
+  à 500/5000).** Partitionner le monde en cellules ; chaque cellule a un **hôte élu** (réutilise
+  la machinerie d'autorité+migration de l'orbe, D11/D12) qui : connaît grossièrement qui est
+  dans la cellule (rendez-vous décentralisé local), et produit UN **résumé basse fréquence**
+  de la cellule (positions échantillonnées / densité + quelques représentants) pour les
+  observateurs lointains. Ainsi un nœud lointain reçoit **1 flux agrégé par cellule** au lieu
+  de N flux individuels → réception en **O(K_focus + C_cellules)**, l'invariant est tenu. *Relie
+  D11/D12 (autorité généralisée) et prépare la Phase B (le parent agrège pour le faible).*
+  **Preuve :** à `crowd 500` puis `5000`, couverture ~100 % et débit ↓ **plat** (ne croît pas
+  avec N) ; on rejoue 8.0 et on montre la courbe couverture(N) ≈ 100 % à débit constant.
+
+**— Phase B : l'inclusivité, maintenant que la foule est visible (ferme D3, D4, D5) —**
+
+- [ ] 8.4 — **Budget de réception annoncé (water-filling BILATÉRAL).** Chaque joueur publie
+  son débit descendant soutenable + son rayon d'intérêt ; les émetteurs en tiennent compte
+  (le water-filling, jusqu'ici unilatéral côté émetteur, devient bilatéral). Ferme D3.
+- [ ] 8.5 — **Dégradation gracieuse côté receveur** : au-delà du budget, on baisse la
+  fréquence des lointains AVANT les proches (paliers focus / proche / foule) — la conscience
+  (8.2) se raréfie avant le focus.
+- [ ] 8.6 — **Parent agrégateur pour très faibles** : le parent (ou l'hôte de cellule de 8.3)
+  reçoit le voisinage et n'envoie au protégé qu'un résumé basse fréquence. Le 0-connexion joue
+  *via* son parent. *Réutilise 8.3 ; ferme la moitié « réception bornée » de D3.*
+- [ ] 8.7 — **Économie du parent (anti free-riding)** : réciprocité façon BitTorrent
+  (choking / optimistic unchoke pondéré par la réputation). Ferme D4.
+- [ ] 8.8 — **Anti-censure du parent / hôte de cellule** : multi-parents + détection du « trou
+  noir » ; un hôte qui CACHE une partie de la foule est repéré (corroboration gossip de 8.1) et
+  contourné. Ferme D5 ; relie D9.
+
+**Ferme :** D22, D3, D4, D5 (+ amorce D9 et D10, relie D11/D12, amorce D16/D17).
+**Vérif globale :** à `crowd 200+` (puis 500, 5000), un joueur perçoit ~100 % de la foule
+(focus net + lointains dégradés), son débit ↓ reste **borné et plat** quand N grandit, AUCUN
+plafond dur à 32, et un hôte/parent malveillant ne peut ni cacher la foule ni couler le faible
+(sous netem throttlé à 5 Ko/s, le faible reste fonctionnel ; un nœud égoïste est servi en dégradé).
 
 ### Chapitre 9 — Durcissement de la confiance (Sybil, éclipse, rendez-vous) 🔴 *priorité 3*
 **But :** rendre la triche *coordonnée* coûteuse et l'isolement impossible.
@@ -555,8 +646,10 @@ un labo réseau complet. C'est ça qui transforme nos tests « localhost » en v
 
 1. **Chapitre 7 d'abord** (réalisme/netem) — sans ça, tout le reste est de la confiance,
    pas de la preuve. Et il va probablement révéler des bugs réseau réels à corriger.
-2. **Chapitre 8 ensuite** (inclusivité) — c'est le cœur de ta vision « tout le monde
-   peut jouer », et ça dépend de mesures réalistes (donc après 7).
+2. **Chapitre 8 ensuite** (la foule dense + inclusivité, **ferme D22**) — LE gros morceau
+   d'archi et le cœur de ta vision « tout le monde peut jouer / voir la foule ». Dépend des
+   mesures réalistes (donc après 7). On commence par **8.0** (mesurer le mur : couverture de
+   perception) avant de coder la solution (gossip + AoI à deux tiers + cellules agrégées).
 3. **Chapitre 9** (confiance dure) — referme les attaques *coordonnées*, les vraies.
 4. **Chapitre 10** (identité persistante + chiffrement) — indispensable pour de vrais
    utilisateurs.

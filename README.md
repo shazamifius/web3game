@@ -213,10 +213,21 @@ anti-triche).
 >   COMPLET** ; sans `--cone` (symétrique) → **0/6** (le punch échoue → relais ch.5). Le hole
 >   punching multi-joueurs tient donc à travers de vrais NAT, pas juste sur localhost.
 >   **Chapitre 7 bouclé.**
->   **PROCHAINE ACTION = chapitre DENSITÉ (D22)** : le vrai gros morceau (AoI par vision +
->   découverte décentralisée + relais). **Tout le plan post-chapitre-6 (chapitres
->   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
->   la liste ci-dessous n'est qu'un aperçu.
+>   **PLAN DU CHAPITRE 8 (densité, D22) ÉCRIT — prochaine action = CODER 8.0.** Le mur D22 a
+>   maintenant son chapitre dédié, écrit AVANT de coder (règle d'or). Diagnostic net : le plafond
+>   est au rendez-vous ([`rendezvous.rs`](src/net/rendezvous.rs) : `keep_nearest(…, 32)`) et le
+>   client **écrase** `link.peers` avec ce roster ([`receive.rs`](src/net/netcode/receive.rs)) →
+>   **le 33e voisin n'est jamais appris**. La réponse est **architecturale, pas un réglage** (monter
+>   le plafond rouvrirait l'O(N²) et noierait le faible — D3) : **séparer le FOCUS** (lien netcode
+>   plein, borné ~32) **de la CONSCIENCE** (perception LOD de la foule, NON plafonnée — ton « AoI par
+>   vision ») ; **découverte par gossip** (le rendez-vous démoté à un simple amorçage) ; **cellules
+>   spatiales + hôte agrégateur** pour tenir l'invariant clé : *réception = O(focus + cellules),
+>   indépendante de la taille N de la foule*. L'ancien « Chapitre 8 — Inclusivité » (D3/D4/D5) est
+>   **fusionné** dans ce chapitre (même problème vu des deux bouts). **Prochaine action concrète =
+>   8.0** : mode `sim crowd <N>` + métrique de **couverture de perception** pour CHIFFRER le mur
+>   (≈16 % de couverture à 200 voisins) avant de le casser. **Tout le plan post-chapitre-6 (chapitres
+>   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
+>   ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les
