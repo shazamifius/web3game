@@ -189,11 +189,14 @@ anti-triche).
 >   **fenêtre glissante** (style IPsec/DTLS : tolère le ré-ordo sans rouvrir le rejeu).
 >   Honnêteté : on pensait que l'anti-rejeu strict expliquait l'effondrement du débit
 >   honnête sous `mauvais` (−70 %) — **c'était faux** (le fix ne récupère que +15 %). La
->   vraie cause est le `limit 1000` par défaut de `tc netem` (plafond ≈ limit/délai ≈
->   8 000/s à 125 ms), pas le protocole. **PROCHAINE ACTION = 7.3b** : relever ce `limit`
->   et re-mesurer pour le prouver. **Tout le plan post-chapitre-6 (chapitres 7→14 + les
->   21 doutes D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
->   ci-dessous n'est qu'un aperçu.
+>   vraie cause était le `limit 1000` par défaut de `tc netem` : **7.3b** le relève à
+>   100 000 (file non bloquante) et **prouve** que le débit honnête sous `mauvais` remonte
+>   à ~21,3k/s (vs `bon` ~23,3k/s → **−9 % seulement**, ≈ la perte de 5 %). **Le protocole
+>   tient sous réseau réel** (250 ms + jitter + perte + ré-ordo) ; le −70 % était un
+>   artefact du harnais, pas le jeu. **PROCHAINE ACTION = 7.4** : instrumenter le coût réel
+>   par nœud (Ko/s ↑↓, CPU, RAM → ferme D19). **Tout le plan post-chapitre-6 (chapitres
+>   7→14 + les 21 doutes D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
+>   la liste ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les

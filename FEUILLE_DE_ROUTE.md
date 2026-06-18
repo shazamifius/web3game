@@ -42,11 +42,13 @@ de ~6,8k à ~7,9k/s (**+15 % seulement**) → l'anti-rejeu n'était PAS le goulo
 identifiée : le `limit 1000` par défaut de netem plafonne à ~limit/délai ≈ 8 000/s à
 125 ms (= pile la mesure). Le fix reste correct (vrais réseaux ré-ordonnent).
 
-**PROCHAINE ACTION = 7.3b** : dans `tools/sim-netem.sh`, ajouter un `limit` large à la règle
-netem (file non bloquante), puis re-mesurer les 3 profils → PROUVER que le débit honnête
-remonte vers `bon` (donc le −70 % était bien l'artefact `limit 1000`, pas le protocole).
-Ensuite seulement : regarder s'il reste un vrai défaut réseau à corriger. Détail : section
-D, chapitre 7 (7.3b). Puis 7.4 (instrumenter Ko/s ↑↓, CPU, RAM par nœud → ferme D19).
+**7.3b ✓** — `limit 100000` dans le harnais : sous `mauvais`, débit honnête ~7,9k → **~21,3k/s**
+(`bon` ~23,3k) → **−9 % seulement**. PROUVÉ : le −70 % était l'artefact `limit 1000`, PAS le
+protocole. **Le protocole tient sous réseau réel.** Le cœur du chapitre 7 est atteint.
+
+**PROCHAINE ACTION = 7.4** : instrumenter `sim` pour rapporter, PAR NŒUD, Ko/s ↑↓, % CPU,
+Mo RAM (ferme D19 : chiffrer le coût réel par nœud pour extrapoler honnêtement vers 55k).
+Puis 7.5 (généraliser `tools/test-nat.sh` au multi-joueurs). Détail : section D, chapitre 7.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -374,10 +376,16 @@ inonder le rendez-vous ne le met pas à genoux.
   pile la mesure (7 876). Recoupé : `moyen` (60 ms) plafond ≈ 16 667 (mesuré 14 553, sous
   le plafond) ; `bon` (15 ms) plafond ≈ 66 667 (pas bridé). Le goulot était la **file du
   harnais**, pas le protocole.
-- [ ] 7.3b — Relever le `limit` netem dans `tools/sim-netem.sh` (file large, non bloquante)
-  et re-mesurer les 3 profils : prouver que le débit honnête remonte vers `bon` (= le
-  protocole tient sous latence ; le −70 % était l'artefact `limit 1000`). Puis voir s'il
-  reste un vrai effet réseau à corriger une fois le harnais hors de cause.
+- [x] 7.3b — `limit 100000` dans la règle netem de `tools/sim-netem.sh` (file non
+  bloquante) + re-mesure des 3 profils. **PROUVÉ :** sous `mauvais`, le débit honnête
+  remonte de ~7 876 (limit 1000) à **~21 287/s** ; `bon` ~23 289/s → **−9 % seulement**
+  (≈ la perte de 5 % × double traversée `lo`, donc essentiellement optimal). Orbe 0/50,
+  attaques neutralisées. *(fait)*
+  **Conclusion du faux débat 7.2/7.3 :** le −70 % était à **100 %** l'artefact `limit 1000`
+  du harnais, PAS le protocole. **Le protocole tient sous réseau réel** (250 ms + jitter +
+  5 % perte + ré-ordonnancement). Le fix anti-rejeu (7.3) reste correct et utile (les vrais
+  réseaux ré-ordonnent), il n'était juste pas le goulot. Aucun défaut réseau résiduel à ce
+  stade — le cœur du chapitre 7 (« arrêter de mentir comme localhost ») est atteint.
 - [ ] 7.4 — Instrumenter `sim` : Ko/s ↑↓, CPU, RAM **par nœud** (ferme D19).
 - [ ] 7.5 — NAT : généraliser `tools/test-nat.sh` au scénario multi-joueurs.
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels). **Vérif :** rapport de simu
