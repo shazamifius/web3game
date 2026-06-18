@@ -207,8 +207,11 @@ pub fn run_bot(label: &str) {
                         Some(w) => {
                             let owner = w.owner;
                             if !link.is_muted(owner) {
-                                if let OrbApply::Implausible = apply_incoming(&mut orb, w, now) {
-                                    link.add_strike(owner, "orbe : saut de version aberrant");
+                                let claimer_pos = last_state.get(&owner).map(|(p, _)| *p);
+                                match apply_incoming(&mut orb, w, now, claimer_pos) {
+                                    OrbApply::Implausible => link.add_strike(owner, "orbe : saut de version aberrant"),
+                                    OrbApply::NoContact => link.add_strike(owner, "orbe : revendiquée sans contact"),
+                                    _ => {}
                                 }
                             }
                         }

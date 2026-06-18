@@ -45,6 +45,11 @@ const NEUTRAL_COLOR: (f32, f32, f32) = (0.85, 0.85, 1.0);
 /// Un bond énorme (ex. vers 65535 pour verrouiller l'orbe à vie) est ABERRANT → on
 /// le refuse et on inscrit une faute. 16 laisse de la marge pour des transferts manqués.
 const MAX_ORB_VERSION_JUMP: u16 = 16;
+/// Distance max (m) entre un nouveau maître et l'orbe au moment où il la revendique
+/// (chap. 6.4). Pour devenir maître il faut avoir ÉTÉ près d'elle (preuve de contact)
+/// — sinon on la « vole » à distance par incréments. Généreux (rayon orbe + joueur +
+/// marge d'interpolation) pour ne jamais refuser une vraie frappe.
+const CONTACT_DIST: f32 = 3.0;
 
 /// Le paquet « état de l'orbe » tel qu'il voyage sur le réseau (avant/après octets).
 pub(crate) struct OrbWire {
@@ -166,6 +171,7 @@ pub(crate) enum OrbApply {
     Applied,     // accepté : il supplante notre état
     Ignored,     // ignoré : ne supplante pas (plus ancien) — bénin
     Implausible, // refusé : saut de version aberrant (tentative de vol/gel) → faute
+    NoContact,   // refusé : se proclame maître sans avoir été près de l'orbe → faute (6.4)
 }
 
 /// L'état logique de l'orbe, partagé par tout le client (une seule par monde).
@@ -389,7 +395,9 @@ pub fn orb_send(
 
 /// Appliquer un paquet d'orbe reçu du réseau. On n'écrase notre état QUE s'il est
 /// supplanté. `now` date ce battement : il prouve que le maître est vivant.
-pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) -> OrbApply {
+/// `claimer_pos` = dernière position connue du maître revendiqué (None si on ne le
+/// « voit » pas). Sert à la PREUVE DE CONTACT (chap. 6.4) lors d'un transfert.
+pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32, claimer_pos: Option<Vec3>) -> OrbApply {
     if !supersedes(w.version, w.owner, orb.version, orb.owner) {
         return OrbApply::Ignored; // état plus ancien : on garde le nôtre (bénin)
     }
@@ -401,7 +409,20 @@ pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32) -> OrbApply {
             return OrbApply::Implausible;
         }
     }
+    // PREUVE DE CONTACT (chap. 6.4) : pour devenir maître, il faut avoir été PRÈS de
+    // l'orbe. Exception : la MIGRATION (l'ancien maître s'est tu depuis MASTER_TIMEOUT)
+    // — là, le remplaçant élu peut être n'importe où, on tolère sans contact. Un
+    // maître INCONNU (qu'on ne voit pas bouger) n'est accepté QUE dans ce cas.
     if orb.owner != Some(w.owner) {
+        let migration = orb.owner.is_some() && (now - orb.last_heard >= MASTER_TIMEOUT);
+        let claim_pos = Vec3::new(w.x, w.y, w.z);
+        let near = match claimer_pos {
+            Some(p) => p.distance_squared(claim_pos) <= CONTACT_DIST * CONTACT_DIST,
+            None => migration,
+        };
+        if !near {
+            return OrbApply::NoContact; // vol à distance / par incréments → faute
+        }
         println!("Orbe : j'adopte le maître {} (v{}) reçu du réseau.", w.owner.short(), w.version);
     }
     orb.owner = Some(w.owner);
@@ -537,15 +558,21 @@ mod tests {
         }
     }
 
-    /// Un transfert normal (+1) est appliqué ; un SAUT vers 65535 (verrou) est refusé.
+    /// Position « au contact » de l'orbe d'exemple (qui est à (0, 1.5, 0)).
+    fn pres() -> Option<Vec3> {
+        Some(Vec3::new(0.0, 1.5, 0.0))
+    }
+
+    /// Un transfert normal (+1) AVEC contact est appliqué ; un SAUT vers 65535
+    /// (verrou) est refusé avant même le test de contact.
     #[test]
     fn apply_borne_le_saut_de_version() {
         let mut orb = orb_test(Some(pid(2)), 5);
-        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 1.0), OrbApply::Applied));
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 1.0, pres()), OrbApply::Applied));
 
         let mut orb = orb_test(Some(pid(2)), 5);
         assert!(matches!(
-            apply_incoming(&mut orb, orbe_exemple(pid(9), 65535), 1.0),
+            apply_incoming(&mut orb, orbe_exemple(pid(9), 65535), 1.0, pres()),
             OrbApply::Implausible
         ));
         assert_eq!(orb.owner, Some(pid(2)));
@@ -556,6 +583,36 @@ mod tests {
     #[test]
     fn apply_ignore_un_etat_plus_ancien() {
         let mut orb = orb_test(Some(pid(2)), 10);
-        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 4), 1.0), OrbApply::Ignored));
+        assert!(matches!(apply_incoming(&mut orb, orbe_exemple(pid(9), 4), 1.0, pres()), OrbApply::Ignored));
+    }
+
+    /// ORB-CREEP (chap. 6.4) : se proclamer maître par +1 SANS être près de l'orbe
+    /// (claimer inconnu, orbe fraîche) → NoContact. Avec contact → accepté.
+    #[test]
+    fn apply_exige_un_contact() {
+        // Maître courant frais (pas une migration), revendiqueur INCONNU (None) → refus.
+        let mut orb = orb_test(Some(pid(2)), 5);
+        orb.last_heard = 1.0;
+        assert!(matches!(
+            apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 1.0, None),
+            OrbApply::NoContact
+        ));
+        assert_eq!(orb.owner, Some(pid(2))); // rien volé
+
+        // Même chose mais le revendiqueur est VU près de l'orbe → accepté.
+        let mut orb = orb_test(Some(pid(2)), 5);
+        orb.last_heard = 1.0;
+        assert!(matches!(
+            apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 1.0, pres()),
+            OrbApply::Applied
+        ));
+
+        // MIGRATION : l'ancien maître s'est tu (> MASTER_TIMEOUT) → un inconnu est toléré.
+        let mut orb = orb_test(Some(pid(2)), 5);
+        orb.last_heard = 0.0;
+        assert!(matches!(
+            apply_incoming(&mut orb, orbe_exemple(pid(9), 6), 10.0, None),
+            OrbApply::Applied
+        ));
     }
 }

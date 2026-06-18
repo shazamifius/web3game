@@ -294,8 +294,8 @@ fn attack_orb_creep(socket: &Socket, identity: &Identity, my_id: PeerId, victims
         }
         sleep(Duration::from_millis(120));
     }
-    println!("[attaquant] 30 pas (+1) envoyés. Côté victimes : orbe ADOPTÉE pas à pas, zéro « 🛡 Faute ».");
-    println!("            → trou n°8 (vol d'orbe lent, sans preuve de contact) à fermer au chap. 6.4.");
+    println!("[attaquant] 30 pas (+1) envoyés. Côté victimes (depuis 6.4) : « 🛡 Faute… orbe");
+    println!("            revendiquée sans contact » → SOURDINE. L'orbe n'est PAS volée. Trou n°8 FERMÉ.");
 }
 
 /// ATTAQUE 8 (ROUGE) — AMPLIFICATION : on envoie nos paquets sous forme RELAY à UN

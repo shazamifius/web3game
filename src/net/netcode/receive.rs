@@ -136,8 +136,13 @@ pub fn net_receive(
                 OrbChecked::Good(w) => {
                     let owner = w.owner;
                     if !link.is_muted(owner) {
-                        if let OrbApply::Implausible = apply_incoming(&mut orb, w, now) {
-                            link.add_strike(owner, "orbe : saut de version aberrant");
+                        // 6.4 : dernière position connue du revendiqueur (preuve de contact).
+                        let claimer_pos =
+                            avatars.map.get(&owner).and_then(|p| p.buffer.back()).map(|s| s.pos);
+                        match apply_incoming(&mut orb, w, now, claimer_pos) {
+                            OrbApply::Implausible => link.add_strike(owner, "orbe : saut de version aberrant"),
+                            OrbApply::NoContact => link.add_strike(owner, "orbe : revendiquée sans contact"),
+                            _ => {}
                         }
                     }
                 }
