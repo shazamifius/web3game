@@ -741,6 +741,16 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   est aussi abandonné par (c) → relais nécessaire (D17). Plafond GLOBAL de perçage NON ajouté
   (anti-gold-plating) : (c)+(d) suffisent, on l'ajoutera si une mesure le réclame.* *Ferme D23 ; amorce D9.*
 
+- [ ] 8.1b-preuve — **Compléter la preuve RÉELLE de l'abandon de perçage (ferme le doute #1).**
+  *Honnêteté :* le « 0 perçage réfléchi » prouvé ci-dessus couvre les cartes-poubelle (jetées par PoW)
+  et les ids déjà connus (non redirigés). Le cas le plus DUR — un attaquant qui **mine de vraies
+  identités PoW neuves** et les pointe vers une victime — n'est aujourd'hui prouvé que par TESTS
+  UNITAIRES (`punch_abandoned` + seau par source), **pas bout-en-bout**. C'est un trou de *démonstration*,
+  pas de *défense*. *Plan :* enrichir `attack gossip-flood` pour qu'il mine quelques identités PoW
+  neuves pointant vers la cible, puis mesurer les perçages réfléchis **par fenêtres de temps** sur ~20 s.
+  **Preuve attendue :** une RAFALE bornée (≤ ~10 s) PUIS le SILENCE (le perçage est abandonné, 8.1b-c) —
+  alors qu'AVANT 8.1b ça aurait été un flot SANS FIN. *Ferme le doute #1 (preuve), confirme 8.1b-c en réel.*
+
 - [ ] 8.2 — **AoI à DEUX TIERS : focus (≤K, plein débit) + conscience (basse fidélité).**
   Séparer dans le code « à qui je tiens un lien netcode complet » (borné ~16-32, prédiction/
   réconciliation/20 Hz, ≈ aujourd'hui) de « qui je perçois » (tout le reste de la table :
