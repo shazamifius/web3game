@@ -655,6 +655,58 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   **Résidu pour 8.2/8.3 :** la fraîcheur PAR pair s'effondre en 1/N (uniforme) → 8.2 rend les
   proches nets (focus 20 Hz) ; 8.3 fait tenir les lointains à 5000 (agrégation par cellule).
 
+> **⚙ CONCEPTION DÉTAILLÉE 8.1b (écrite AVANT de coder, 19 juin) — la rançon honnête du gossip.**
+>
+> **Le diagnostic, en relisant le code (D23 n'est pas UN bug mais TROIS sous-attaques).** Une carte
+> de visite affirme `(id, adresse)` choisis par l'émetteur, SANS preuve. En lisant [punch.rs](src/net/punch.rs),
+> [send.rs](src/net/netcode/send.rs), [bot.rs](src/net/bot.rs) et [receive.rs](src/net/netcode/receive.rs),
+> j'ai isolé exactement ce qu'un menteur peut en faire :
+> 1. **Pollution de table (ids-poubelle).** `learn_peer` n'exige PAS `has_pow` sur l'id d'une carte.
+>    Un attaquant forge des milliers d'ids gratuits → il remplit `link.peers` jusqu'à `MAX_KNOWN = 4096`,
+>    et comme il n'y a pas d'éviction (D16), les vrais pairs ne rentrent plus. Coût attaquant : ~0.
+> 2. **Réflexion / amplification de PUNCH (le vrai danger).** Découverte clé : le STATE et le gossip
+>    ne partent QU'aux trous DÉJÀ ouverts (un trou ne s'ouvre que quand on a *entendu* le pair). La SEULE
+>    chose qu'on envoie à une adresse jamais corroborée, c'est le **PUNCH** — et [net_punch](src/net/punch.rs)
+>    le répète vers une adresse jamais confirmée **indéfiniment** (4×/s, sans jamais abandonner). Donc une
+>    carte `(id quelconque, adresse = VICTIME)` fait que CHAQUE nœud qui la reçoit perce la victime 4×/s,
+>    pour toujours. Diffusée à la foule → flot réfléchi soutenu vers la victime, source (l'attaquant) masquée.
+> 3. **Redirection d'un pair connu.** `learn_peer` rafraîchit l'adresse d'un pair DÉJÀ connu depuis
+>    n'importe quelle carte. Une carte `(id-d-un-vrai-pair, adresse = VICTIME)` détourne donc notre trafic
+>    vers la victime ET nous fait perdre le vrai pair.
+>
+> **Les défenses (en profondeur — chacune dit son rôle ET sa limite, règle anti-enfermement).**
+> - **(a) PoW exigée sur chaque carte apprise.** On rejette tout id sans `has_pow(POW_BITS)`. Une fausse
+>   identité coûte alors ~2¹⁶ (comme une vraie). *Ferme #1. Limite : n'arrête PAS la réflexion via des ids
+>   RÉELS récoltés au rendez-vous/dans le gossip (#2/#3).*
+> - **(b) Le gossip n'ÉCRASE jamais l'adresse d'un pair déjà connu.** On sépare « apprendre via gossip »
+>   (ouï-dire → n'AJOUTE que des inconnus) de « rafraîchir via WELCOME/paquet signé » (corroboré). *Ferme #3.
+>   Limite : un vrai changement d'adresse (NAT rebinding) ne sera vu que via le prochain paquet signé du pair,
+>   pas via gossip — c'est voulu.*
+> - **(c) Perçage spéculatif borné ET abandonné.** [net_punch] (et le bot) cessent de percer un trou jamais
+>   corroboré après un délai généreux (~`PUNCH_GIVEUP` essais ≈ 10 s) au lieu de marteler à vie. *Ferme la
+>   DURÉE de #2 : une carte empoisonnée n'arrose la victime que quelques secondes, plus l'éternité. Limite :
+>   un pair derrière NAT symétrique (qui ne répond jamais au perçage direct) sera aussi abandonné → il lui
+>   faudra un relais (D17), pas un perçage éternel. C'est le bon compromis.*
+> - **(d) Rate-limit de l'apprentissage PAR SOURCE.** Un même expéditeur de gossip (son adresse) ne peut
+>   nous faire apprendre qu'un nombre borné de NOUVEAUX pairs/s (seau à jetons par source, comme le 5.5).
+>   *Ferme le DÉBIT d'injection (#1 et #2 à la source). Limite : un attaquant à plusieurs sources contourne
+>   partiellement — mais chaque source reste bornée, et émettre du gossip crédible suppose un PoW payé.*
+> - *NON retenu pour 8.1b (anti-gold-plating) : un plafond GLOBAL de perçage/s. (c)+(d) bornent déjà débit
+>   ET durée ; si la preuve montre un résidu, on l'ajoutera — pas avant.*
+>
+> **Où vit le code (anti-D2).** Toute la confiance des cartes va dans `NetLink` (`learn_from_gossip` +
+> le seau par source), comme `learn_peer` au 8.1 → **partagée par le bot ET le jeu**, testée une fois. Les
+> appelants ne font que « recharger les seaux » + « tenter d'apprendre ». L'abandon de perçage touche
+> [punch.rs] (jeu) et la boucle de perçage du [bot.rs] (miroir).
+>
+> **Preuve (un VRAI attaquant, fidèle à la philosophie du projet).** `cargo run -- attack gossip-flood` :
+> s'inscrit, récolte les vraies victimes, ouvre une 2ᵉ prise « cible de réflexion », puis déverse aux
+> victimes des cartes empoisonnées `(id-poubelle, addr=cible)` et `(id-réel, addr=cible)` ; il COMPTE les
+> perçages réfléchis arrivant sur la cible. Attendu : ~0 (les poubelles rejetées par PoW, les ids réels non
+> écrasés). + tests unitaires sur `learn_from_gossip` (PoW rejeté, adresse non écrasée, seau par source qui
+> plafonne) et sur l'abandon de perçage. + `gossip-flood` ajouté aux variantes de `sim` : l'essaim TIENT,
+> couverture honnête inchangée.
+
 - [ ] 8.1b — **Durcir le gossip (ferme D23) — AVANT d'empiler 8.2.** Le 8.1 a échangé le plafond
   de 32 contre une porte d'entrée DoS : on apprend des cartes `(id, adresse)` sans preuve de travail
   ni corroboration → réflexion/amplification possible vers une victime, et pollution de table. On
