@@ -15,16 +15,18 @@ use super::anticheat::move_plausible;
 use super::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, POW_BITS};
+use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::{NetLink, MAX_STRIKES};
 use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch};
 use super::skin::random_color;
 use super::wire::{
-    kind, KIND_ACCUSE, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
+    kind, KIND_ACCUSE, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME,
+    PROTO_VERSION,
 };
 use bevy::prelude::Vec3;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -39,6 +41,12 @@ const SEND_HZ: f32 = 20.0;
 const HELLO_PERIOD: f32 = 1.0;
 const PUNCH_PERIOD: f32 = 0.25;
 const SUMMARY_PERIOD: f32 = 2.0;
+/// Période d'émission du gossip (chap. 8.1) : à chaque tic, on présente un lot de
+/// « cartes de visite » à quelques pairs. 0,5 s = découverte rapide sans bavardage.
+const GOSSIP_PERIOD: f32 = 0.5;
+/// Nombre de destinataires (au trou ouvert) à qui on envoie notre lot de cartes par
+/// tic. Petit : la diffusion épidémique couvre la foule en quelques rounds (log N).
+const GOSSIP_FANOUT: usize = 4;
 const TICK: Duration = Duration::from_millis(50);
 const WANDER_RADIUS: f32 = 3.0;
 
@@ -62,6 +70,8 @@ pub(crate) struct Bot {
     hello_acc: f32,
     punch_acc: f32,
     send_acc: f32,
+    gossip_acc: f32,
+    gossip_cursor: usize,
     wander: f32,
     last_pos: Option<Vec3>,
     warned_version: bool,
@@ -90,6 +100,8 @@ impl Bot {
             hello_acc: HELLO_PERIOD,
             punch_acc: 0.0,
             send_acc: 0.0,
+            gossip_acc: 0.0,
+            gossip_cursor: 0,
             wander: phase,
             last_pos: None,
             warned_version: false,
@@ -183,15 +195,30 @@ impl Bot {
                 Some(KIND_WELCOME) => {
                     if let Some((_hue, roster)) = decode_welcome(&bytes) {
                         self.link.my_id = Some(self.link.identity.id());
+                        // 8.1 : le WELCOME AMORCE la table (il ne l'ÉCRASE plus). Le
+                        // rendez-vous n'est qu'un point de départ ; le gossip fera le reste.
                         for (id, addr) in &roster {
-                            if self.verbose && !self.link.peers.contains_key(id) {
-                                println!("[bot {}] nouveau pair {}.", self.label, id.short());
+                            if self.link.learn_peer(*id, *addr, None) {
+                                self.holes.entry(*id).or_insert(false);
+                                if self.verbose {
+                                    println!("[bot {}] nouveau pair {} (amorçage).", self.label, id.short());
+                                }
                             }
-                            self.link.peers.insert(*id, *addr);
-                            self.holes.entry(*id).or_insert(false);
                         }
-                        let present: HashSet<PeerId> = roster.iter().map(|(id, _)| *id).collect();
-                        self.link.peers.retain(|id, _| present.contains(id));
+                    }
+                }
+                // 8.1 : CARTES DE VISITE d'autres pairs. On apprend les inconnus (puis on
+                // les perce). C'est ce qui lève le plafond de 32 : le 33e devient APPRENABLE.
+                Some(KIND_GOSSIP) => {
+                    if let Some(cards) = decode_gossip(&bytes) {
+                        for c in cards {
+                            if self.link.learn_peer(c.id, c.addr, Some((c.x, c.z))) {
+                                self.holes.entry(c.id).or_insert(false);
+                                if self.verbose {
+                                    println!("[bot {}] pair {} appris par gossip.", self.label, c.id.short());
+                                }
+                            }
+                        }
                     }
                 }
                 Some(KIND_PUNCH) => {
@@ -221,6 +248,7 @@ impl Bot {
                                     self.rejected += 1;
                                 } else {
                                     self.last_state.insert(state.id, (np, now));
+                                    self.link.note_pos(state.id, (np.x, np.z));
                                     self.holes.insert(state.id, true);
                                     self.accepted += 1;
                                 }
@@ -253,6 +281,7 @@ impl Bot {
                                 self.rejected += 1;
                             } else {
                                 self.last_state.insert(state.id, (np, now));
+                                self.link.note_pos(state.id, (np.x, np.z));
                                 let rc = self.relay_credits.entry(state.id).or_insert(RELAY_CAP);
                                 let mut n = 0u32;
                                 if *rc >= 1.0 {
@@ -371,6 +400,35 @@ impl Bot {
                     }
                 }
                 self.send_credits.retain(|id, _| self.link.peers.contains_key(id));
+            }
+        }
+
+        // 4bis) GOSSIP (chap. 8.1) : on présente un lot de cartes de visite (un
+        //       sous-ensemble DIVERS, par curseur tournant) à quelques pairs au trou
+        //       ouvert. De proche en proche, chacun finit par apprendre toute la foule
+        //       → le plafond de 32 du rendez-vous est levé, SANS serveur qui énumère.
+        self.gossip_acc += dt;
+        if self.gossip_acc >= GOSSIP_PERIOD {
+            self.gossip_acc = 0.0;
+            if let Some(my_id) = self.link.my_id {
+                let open: Vec<SocketAddr> = self
+                    .link
+                    .peers
+                    .iter()
+                    .filter(|(id, _)| *self.holes.get(id).unwrap_or(&false))
+                    .map(|(_, a)| *a)
+                    .take(GOSSIP_FANOUT)
+                    .collect();
+                if !open.is_empty() {
+                    let cards = sample_cards(&self.link.peers, &self.link.peer_pos, my_id, self.gossip_cursor);
+                    self.gossip_cursor = self.gossip_cursor.wrapping_add(cards.len());
+                    if !cards.is_empty() {
+                        let pkt = encode_gossip(&cards);
+                        for addr in open {
+                            let _ = self.link.socket.send_to(addr, &pkt);
+                        }
+                    }
+                }
             }
         }
 

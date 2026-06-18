@@ -228,9 +228,13 @@ anti-triche).
 >   qui mesure la **couverture de perception** (perçus ÷ à portée) et les tiers *focus / conscience*.
 >   **Prouvé :** `crowd 200` → couverture **16 %** (FOCUS 32 + CONSCIENCE 0), **aveugle à 167** ;
 >   débit de référence **↓ 24,8 Ko/s** (le nombre qui devra rester PLAT quand la couverture montera) ;
->   l'essaim tient (orbe 0/200). 36 tests, 0 warning. **Prochaine action = 8.1** (découverte par
->   gossip : ne plus écraser `link.peers`, l'amorcer ; les pairs s'échangent des « cartes de visite »
->   → la table s'enrichit sans plafond, couverture 16 % → ~100 %). **Tout le plan post-chapitre-6 (chapitres
+>   l'essaim tient (orbe 0/200). **8.1 ✓ FAIT — le mur tombe.** Découverte par GOSSIP (nouveau
+>   `src/net/gossip.rs`, paquet « cartes de visite ») : le WELCOME **amorce** `link.peers` au lieu
+>   de l'écraser, et les pairs s'échangent à bas débit un sous-ensemble divers de pairs connus → la
+>   table s'enrichit **sans plafond**. **Mesuré : couverture 16 % → 98 %** à `crowd 200`, et l'INVARIANT
+>   est prouvé — le débit ↓ **ne grandit pas** de 200 à 500 nœuds (~plat, CPU ~0,7 %, orbe 0 volée).
+>   42 tests, 0 warning. **Prochaine action = 8.2** (AoI à deux tiers : *focus* plein débit pour les
+>   proches, *conscience* LOD pour les lointains). **Tout le plan post-chapitre-6 (chapitres
 >   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
 >   ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot

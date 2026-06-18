@@ -20,6 +20,7 @@ pub(crate) const KIND_PUNCH: u8 = 4; // pair → pair : « j'ouvre mon trou NAT 
 pub(crate) const KIND_ORB: u8 = 5; // maître → pairs : l'état de l'orbe partagée (objet du monde)
 pub(crate) const KIND_RELAY: u8 = 6; // faible → parent : « recopie mon état à mes voisins à ma place »
 pub(crate) const KIND_ACCUSE: u8 = 7; // témoin → pairs : « j'ai banni ce tricheur » (réputation partagée, 6.7)
+pub(crate) const KIND_GOSSIP: u8 = 8; // pair → pairs : « cartes de visite » d'autres pairs (découverte décentralisée, 8.1)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {

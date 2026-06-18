@@ -18,12 +18,14 @@ use crate::net::accuse::decode_accuse;
 use crate::net::anticheat::move_plausible;
 use crate::net::control::decode_welcome;
 use crate::net::crypto::{PeerId, POW_BITS};
+use crate::net::gossip::decode_gossip;
 use crate::net::link::NetLink;
 use crate::net::message::{claimed_id, decode_canonical, sig_ok, PlayerState};
 use crate::net::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply, OrbWire};
 use crate::net::punch::{decode_punch, Holes};
 use crate::net::wire::{
-    kind, KIND_ACCUSE, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
+    kind, KIND_ACCUSE, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME,
+    PROTO_VERSION,
 };
 use bevy::prelude::*;
 use std::collections::VecDeque;
@@ -114,7 +116,25 @@ pub fn net_receive(
                 if let Some((world_hue, roster)) = decode_welcome(&bytes) {
                     link.my_id = Some(link.identity.id());
                     link.world_hue = Some(world_hue);
-                    link.peers = roster.into_iter().collect();
+                    // 8.1 : le WELCOME AMORCE la table (merge), il ne l'ÉCRASE plus.
+                    // Le rendez-vous est démoté au rôle d'amorçage ; le gossip découvre
+                    // le reste de la foule (le 33e devient apprenable, fin de D22).
+                    for (id, addr) in roster {
+                        if link.learn_peer(id, addr, None) {
+                            holes.map.entry(id).or_default();
+                        }
+                    }
+                }
+            }
+            // --- GOSSIP (chap. 8.1) : cartes de visite d'autres pairs reçues d'un voisin.
+            //     On apprend les inconnus (bornés en mémoire) ; net_punch les percera. ----
+            Some(KIND_GOSSIP) => {
+                if let Some(cards) = decode_gossip(&bytes) {
+                    for c in cards {
+                        if link.learn_peer(c.id, c.addr, Some((c.x, c.z))) {
+                            holes.map.entry(c.id).or_default();
+                        }
+                    }
                 }
             }
             // --- PUNCH d'un pair : son paquet est ARRIVÉ, donc notre trou de retour
@@ -158,6 +178,7 @@ pub fn net_receive(
                                 }
                             }
                             // On affiche le protégé chez nous même si le budget est épuisé.
+                            link.note_pos(state.id, (state.x, state.z)); // 8.1 : AoI + gossip
                             ingest_state(
                                 state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
                                 &mut meshes, &mut materials,
@@ -195,6 +216,7 @@ pub fn net_receive(
                         if teleported(&avatars, &state, now) {
                             link.punish(state.id, "téléport (vitesse impossible)");
                         } else {
+                            link.note_pos(state.id, (state.x, state.z)); // 8.1 : pour l'AoI + le gossip
                             ingest_state(
                                 state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
                                 &mut meshes, &mut materials,

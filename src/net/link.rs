@@ -27,6 +27,11 @@ pub struct NetLink {
     pub(crate) identity: Identity,
     pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<PeerId, SocketAddr>, // les autres joueurs : identité → adresse
+    /// DERNIÈRE POSITION (x, z) connue de chaque pair (chap. 8.1). Alimentée par les
+    /// états reçus ET par les cartes de gossip. Sert (a) à pondérer l'AoI avant même
+    /// d'avoir reçu un état du pair, et (b) à fabriquer nos propres « cartes de visite »
+    /// quand on présente ce pair à d'autres (gossip).
+    pub(crate) peer_pos: HashMap<PeerId, (f32, f32)>,
     /// ANTI-REJEU (chap. 5.2, durci au 7.3) : une FENÊTRE GLISSANTE par pair (style
     /// IPsec/DTLS). On retient le plus grand `seq` vu + un masque des 64 derniers déjà
     /// acceptés → on tolère le ré-ordonnancement du réseau (un paquet en retard mais
@@ -53,6 +58,12 @@ pub(crate) const MAX_STRIKES: u32 = 5;
 /// pas ; et chaque identité coûte une preuve de travail (6.2), donc fabriquer un
 /// quorum de fausses identités est coûteux.
 pub(crate) const ACCUSE_QUORUM: usize = 3;
+
+/// Plafond MÉMOIRE de la table de pairs connus (chap. 8.1, D22). Le gossip lève le
+/// plafond de VISION (32) — on peut apprendre toute la foule — mais pas celui de la
+/// MÉMOIRE : au-delà de `MAX_KNOWN` cartes, on cesse d'en ajouter (anti-inondation de
+/// fausses cartes). Très large devant une foule réaliste ; l'éviction fine (TTL) est D16.
+pub(crate) const MAX_KNOWN: usize = 4096;
 
 /// Largeur de la fenêtre d'anti-rejeu, en nombre de `seq` (chap. 7.3). 64 = un masque
 /// `u64`, zéro allocation. À 20 paquets/s ça couvre ~3,2 s de ré-ordonnancement possible
@@ -132,12 +143,46 @@ impl NetLink {
             identity,
             world_hue: None,
             peers: HashMap::new(),
+            peer_pos: HashMap::new(),
             replay: HashMap::new(),
             strikes: HashMap::new(),
             accusations: HashMap::new(),
             accused_broadcast: HashSet::new(),
             weak,
         })
+    }
+
+    /// APPREND un pair (chap. 8.1) : depuis le WELCOME (amorçage) OU une carte de gossip.
+    /// L'ajoute à la table s'il est nouveau, en RAFRAÎCHISSANT son adresse et sa position
+    /// si fournie. Renvoie `true` SEULEMENT si c'était un INCONNU (→ l'appelant ouvrira un
+    /// trou NAT vers lui). On ne s'apprend jamais soi-même, ni l'identité nulle.
+    ///
+    /// Borne MÉMOIRE (`MAX_KNOWN`) : la VISION n'est plus plafonnée (c'est tout l'intérêt
+    /// du gossip contre D22), mais la mémoire SI — sinon un menteur nous noierait sous de
+    /// fausses cartes. Table pleine → on refuse le nouveau (l'éviction fine par TTL est
+    /// le chap. 12 / D16 ; ici on se contente de la borne dure).
+    pub(crate) fn learn_peer(&mut self, id: PeerId, addr: SocketAddr, pos: Option<(f32, f32)>) -> bool {
+        if id.is_none() || Some(id) == self.my_id {
+            return false;
+        }
+        if let Some(xz) = pos {
+            self.peer_pos.insert(id, xz);
+        }
+        if self.peers.contains_key(&id) {
+            self.peers.insert(id, addr); // adresse rafraîchie, pas un nouveau
+            return false;
+        }
+        if self.peers.len() >= MAX_KNOWN {
+            return false; // table pleine : on borne la mémoire (D16)
+        }
+        self.peers.insert(id, addr);
+        true
+    }
+
+    /// Note la dernière position (x, z) d'un pair (chap. 8.1), à chaque état accepté.
+    /// Sert à l'AoI et à fabriquer ses cartes de visite quand on le présente aux autres.
+    pub(crate) fn note_pos(&mut self, id: PeerId, xz: (f32, f32)) {
+        self.peer_pos.insert(id, xz);
     }
 
     /// Ce pair est-il en sourdine (trop de fautes) ? Si oui, on ignore ses paquets.

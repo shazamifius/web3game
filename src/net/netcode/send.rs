@@ -8,11 +8,17 @@ use super::state::{RemoteAvatars, SEND_HZ};
 use crate::net::aoi::{allocate_rates, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::crypto::PeerId;
+use crate::net::gossip::{encode_gossip, sample_cards};
 use crate::net::link::NetLink;
 use crate::net::message::{encode_signed, mark_as_relay, PlayerState};
 use crate::net::punch::Holes;
 use bevy::prelude::*;
 use std::collections::HashMap;
+
+/// Gossip (chap. 8.1) : période d'émission des cartes de visite et nombre de
+/// destinataires par tic. Miroir des réglages du bot ([bot.rs]) — même protocole.
+const GOSSIP_PERIOD: f32 = 0.5;
+const GOSSIP_FANOUT: usize = 4;
 
 pub fn net_send(
     time: Res<Time>,
@@ -21,6 +27,8 @@ pub fn net_send(
     mut last_pos: Local<Option<Vec3>>,
     mut credits: Local<HashMap<PeerId, f32>>,
     mut seq: Local<u64>, // compteur anti-rejeu : +1 à chaque état émis (chap. 5.2)
+    mut gossip_acc: Local<f32>,
+    mut gossip_cursor: Local<usize>,
     link: Res<NetLink>,
     avatars: Res<RemoteAvatars>,
     holes: Res<Holes>,
@@ -44,6 +52,34 @@ pub fn net_send(
         // que chacun puisse vérifier nos signatures.
         let hello = encode_hello(pos.x, pos.z, link.identity.id());
         let _ = link.socket.send_to(link.rendezvous, &hello);
+    }
+
+    // 1bis) GOSSIP (chap. 8.1) : présenter un lot de cartes de visite (sous-ensemble
+    //       DIVERS, curseur tournant) à quelques voisins au trou ouvert. C'est la
+    //       découverte décentralisée qui lève le plafond de 32 (D22). Avant l'éventuel
+    //       retour anticipé ci-dessous : le gossip a son propre rythme, indépendant de SEND_HZ.
+    *gossip_acc += dt;
+    if *gossip_acc >= GOSSIP_PERIOD {
+        *gossip_acc = 0.0;
+        if let Some(my_id) = link.my_id {
+            let open: Vec<std::net::SocketAddr> = link
+                .peers
+                .iter()
+                .filter(|(id, _)| holes.map.get(id).map_or(false, |h| h.open))
+                .map(|(_, a)| *a)
+                .take(GOSSIP_FANOUT)
+                .collect();
+            if !open.is_empty() {
+                let cards = sample_cards(&link.peers, &link.peer_pos, my_id, *gossip_cursor);
+                *gossip_cursor = gossip_cursor.wrapping_add(cards.len());
+                if !cards.is_empty() {
+                    let pkt = encode_gossip(&cards);
+                    for addr in open {
+                        let _ = link.socket.send_to(addr, &pkt);
+                    }
+                }
+            }
+        }
     }
 
     // 2) Notre état vers tous les pairs VOISINS (SEND_HZ/s). On accumule le temps

@@ -86,11 +86,20 @@ indépendant de N*. **8.0 ✓ FAIT (le mur est chiffré) :** mode `cargo run -- 
 rester PLAT quand la couverture montera). NB : l'ancien « Chapitre 8 — Inclusivité » a été FUSIONNÉ
 dans ce chapitre densité (même problème vu des deux bouts : « je ne vois pas la foule » ↔ « je ne
 peux pas tout recevoir de la foule ») — D3/D4/D5 y deviennent la Phase B.
-**PROCHAINE ACTION CONCRÈTE = 8.1** : découverte par GOSSIP — ne plus écraser `link.peers` avec
-le roster ([receive.rs](src/net/netcode/receive.rs) + [bot.rs](src/net/bot.rs)), l'AMORCER ; puis
-les pairs s'échangent à bas débit quelques « cartes de visite » (id + dernière position) → la table
-s'enrichit sans plafond. Objectif mesurable : `crowd 200` couverture 16 % → ~100 %, sans rendez-vous
-qui énumère. Anti-éclipse (diversité des informateurs) dès le départ.
+**8.1 ✓ FAIT (19 juin) — LE MUR DE D22 TOMBE.** Découverte par GOSSIP : nouveau `src/net/gossip.rs`
+(cartes de visite `KIND_GOSSIP`), le WELCOME **amorce** `link.peers` au lieu de l'écraser, et chaque
+nœud s'échange à bas débit un sous-ensemble divers de pairs connus. Logique d'apprentissage mise dans
+`NetLink` (`learn_peer`/`note_pos`, borne `MAX_KNOWN`) → partagée bot+jeu (pas de re-D2). **Mesuré :
+couverture 16 % → 98 % à `crowd 200`, et l'INVARIANT est prouvé** — le débit ↓ ne grandit PAS de 200
+à 500 nœuds (↓35→↓27 Ko/s, ↑ plat ~40 Ko/s, CPU ~0,7 %, orbe 0 volée). 42 tests, 0 warning. *Découverte
+clé en lisant le code : le coût de réception était DÉJÀ borné par le budget d'émission fixe ; le seul
+vrai mur était la DÉCOUVERTE (le plafond 32). Le gossip l'enlève.*
+
+**PROCHAINE ACTION CONCRÈTE = 8.2** : AoI à DEUX TIERS — séparer le **focus** (≤K pairs à lien plein
+20 Hz : prédiction/réconciliation, ≈ aujourd'hui) de la **conscience** (tout le reste : ~1 Hz, LOD,
+pas de prédiction fine). Le water-filling sert d'ABORD le focus puis saupoudre les miettes sur la
+conscience. But mesurable : couverture ~100 % MAIS les PROCHES redeviennent nets (le résidu de fraîcheur
+en 1/N constaté au 8.1 disparaît pour le focus). Voir §D, Chapitre 8 — Phase A, étape 8.2.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -525,7 +534,40 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   l'essaim TIENT (orbe 0/200). *Rien n'est « résolu » ici — le mur est juste rendu chiffrable
   et reproductible, pour qu'on sache à la fin si on l'a vraiment cassé.* 36 tests, 0 warning.
 
-- [ ] 8.1 — **Découverte décentralisée par gossip (le 33e devient APPRENABLE).** Le
+> **⚙ CONCEPTION DÉTAILLÉE 8.1 (écrite AVANT de coder, 19 juin) — avec une DÉCOUVERTE faite
+> en lisant le code.**
+>
+> **La bonne nouvelle d'abord (le water-filling nous a déjà à moitié sauvés).** En relisant
+> [aoi.rs](src/net/aoi.rs) + [bot.rs](src/net/bot.rs), le budget d'émission est FIXE
+> (`SEND_BUDGET_HZ = 240`) et réparti entre les pairs connus. Conséquence ARITHMÉTIQUE : si
+> chacun connaît N−1 pairs, il envoie ~240/(N−1) Hz à chacun ; un receveur reçoit donc de
+> (N−1) émetteurs × 240/(N−1) = **~240 Hz au total, QUEL QUE SOIT N**. Autrement dit, **le coût
+> de réception est DÉJÀ borné** par la générosité (fixe) des émetteurs — l'invariant « débit
+> plat » est à moitié déjà tenu, côté débit. Ce qui n'est PAS tenu : (1) la DÉCOUVERTE (plafond
+> 32 → le 33e jamais appris) et (2) la FRAÎCHEUR par pair, qui s'effondre uniformément en 1/N
+> (à 5000, une maj toutes les ~20 s pour tout le monde → trop vieux même pour du LOD).
+>
+> **Ce que ça change pour le plan (et l'ordre se confirme) :**
+> - **8.1 (gossip) seul** doit faire MONTER la couverture 16 %→~100 % à `crowd 200`, avec un
+>   débit qui monte au plafond (~43 Ko/s) puis reste PLAT à 500. Preuve que le plafond 32 était
+>   arbitraire. MAIS tout le monde sera également « flou » (~1 Hz).
+> - **8.2** rend les PROCHES nets (focus 20 Hz ; la conscience ne touche que les miettes du budget).
+> - **8.3** fait tenir la fraîcheur des LOINTAINS à 5000 : une région = UN flux agrégé, pas des milliers.
+>
+> **Mécanique concrète de 8.1 :**
+> - Nouveau paquet `KIND_GOSSIP` (carte de visite), nouveau `src/net/gossip.rs` :
+>   `[type|ver|count| (id 32, ip 4, port 2, x 4, z 4)×count ]`, `count` borné (≤16 → paquet < 800 o).
+> - [receive.rs](src/net/netcode/receive.rs) + [bot.rs](src/net/bot.rs) : le WELCOME n'ÉCRASE
+>   plus `link.peers`, il l'AMORCE (merge). On RETIRE le `retain(present)` du bot (ligne ~194).
+> - Chaque nœud émet périodiquement (~1 Hz) un GOSSIP vers quelques pairs, avec un sous-ensemble
+>   DIVERS (tirage tournant, pas toujours les mêmes → anti-éclipse) des pairs qu'il connaît.
+> - À la réception : on fusionne les cartes INCONNUES (hole=false → on les perce ensuite via la
+>   machinerie PUNCH existante), table bornée en MÉMOIRE (`MAX_KNOWN`, éviction des plus vieux →
+>   amorce D16). Aucune confiance à une source unique (corroboration durcie en 8.8).
+> - **Preuve :** `crowd 200` couverture 16 % → ~100 % ; puis `crowd 500` montre le débit ↓ PLAT
+>   (ne croît pas avec N) → le plafond est cassé sans rouvrir l'O(N²) ni exploser le débit.
+
+- [x] 8.1 ✓ — **Découverte décentralisée par gossip (le 33e devient APPRENABLE).** Le
   rendez-vous cesse d'être l'énumérateur autoritaire et redevient un simple **amorçage** :
   le WELCOME n'**écrase** plus `link.peers`, il l'**amorce**. Ensuite, chaque pair annonce
   à bas débit, à ses voisins, quelques AUTRES pairs qu'il connaît (id + dernière position
@@ -537,6 +579,23 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   **Preuve :** à `crowd 200`, couverture 16 % → ~100 % (chacun finit par apprendre les 200),
   sans que le rendez-vous ne les énumère. *Risque à surveiller : le gossip lui-même coûte du
   débit — c'est 8.2 + 8.3 qui le bornent ; à 200 c'est tenable, à 5000 il FAUDRA l'agrégation.*
+  **FAIT (19 juin) — le mur tombe, l'invariant TIENT.** Nouveau `src/net/gossip.rs`
+  (paquet `KIND_GOSSIP` = « cartes de visite » : id + adresse + dernière position, ≤16/paquet,
+  sérialisation à la main + 6 tests). Logique d'apprentissage CENTRALISÉE dans `NetLink`
+  (`learn_peer` + `note_pos` + `peer_pos`, borne mémoire `MAX_KNOWN = 4096`) → **partagée par le
+  bot ET le jeu** (on évite de rouvrir D2). Le WELCOME **amorce** désormais `link.peers` (merge),
+  il ne l'**écrase** plus ([receive.rs] + [bot.rs], `retain(present)` supprimé). Chaque nœud diffuse
+  ~2 Hz un lot de cartes (sous-ensemble DIVERS par curseur tournant → amorce anti-éclipse) à
+  `GOSSIP_FANOUT = 4` voisins ; à la réception on apprend les inconnus (puis on les perce).
+  **MESURÉ** (`crowd`, PC tour ASUS, ventilos au max) : couverture **16 % → 98 %** à `crowd 200`
+  (50 s ; moy 194/199 voisins), **67 %** à `crowd 500` (40 s, convergence non finie : démarrage
+  échelonné). **L'INVARIANT EST PROUVÉ** : le débit ↓ ne grandit PAS de 200 à 500 (↓35 → ↓27 Ko/s,
+  ↑42 → ↑39 Ko/s, **PLAT/en baisse**), CPU ~0,7 % inchangé, orbe 0 volée, essaim TENU. 42 tests,
+  0 warning. *Pourquoi le débit reste plat sans rien faire de plus : le budget d'émission est FIXE
+  (240 Hz) et réparti → quand chacun connaît N−1 pairs, il envoie 240/(N−1) Hz à chacun, donc un
+  receveur reçoit (N−1)×240/(N−1) = ~240 Hz, indépendant de N (la DÉCOUVERTE était le seul mur).*
+  **Résidu pour 8.2/8.3 :** la fraîcheur PAR pair s'effondre en 1/N (uniforme) → 8.2 rend les
+  proches nets (focus 20 Hz) ; 8.3 fait tenir les lointains à 5000 (agrégation par cellule).
 
 - [ ] 8.2 — **AoI à DEUX TIERS : focus (≤K, plein débit) + conscience (basse fidélité).**
   Séparer dans le code « à qui je tiens un lien netcode complet » (borné ~16-32, prédiction/
