@@ -46,6 +46,22 @@ struct Hole {
     data_acc: f32,
 }
 
+/// Marque le trou vers `pid` comme OUVERT et l'annonce UNE seule fois — peu importe que
+/// la preuve vienne d'un PUNCH reçu ou de DONNÉES reçues (les deux prouvent la voie
+/// directe). Corrige un bug d'INSTRUMENTATION (7.5) : avant, seul le PUNCH l'annonçait ;
+/// si les données arrivaient en premier, le trou s'ouvrait EN SILENCE et le test
+/// multi-joueurs sous-comptait les connexions (mesh affiché incomplet alors qu'il
+/// fonctionnait).
+fn note_hole_open(holes: &mut HashMap<PeerId, Hole>, pid: PeerId, via: &str, label: &str, start: Instant) {
+    if let Some(h) = holes.get_mut(&pid) {
+        if !h.open {
+            h.open = true;
+            let s = start.elapsed().as_secs_f32();
+            println!("[{label}] ✅ trou OUVERT avec le pair {} à t={s:.2}s ({via}) — connexion DIRECTE !", pid.short());
+        }
+    }
+}
+
 pub fn run_nat_test(label: &str) {
     let socket = match Socket::bind(0) {
         Ok(s) => s,
@@ -101,25 +117,17 @@ pub fn run_nat_test(label: &str) {
                     }
                 }
                 Some(KIND_PUNCH) => {
+                    // Recevoir un PUNCH du pair prouve que NOTRE trou de retour est ouvert.
                     if let Some(pid) = decode_punch(&bytes) {
-                        if let Some(h) = holes.get_mut(&pid) {
-                            if !h.open {
-                                h.open = true;
-                                let s = start.elapsed().as_secs_f32();
-                                println!(
-                                    "[{label}] ✅ trou OUVERT avec le pair {} à t={s:.2}s — connexion DIRECTE établie !",
-                                    pid.short()
-                                );
-                            }
-                        }
+                        note_hole_open(&mut holes, pid, "punch reçu", label, start);
                     }
                 }
                 Some(KIND_STATE) => {
+                    // Recevoir des DONNÉES applicatives prouve AUSSI la voie directe : on
+                    // annonce l'ouverture si ce n'était pas déjà fait (au lieu de l'ouvrir
+                    // en silence — c'était le bug d'instrumentation du 7.5).
                     if let Some(st) = decode(&bytes) {
-                        if let Some(h) = holes.get_mut(&st.id) {
-                            h.open = true; // recevoir des données prouve le trou ouvert
-                        }
-                        println!("[{label}]    ← données reçues du pair {} (la voie directe fonctionne).", st.id.short());
+                        note_hole_open(&mut holes, st.id, "données reçues", label, start);
                     }
                 }
                 _ => {}

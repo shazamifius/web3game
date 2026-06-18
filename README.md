@@ -205,9 +205,14 @@ anti-triche).
 >   (**doute D22**) : en **foule dense**, on est **aveugle au-delà de 32 voisins** (plafond dur
 >   du rendez-vous) — le water-filling ne peut rien car il n'apprend jamais le 33e. C'est une
 >   question d'**architecture** (AoI par vision + découverte décentralisée), pas de réglage →
->   ça mérite un **chapitre dédié**. *Ferme D19, ouvre D22.* **PROCHAINE ACTION** : arbitrer
->   entre **7.5** (faux NAT multi-joueurs, `test-nat.sh`) et le **chapitre densité (D22)**.
->   **Tout le plan post-chapitre-6 (chapitres
+>   ça mérite un **chapitre dédié**. *Ferme D19, ouvre D22.* **7.5** généralise enfin
+>   [`tools/test-nat.sh`](tools/test-nat.sh) au **multi-joueurs** (N maisons `p1..pN` derrière
+>   N NAT distincts + résumé du mesh) ; la logique multi-pair est prouvée sur localhost
+>   (3 joueurs → 6/6 trous) et a révélé+corrigé un **bug d'instrumentation** ([`natdemo.rs`](src/net/natdemo.rs) :
+>   le trou s'ouvrait en silence si les données arrivaient avant le punch). La preuve NAT
+>   réelle se fait avec `sudo ./tools/test-nat.sh 3 --cone`. **Chapitre 7 bouclé.**
+>   **PROCHAINE ACTION = chapitre DENSITÉ (D22)** : le vrai gros morceau (AoI par vision +
+>   découverte décentralisée + relais). **Tout le plan post-chapitre-6 (chapitres
 >   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
 >   la liste ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot

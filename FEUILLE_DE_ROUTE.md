@@ -59,11 +59,19 @@ mur : **D22 — en foule dense, on est aveugle au-delà de 32 voisins** (plafond
 rendez-vous ; le water-filling ne peut rien car il n'apprend jamais le 33e). **Ferme D19,
 ouvre D22.** 36 tests, 0 warning.
 
-**PROCHAINE ACTION — DEUX pistes, à arbitrer :** (a) **7.5** — faux NAT MULTI-joueurs en
-namespaces (`tools/test-nat.sh`), prouver le hole-punching hors localhost ; (b) **chapitre
-densité dédié (D22)** — le vrai « plus gros problème du projet » : AoI par vision + découverte
-sans plafond dur (gossip/DHT) + relais, scénario de foule dense dans `sim`. 7.5 est plus
-petit/contenu ; la densité est le gros morceau d'architecture. Détail : section D + doute D22.
+**7.5 ✓** — `tools/test-nat.sh` généralisé au MULTI-joueurs (N maisons `p1..pN` derrière
+`nat1..natN`, résumé du mesh). Logique multi-pair prouvée sur localhost (3 joueurs → 6/6
+trous). A révélé + corrigé un **bug d'instrumentation** dans [natdemo.rs] (trou ouvert en
+silence si données reçues avant le punch). *Preuve NAT réelle = run `sudo ./tools/test-nat.sh
+3 --cone` (full-cone → mesh complet) et sans `--cone` (symétrique → 0 trou direct → relais).*
+
+**PROCHAINE ACTION = chapitre DENSITÉ dédié (D22)** — le chapitre 7 (« confrontation au réel »)
+est bouclé : le lien tient sous mauvais réseau (7.1→7.3b), le coût/nœud est chiffré honnêtement
+(7.4/7.4b), le NAT multi-joueurs marche (7.5). Reste LE gros morceau, désormais écrit noir sur
+blanc : **D22 — en foule dense, on est aveugle au-delà de 32 voisins.** C'est une question
+d'architecture (AoI par VISION + découverte décentralisée sans plafond dur type gossip/DHT +
+relais/parent), à ouvrir proprement comme un chapitre à part entière. Voir D22 (section
+Catégorie 8) pour le constat mesuré et la piste.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -152,13 +160,17 @@ machine suffit** (voir section E). *Vérif :* refaire tourner `sim` à travers n
 mesurer que l'essaim tient (orbe intègre, débit honnête stable, pas de fausses
 migrations) à 100/150/250 ms et 1/3/5 % de perte.
 
-**D2 — Le bot de sim ≠ exactement le jeu.** 🟡 `[ch. 12]`
-*Constat :* `bot.rs` réécrit la boucle de réception de `receive.rs` (les *décisions* de
-confiance sont partagées, mais l'*orchestration* est dupliquée). *Pourquoi :* un
-correctif dans l'un peut ne pas atteindre l'autre → divergence silencieuse à long
-terme. *Piste :* extraire un cœur de session commun (un seul `Bot`/`Session` que le
-jeu Bevy ET le bot pilotent). *Vérif :* le jeu et le bot partagent le même module de
-boucle ; un test prouve qu'ils traitent un paquet donné identiquement.
+**D2 — Le bot de sim ≠ exactement le jeu.** 🟠 `[ch. 12]` *(risque CONFIRMÉ réel au 7.4b)*
+*Constat :* `bot.rs` réécrit la boucle de réception de `receive.rs` ET d'émission de
+`send.rs` (les *décisions* de confiance sont partagées, mais l'*orchestration* est
+dupliquée). *Pourquoi :* un correctif dans l'un peut ne pas atteindre l'autre → divergence
+silencieuse à long terme. **⚠ Preuve que le risque est RÉEL (7.4b) :** le bot émettait à
+plein débit à tous, alors que le jeu répartit par AoI water-filling → on a mesuré un coût
+faux (89 au lieu de 34 Ko/s) jusqu'à ce qu'on le remarque. Corrigé en faisant appeler au bot
+les mêmes fonctions qu'[aoi.rs] — MAIS l'orchestration reste dupliquée (le risque demeure).
+*Piste :* extraire un cœur de session commun (un seul `Bot`/`Session` que le jeu Bevy ET le
+bot pilotent). *Vérif :* le jeu et le bot partagent le même module de boucle ; un test prouve
+qu'ils traitent un paquet donné identiquement.
 
 ### Catégorie 2 — L'inclusivité (le cœur de la vision)
 
@@ -438,7 +450,11 @@ inonder le rendez-vous ne le met pas à genoux.
   mêmes fonctions qu'[aoi.rs]) → coût re-mesuré **↑34/↓31 Ko/s/nœud** (et non 89, artefact du
   bot naïf). Le rapport AVOUE désormais la **réserve de densité (D22)** : en foule, aveugle
   au-delà de 32. **Ferme D19, ouvre D22 (→ chapitre densité dédié).**
-- [ ] 7.5 — NAT : généraliser `tools/test-nat.sh` au scénario multi-joueurs.
+- [x] 7.5 ✓ — NAT MULTI-joueurs : `tools/test-nat.sh` prend un N (défaut 3), crée N maisons
+  (`p1..pN` derrière `nat1..natN`) + résumé du mesh (trous ouverts / N−1). Logique multi-pair
+  prouvée sur localhost (mesh 3 joueurs = 6/6). **Bug d'instrumentation corrigé** ([natdemo.rs] :
+  le trou s'ouvrait en SILENCE si les données arrivaient avant le punch → sous-comptage).
+  *Preuve NAT réelle (full-cone / symétrique) = ton run `sudo ./tools/test-nat.sh 3 --cone`.*
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels + le doute densité D22).
 **Vérif :** rapport de simu sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.
 
