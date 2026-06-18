@@ -181,12 +181,14 @@ anti-triche).
 > - **Décisions de direction prises** (détail dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)) :
 >   ① on chiffre tout ; ② preuve de travail anti-Sybil réglable ; ③ ordre normal
 >   7→8→9→10 ; ④ identité persistante (clé sauvée dans un fichier).
-> - **PROCHAINE ACTION = chapitre 7 (confrontation au réel)**, sous-étape **7.1** :
->   écrire `tools/sim-netem.sh` (applique `tc netem` latence/perte sur `lo`, lance la
->   simu, nettoie à la fin), puis mesurer que l'essaim tient avec une *vraie* mauvaise
->   connexion. **Tout le plan post-chapitre-6 (chapitres 7→14 + les 21 doutes D1→D21)
->   est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste ci-dessous n'est
->   qu'un aperçu.
+> - **Chapitre 7 en cours (confrontation au réel). 7.1 ✓** : `tools/sim-netem.sh`
+>   applique une *vraie* mauvaise connexion (`tc netem` : latence/jitter/perte sur `lo`,
+>   3 profils `bon|moyen|mauvais`), lance la simu, et retire toujours le netem à la fin.
+>   Prouvé réel en profil `moyen` (~120 ms + 2 % perte) : l'essaim a TENU (20/20 montés,
+>   orbe intègre, orb-creep mis en sourdine). **PROCHAINE ACTION = 7.2** : mesurer sous
+>   les 3 profils. **Tout le plan post-chapitre-6 (chapitres 7→14 + les 21 doutes
+>   D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste ci-dessous
+>   n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
 >   headless. Scénario type : un terminal `cargo run -- rendezvous`, deux
 >   `cargo run -- bot alice` / `bot bob`, puis `cargo run -- attack <nom>`. Les

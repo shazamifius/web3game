@@ -30,16 +30,19 @@ tout** (ch. 10) ; ② **PoW anti-Sybil réglable** (on durcit si les tests l'exi
 ③ **ordre normal** 7→8→9→10 (pas de priorité forcée au 0-connexion) ; ④ **identité
 persistante = clé sauvée dans un fichier** (ch. 10).
 
-**La prochaine action concrète = commencer le CHAPITRE 7 (confrontation au réel).**
-Première sous-étape **7.1** : écrire `tools/sim-netem.sh` — un script qui applique
-`tc netem` (latence/jitter/perte) sur l'interface `lo`, lance la simulation
-(`cargo run --release -- sim <bots> <attaquants> <s>`), puis **retire proprement** le
-netem à la fin (même schéma que `tools/sim-cool.sh` avec un `trap`). Puis **7.2** :
-faire tourner la simu sous 3 profils (bon 30 ms / moyen 120 ms+2 % / mauvais
-250 ms+5 %+jitter) et MESURER (orbe intègre ? fausses migrations ? débit honnête
-stable ? rejets anti-rejeu dus au ré-ordonnancement ?). Puis **7.3** corriger ce que
-netem révèle (probable : l'anti-rejeu strict casse sur paquets re-ordonnés → fenêtre
-de tolérance). Détail complet : section D, chapitre 7.
+**On est dans le CHAPITRE 7 (confrontation au réel). 7.1 est FAIT.**
+**7.1 ✓** — `tools/sim-netem.sh` écrit et **prouvé réel** : il applique `tc netem` sur
+`lo` (3 profils `bon|moyen|mauvais`), lance la simu, et retire toujours le netem à la
+sortie (`trap`). Validé en profil `moyen` (~120 ms + 2 % perte) : l'essaim a TENU
+(20/20 montés, orbe intègre, orb-creep mis en sourdine). Piège tranché : sur `lo` le
+délai compte double → profils exprimés en ping cible, `delay = ping ÷ 2`.
+
+**PROCHAINE ACTION = 7.2** : faire tourner la simu sous les 3 profils (bon 30 ms /
+moyen 120 ms+2 % / mauvais 250 ms+5 %+jitter+ré-ordo) et MESURER (orbe intègre ? fausses
+migrations ? débit honnête stable ? rejets anti-rejeu dus au ré-ordonnancement ? et
+**élucider pourquoi le `teleport` n'a laissé aucune trace** au run 7.1). Puis **7.3**
+corriger ce que netem révèle (probable : l'anti-rejeu strict casse sur paquets
+re-ordonnés → fenêtre de tolérance). Détail complet : section D, chapitre 7.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -96,8 +99,9 @@ Chapitre **6 — refonte BÉTON** : **terminé**, les 10 trous de l'audit fermé
 | 6.8 Simulation massive + essaim | **Preuve** que ça tient (50 & 300 nœuds) |
 
 **Outils disponibles** : `cargo run -- rendezvous | a | b | bot <nom> | attack <type> |
-sim <bots> <attaquants> <s>`, plus `tools/sim-cool.sh` (ventilos) et `tools/test-nat.sh`
-(NAT en namespaces). **35 tests unitaires, 0 warning.** Le jeu 3D réel fonctionne
+sim <bots> <attaquants> <s>`, plus `tools/sim-cool.sh` (ventilos), `tools/test-nat.sh`
+(NAT en namespaces) et `tools/sim-netem.sh` (mauvaise connexion via `tc netem`, ch.7.1).
+**35 tests unitaires, 0 warning.** Le jeu 3D réel fonctionne
 (vérifié à l'écran : avatars + pseudos `0000…` + badge OWN BALLE).
 
 > **Ce que B prouve vraiment, et ne prouve pas.** B prouve la *correction* et la
@@ -324,8 +328,16 @@ inonder le rendez-vous ne le met pas à genoux.
 
 ### Chapitre 7 — Confrontation au réel (latence, perte, NAT) 🔴 *priorité 1*
 **But :** arrêter de mentir comme localhost. Mesurer la vérité.
-- [ ] 7.1 — Harnais `tc netem` sur `lo` : un script `tools/sim-netem.sh` qui applique
-  latence/jitter/perte puis lance `sim`, et nettoie à la fin (comme `sim-cool.sh`).
+- [x] 7.1 — Harnais `tc netem` sur `lo` : script `tools/sim-netem.sh` (3 profils
+  `bon|moyen|mauvais`) qui applique latence/jitter/perte/ré-ordonnancement, lance `sim`,
+  et **retire toujours** le netem à la sortie (`trap`, comme `sim-cool.sh`). *(fait)*
+  **Piège tranché :** sur `lo`, le délai compte DOUBLE (aller + retour sur la même
+  interface) → les profils sont exprimés en PING cible et le script applique `delay =
+  ping ÷ 2`. **Prouvé réel** (profil `moyen`, ~120 ms + 2 % perte) : netem posé → simu
+  → `lo` revenu à `noqueue` ; l'essaim a TENU (20/20 montés, voisins moy 21/plafond 32,
+  ~5680 paquets honnêtes/s, orbe 0/20 volée, orb-creep mis en SOURDINE).
+  > À creuser au 7.2 : le `teleport` n'a laissé **aucune** trace (0 paquet de triche
+  > rejeté, 0 faute) — rejoint trop tard, perte netem, ou angle mort réel ?
 - [ ] 7.2 — Faire tourner la simu sous 3 profils réseau (bon / moyen / mauvais : 30/120/250
   ms, 0/2/5 % perte, jitter) et **mesurer** : orbe intègre ? fausses migrations ? débit
   honnête stable ? rejets anti-rejeu dus au ré-ordonnancement ?
