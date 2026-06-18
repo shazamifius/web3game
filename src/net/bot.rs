@@ -104,6 +104,14 @@ impl Bot {
     pub(crate) fn relayed(&self) -> u64 {
         self.relayed
     }
+    /// Total d'octets ÉMIS / REÇUS par ce nœud depuis l'ouverture de sa prise (7.4).
+    /// Sert à mesurer la bande passante réelle par nœud dans la simulation.
+    pub(crate) fn bytes_up(&self) -> u64 {
+        self.link.socket.bytes_sent()
+    }
+    pub(crate) fn bytes_down(&self) -> u64 {
+        self.link.socket.bytes_recv()
+    }
     /// Combien de pairs ce nœud a-t-il mis en sourdine (directement ou par quorum) ?
     pub(crate) fn muted(&self) -> usize {
         self.link

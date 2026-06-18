@@ -46,9 +46,16 @@ identifiée : le `limit 1000` par défaut de netem plafonne à ~limit/délai ≈
 (`bon` ~23,3k) → **−9 % seulement**. PROUVÉ : le −70 % était l'artefact `limit 1000`, PAS le
 protocole. **Le protocole tient sous réseau réel.** Le cœur du chapitre 7 est atteint.
 
-**PROCHAINE ACTION = 7.4** : instrumenter `sim` pour rapporter, PAR NŒUD, Ko/s ↑↓, % CPU,
-Mo RAM (ferme D19 : chiffrer le coût réel par nœud pour extrapoler honnêtement vers 55k).
-Puis 7.5 (généraliser `tools/test-nat.sh` au multi-joueurs). Détail : section D, chapitre 7.
+**7.4 ✓** — `sim` chiffre le coût RÉEL par nœud (nouveau `src/net/probe.rs`) : bande passante
+(compteurs d'octets dans la prise) + CPU du thread (`/proc/thread-self/stat`), réels ; RAM
+crête **globale** du process (pas de RAM/nœud factice — un seul tas partagé). Mesuré à
+**saturation** (50 nœuds, voisinage au plafond 32) : **↑89/↓80 Ko/s/nœud, CPU ~1,5 %/cœur,
+37 Mo**. Bornés par le voisinage (~32), PAS par le total → constants à 55k (~0,7 Mbit/s ↑
+par joueur, tenable). **Ferme D19.** 37 tests, 0 warning.
+
+**PROCHAINE ACTION = 7.5** : généraliser `tools/test-nat.sh` (un faux NAT en namespaces) au
+scénario MULTI-joueurs (plusieurs nœuds derrière des NAT distincts qui se percent), pour
+prouver le hole-punching hors localhost. Détail : section D, chapitre 7.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -305,11 +312,24 @@ repéré comme statistiquement anormal.
 
 ### Catégorie 8 — Méta-doutes (sur la démarche)
 
-**D19 — On n'a jamais mesuré le coût RÉEL par nœud (CPU, RAM, bande passante).** 🟠 `[ch. 7]`
-*Constat :* la simu dit « ça tient » mais ne chiffre pas Ko/s ↑↓, % CPU, Mo RAM par nœud.
-*Pourquoi :* sans ces chiffres, « 55K » reste une intuition. *Piste :* instrumenter `sim`
-pour rapporter ces métriques par nœud. *Vérif :* on peut dire « un nœud = X Ko/s ↑, Y
-Ko/s ↓, Z % CPU » → on extrapole honnêtement vers 55K.
+**D19 — On n'a jamais mesuré le coût RÉEL par nœud (CPU, RAM, bande passante).** ✅ `[7.4 FAIT]`
+*Constat (était) :* la simu disait « ça tient » sans chiffrer Ko/s ↑↓, % CPU, Mo RAM par nœud.
+*Résolu (7.4) :* `sim` mesure désormais, **par nœud** sur la fenêtre de test, la bande
+passante réelle (compteurs d'octets dans la prise) et le temps CPU réel du thread
+(`/proc/thread-self/stat`) ; la RAM est donnée **globale** (crête `VmHWM` du process), car
+un seul tas est partagé entre threads → on REFUSE d'inventer une RAM par nœud factice.
+**Mesure à SATURATION** (50 nœuds → voisinage au plafond 32, 2 attaquants, NixOS, PC tour
+ASUS) : **↑ ~89 Ko/s/nœud (max ~101), ↓ ~80 Ko/s/nœud, CPU ~1,5 %/cœur, RAM crête 37 Mo
+process.** Cohérence vérifiée : 89 Ko/s ÷ 32 voisins ÷ 20 Hz ≈ 139 o/paquet ≈ état signé
+112 o + en-têtes → la mesure ne ment pas.
+*Extrapolation 55k (honnête) :* ces chiffres sont **bornés par le voisinage (~32), PAS par
+le total de joueurs** (6.6) → ils ne bougent PAS à 55k ; l'échelle se fait en AJOUTANT des
+machines. Un nœud demande **~0,7 Mbit/s ↑** (≈0,85 avec en-têtes IP/UDP, non comptés par
+notre compteur de charge utile) — tenable sur une connexion domestique modeste. *Réserves :*
+(1) sur `localhost`, le CPU ne compte PAS le coût réseau réel (pas de NIC, pas de RTT) →
+c'est le coût logique+crypto, plancher honnête ; (2) le compteur mesure la charge utile UDP,
+le fil réel ajoute ~28 o/paquet d'en-têtes. Le vrai mur de densité au-delà de 32 voisins
+reste l'AoI/relais (chantier futur), pas le débit par lien.
 
 **D20 — Attaques combinées / adaptatives jamais testées.** 🟠 `[ch. 9]`
 *Constat :* nos attaques sont jouées isolément. Un vrai adversaire combine (Sybil +
@@ -386,7 +406,9 @@ inonder le rendez-vous ne le met pas à genoux.
   5 % perte + ré-ordonnancement). Le fix anti-rejeu (7.3) reste correct et utile (les vrais
   réseaux ré-ordonnent), il n'était juste pas le goulot. Aucun défaut réseau résiduel à ce
   stade — le cœur du chapitre 7 (« arrêter de mentir comme localhost ») est atteint.
-- [ ] 7.4 — Instrumenter `sim` : Ko/s ↑↓, CPU, RAM **par nœud** (ferme D19).
+- [x] 7.4 ✓ — Instrumenter `sim` : Ko/s ↑↓ + CPU réels **par nœud** (compteurs prise +
+  `/proc/thread-self/stat`), RAM crête **globale** (pas de RAM/nœud factice). Mesuré à
+  saturation : ↑89/↓80 Ko/s/nœud, CPU ~1,5 %/cœur, 37 Mo. **Ferme D19.** (nouveau `src/net/probe.rs`)
 - [ ] 7.5 — NAT : généraliser `tools/test-nat.sh` au scénario multi-joueurs.
 **Ferme :** D1, D19 (et révèle des correctifs réseau réels). **Vérif :** rapport de simu
 sous netem montrant que l'essaim tient avec de *vrais* défauts réseau.

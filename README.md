@@ -193,8 +193,16 @@ anti-triche).
 >   100 000 (file non bloquante) et **prouve** que le débit honnête sous `mauvais` remonte
 >   à ~21,3k/s (vs `bon` ~23,3k/s → **−9 % seulement**, ≈ la perte de 5 %). **Le protocole
 >   tient sous réseau réel** (250 ms + jitter + perte + ré-ordo) ; le −70 % était un
->   artefact du harnais, pas le jeu. **PROCHAINE ACTION = 7.4** : instrumenter le coût réel
->   par nœud (Ko/s ↑↓, CPU, RAM → ferme D19). **Tout le plan post-chapitre-6 (chapitres
+>   artefact du harnais, pas le jeu. **7.4** chiffre enfin le **coût réel par nœud**
+>   (nouveau [`src/net/probe.rs`](src/net/probe.rs)) : bande passante (compteurs d'octets
+>   dans la prise) et CPU du thread (`/proc/thread-self/stat`) **réels, par nœud** ; la RAM
+>   est donnée **globale** (crête du process) car un seul tas est partagé — on **refuse** une
+>   RAM/nœud factice. Mesuré à **saturation** (50 nœuds → voisinage au plafond 32) :
+>   **↑ ~89 Ko/s, ↓ ~80 Ko/s, CPU ~1,5 %/cœur par nœud, 37 Mo crête**. Comme tout est borné
+>   par le voisinage (~32, pas par le total de joueurs), ces chiffres **ne bougent pas à 55k**
+>   (~0,7 Mbit/s ↑ par joueur → tenable sur une connexion domestique) ; **ferme D19**.
+>   **PROCHAINE ACTION = 7.5** : faux NAT multi-joueurs en namespaces (`test-nat.sh`).
+>   **Tout le plan post-chapitre-6 (chapitres
 >   7→14 + les 21 doutes D1→D21) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** —
 >   la liste ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot

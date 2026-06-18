@@ -18,6 +18,7 @@
 
 use super::attack::run_attack;
 use super::bot::Bot;
+use super::probe::{peak_rss_bytes, thread_cpu_secs};
 use super::rendezvous::run_rendezvous;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -30,6 +31,10 @@ struct NodeStat {
     rejected: u64,
     muted: usize,
     orb_stolen: bool,
+    /// COÛT RÉEL du nœud (chap. 7.4), mesuré sur la fenêtre `secs` :
+    bytes_up: u64,   // octets émis par ce nœud
+    bytes_down: u64, // octets reçus par ce nœud
+    cpu_secs: f64,   // secondes de CPU brûlées par le thread de ce nœud
 }
 
 pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
@@ -54,6 +59,12 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
                 return;
             };
             let start = Instant::now();
+            // On photographie le coût AU DÉBUT de la fenêtre (après le minage de
+            // l'identité, fait dans Bot::new) : ainsi le CPU et les octets mesurés ne
+            // couvrent QUE le protocole sur `secs`, pas la preuve de travail initiale.
+            let cpu0 = thread_cpu_secs();
+            let up0 = bot.bytes_up();
+            let down0 = bot.bytes_down();
             let mut last = Instant::now();
             while start.elapsed().as_secs() < secs {
                 let dt = last.elapsed().as_secs_f32();
@@ -67,6 +78,9 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
                 rejected: bot.rejected(),
                 muted: bot.muted(),
                 orb_stolen: bot.orb_master().is_some(),
+                bytes_up: bot.bytes_up().saturating_sub(up0),
+                bytes_down: bot.bytes_down().saturating_sub(down0),
+                cpu_secs: (thread_cpu_secs() - cpu0).max(0.0),
             };
             stats.lock().unwrap().push(ns);
         }));
@@ -110,6 +124,43 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
     println!("Paquets de triche rejetés (cumulé) : {total_rej}");
     println!("Sourdines (tricheurs neutralisés)  : {total_muted}");
     println!("Intégrité de l'orbe                : {stolen}/{n_bots} nœud(s) avec orbe volée (attendu 0)");
+
+    // ---- COÛT RÉEL PAR NŒUD (chap. 7.4, ferme D19) ---------------------------------
+    // On chiffre sur les nœuds RÉELLEMENT actifs (avec voisins) : c'est le profil d'un
+    // vrai participant. La bande passante est la métrique reine pour extrapoler à 55k.
+    let active: Vec<&NodeStat> = stats.iter().filter(|s| s.neighbors > 0).collect();
+    if !active.is_empty() {
+        let n = active.len() as f32;
+        let secs_f = secs.max(1) as f32;
+        // Ko/s = octets / secondes / 1024.
+        let up_rates: Vec<f32> = active.iter().map(|s| s.bytes_up as f32 / secs_f / 1024.0).collect();
+        let down_rates: Vec<f32> = active.iter().map(|s| s.bytes_down as f32 / secs_f / 1024.0).collect();
+        let avg_up = up_rates.iter().sum::<f32>() / n;
+        let max_up = up_rates.iter().cloned().fold(0.0, f32::max);
+        let avg_down = down_rates.iter().sum::<f32>() / n;
+        let max_down = down_rates.iter().cloned().fold(0.0, f32::max);
+        // %CPU d'un cœur = temps CPU / temps mur × 100.
+        let cpu_pct: Vec<f32> = active.iter().map(|s| (s.cpu_secs as f32 / secs_f) * 100.0).collect();
+        let avg_cpu = cpu_pct.iter().sum::<f32>() / n;
+        let max_cpu = cpu_pct.iter().cloned().fold(0.0, f32::max);
+
+        println!("-------- COÛT RÉEL PAR NŒUD (7.4) ---------");
+        println!("Bande passante ↑ (émis)            : moy {avg_up:.1} Ko/s, max {max_up:.1} Ko/s");
+        println!("Bande passante ↓ (reçu)            : moy {avg_down:.1} Ko/s, max {max_down:.1} Ko/s");
+        println!("CPU par nœud (logique+crypto)      : moy {avg_cpu:.1} %cœur, max {max_cpu:.1} %cœur");
+        println!("  (localhost : ne compte PAS le coût réseau d'un vrai déploiement)");
+        // RAM : valeur GLOBALE du process, jamais par nœud (un seul tas partagé).
+        let peak = peak_rss_bytes();
+        if peak > 0 {
+            let peak_mo = peak as f32 / (1024.0 * 1024.0);
+            let approx_per = peak_mo / n_bots.max(1) as f32;
+            println!("RAM crête du PROCESSUS entier      : {peak_mo:.0} Mo  (~{approx_per:.1} Mo/nœud — MOYENNE grossière,");
+            println!("  inclut rendez-vous + attaquants + code + allocateur ; PAS une mesure par nœud)");
+        }
+        // Extrapolation honnête : à débit constant par nœud (voisinage borné, 6.6).
+        println!("→ À voisinage borné, ces chiffres par nœud NE bougent PAS à 55k : on ajoute");
+        println!("  des machines, on ne surcharge pas une seule. ↑ {avg_up:.1} Ko/s/nœud = la contrainte clé.");
+    }
     println!("===========================================");
     if up > 0 && stolen == 0 {
         println!("✅ L'essaim a TENU : voisinage borné, orbe intègre, attaques absorbées.");

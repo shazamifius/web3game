@@ -10,6 +10,8 @@
 //!   - `punch`      : hole punching (percer les NAT pour une connexion directe)
 //!   - `orb`        : l'orbe partagée (objet du monde à maître unique + transfert)
 //!   - `transport`  : la prise réseau UDP générique (`Socket`)
+//!   - `probe`      : sonde système (temps CPU du thread, RAM crête) pour chiffrer le
+//!                    coût RÉEL d'un nœud (chap. 7.4, via /proc — Linux)
 //!   - `rendezvous` : le serveur d'annuaire qui présente les joueurs entre eux
 //!   - `skin`       : la couleur de skin aléatoire d'une session
 //!   - `demo`       : le mode texte `net-demo` (observer les paquets sans la 3D)
@@ -37,6 +39,7 @@ mod message;
 mod natdemo;
 mod netcode;
 mod orb;
+mod probe;
 mod punch;
 mod rendezvous;
 mod sim;
