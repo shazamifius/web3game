@@ -80,11 +80,17 @@ Le diagnostic est net : le plafond est au rendez-vous ([rendezvous.rs](src/net/r
 → le 33e n'est jamais appris. La réponse (architecture, pas réglage) : **séparer FOCUS (lien plein,
 borné ~32) de CONSCIENCE (perception LOD, non plafonnée)**, découverte par **gossip** (le rendez-vous
 démoté à l'amorçage), **cellules + hôte agrégateur** pour tenir l'invariant *réception = O(K + cellules),
-indépendant de N*. **PROCHAINE ACTION CONCRÈTE = 8.0** : mode `sim crowd <N>` + métriques de
-**couverture de perception** et de **tiers de fidélité**, pour CHIFFRER le mur (≈16 % de couverture
-à 200) avant de le casser. NB : l'ancien « Chapitre 8 — Inclusivité » a été FUSIONNÉ dans ce
-chapitre densité (même problème vu des deux bouts : « je ne vois pas la foule » ↔ « je ne peux pas
-tout recevoir de la foule ») — D3/D4/D5 y deviennent la Phase B.
+indépendant de N*. **8.0 ✓ FAIT (le mur est chiffré) :** mode `cargo run -- crowd <N>` + métrique de
+**couverture de perception** + tiers focus/conscience. Mesuré : `crowd 200` → couverture **16 %**
+(FOCUS 32 + CONSCIENCE 0), **aveugle à 167** ; débit de référence à BATTRE **↓ 24,8 Ko/s** (doit
+rester PLAT quand la couverture montera). NB : l'ancien « Chapitre 8 — Inclusivité » a été FUSIONNÉ
+dans ce chapitre densité (même problème vu des deux bouts : « je ne vois pas la foule » ↔ « je ne
+peux pas tout recevoir de la foule ») — D3/D4/D5 y deviennent la Phase B.
+**PROCHAINE ACTION CONCRÈTE = 8.1** : découverte par GOSSIP — ne plus écraser `link.peers` avec
+le roster ([receive.rs](src/net/netcode/receive.rs) + [bot.rs](src/net/bot.rs)), l'AMORCER ; puis
+les pairs s'échangent à bas débit quelques « cartes de visite » (id + dernière position) → la table
+s'enrichit sans plafond. Objectif mesurable : `crowd 200` couverture 16 % → ~100 %, sans rendez-vous
+qui énumère. Anti-éclipse (diversité des informateurs) dès le départ.
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -504,16 +510,20 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
 
 **— Phase A : VOIR la foule sans plafond dur (le cœur de D22) —**
 
-- [ ] 8.0 — **Scénario de foule + métriques de perception dans `sim` (mesurer le mur AVANT
-  de le casser).** Nouveau mode `sim crowd <N>` (N bots vraiment co-localisés) et DEUX
-  mesures neuves au rapport, à côté du probe 7.4 (Ko/s ↓, CPU) :
-  • **Couverture de perception** = sur les N pairs réellement à portée, combien ce nœud
-    perçoit-il (à n'importe quelle fidélité) ? Aujourd'hui : plafonné → `32/N`.
-  • **Tiers de fidélité** = combien en *focus* (lien plein) vs en *conscience* (basse
-    fidélité) ? Aujourd'hui : conscience = 0 (le tier n'existe pas encore).
-  **Preuve attendue (ROUGE, c'est le but) :** à `crowd 200`, couverture ≈ 16 %, aveugle à
-  168. *Rien n'est « résolu » ici — on rend le mur chiffrable, sinon on ne saura pas si on
-  l'a cassé.*
+- [x] 8.0 ✓ — **Scénario de foule + métriques de perception dans `sim` (mesurer le mur AVANT
+  de le casser).** Nouveau mode `cargo run -- crowd <N> [secs]` (N bots co-localisés sur un
+  cercle de 3 m → tous réellement à portée) et DEUX mesures neuves au rapport, à côté du
+  probe 7.4 (Ko/s ↓, CPU) :
+  • **Couverture de perception** = sur les pairs réellement à portée (actifs − 1), combien
+    ce nœud perçoit-il ? Aujourd'hui : plafonné → `32/(N−1)`.
+  • **Tiers de fidélité** = *focus* (lien plein) vs *conscience* (basse fidélité). Aujourd'hui :
+    conscience = 0 (le tier n'existe pas encore → 8.2).
+  **PROUVÉ (le mur, en ROUGE comme prévu) :** `crowd 60` → couverture **54 %** (aveugle à 27) ;
+  `crowd 200` → couverture **16 %**, FOCUS 32 + CONSCIENCE 0, **aveugle à 167**. Le chiffre
+  prédit (16 %) = le mesuré. **Débit de référence À BATTRE** (le coût qui devra rester PLAT
+  quand la couverture montera) : `crowd 200` → **↓ 24,8 Ko/s moy (41 max), ↑ 26,8 Ko/s** ;
+  l'essaim TIENT (orbe 0/200). *Rien n'est « résolu » ici — le mur est juste rendu chiffrable
+  et reproductible, pour qu'on sache à la fin si on l'a vraiment cassé.* 36 tests, 0 warning.
 
 - [ ] 8.1 — **Découverte décentralisée par gossip (le 33e devient APPRENABLE).** Le
   rendez-vous cesse d'être l'énumérateur autoritaire et redevient un simple **amorçage** :

@@ -104,6 +104,20 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
     report(&stats.lock().unwrap(), n_bots, n_attackers, secs);
 }
 
+/// Mode `crowd` (chap. 8.0) : une FOULE DENSE de `n` nœuds AU MÊME ENDROIT, sans
+/// attaquant, dédiée à mesurer la COUVERTURE DE PERCEPTION (le mur D22). C'est `sim`
+/// sans attaquants, avec l'intention affichée : « sur la foule à portée, combien chaque
+/// nœud en perçoit-il ? » Aujourd'hui, plafonné → on s'attend à une couverture FAIBLE
+/// dès que `n` dépasse le plafond de voisinage. Le but du chapitre 8 est de la faire
+/// monter à ~100 % SANS exploser le débit (preuve : rejouer ceci à la fin du chapitre).
+pub fn run_crowd(n: usize, secs: u64) {
+    let attendu = if n > 1 { (MAX_NEIGHBORS * 100 / (n - 1)).min(100) } else { 100 };
+    println!("=== FOULE DENSE (8.0, D22) : {n} nœuds AU MÊME ENDROIT, {secs}s, 0 attaquant ===");
+    println!("On mesure la COUVERTURE DE PERCEPTION (perçus ÷ à portée).");
+    println!("Plafond actuel = {MAX_NEIGHBORS} → couverture attendue ~{attendu}% (le reste : AVEUGLE).");
+    run_sim(n, 0, secs);
+}
+
 fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
     let up = stats.iter().filter(|s| s.neighbors > 0).count();
     let total_acc: u64 = stats.iter().map(|s| s.accepted).sum();
@@ -162,15 +176,42 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
         // (6.6) → constant à 55k... MAIS seulement si voir ~32 voisins suffit (cf. infra).
         println!("→ Coût borné par le voisinage (~{MAX_NEIGHBORS}), PAS par le total → constant à 55k");
         println!("  TANT QUE voir ~{MAX_NEIGHBORS} voisins suffit. ↑ {avg_up:.1} Ko/s/nœud = la contrainte clé.");
-        // RÉSERVE DE DENSITÉ (doute D22, 7.4b) : les bots sont co-localisés (rayon 3 m),
-        // donc `sim N` est une FOULE de N. Si N dépasse le plafond du rendez-vous, on ne
-        // voit qu'une fraction de la foule — on est AVEUGLE au reste. À dire franchement.
-        if n_bots > MAX_NEIGHBORS && max_nb >= MAX_NEIGHBORS {
-            let blind = n_bots.saturating_sub(MAX_NEIGHBORS + 1);
-            println!("⚠ DENSITÉ (D22) : ces {n_bots} nœuds sont au même endroit, mais chacun n'en voit");
-            println!("  que ~{max_nb} (plafond du rendez-vous) → AVEUGLE à ~{blind} voisins. La foule");
-            println!("  dense n'est PAS résolue : le water-filling répartit le budget sur les {MAX_NEIGHBORS} connus,");
-            println!("  mais n'apprend jamais l'existence des autres. Vrai mur d'échelle → chapitre densité.");
+
+        // ---- COUVERTURE DE PERCEPTION (chap. 8.0 — on CHIFFRE le mur D22) -------------
+        // Les bots tournent tous sur un cercle de rayon WANDER_RADIUS = 3 m (bot.rs) →
+        // diamètre 6 m ≪ CANDIDATE_RADIUS = 500 m : CHAQUE nœud actif est RÉELLEMENT à
+        // portée de TOUS les autres. La « foule à portée » d'un nœud = (actifs − 1). On
+        // mesure la FRACTION de cette foule qu'il perçoit vraiment. C'est la métrique reine
+        // du chapitre 8 : on veut la voir monter à ~100 % SANS que le débit ↓ explose.
+        let crowd = active.len().saturating_sub(1).max(1);
+        // FOCUS = pairs à lien plein débit (= le voisinage actuel). CONSCIENCE = pairs
+        // perçus en basse fidélité SANS lien plein : ce tier N'EXISTE PAS encore (il
+        // arrive en 8.2) → 0 partout. C'est précisément l'état « rouge » à casser.
+        let avg_focus = active.iter().map(|s| s.neighbors).sum::<usize>() as f32 / n;
+        let avg_awareness = 0.0f32; // tier CONSCIENCE pas encore implémenté (→ 8.2)
+        let coverages: Vec<f32> = active
+            .iter()
+            .map(|s| (s.neighbors as f32 / crowd as f32).min(1.0))
+            .collect();
+        let avg_cov = coverages.iter().sum::<f32>() / n;
+        let min_cov = coverages.iter().cloned().fold(f32::INFINITY, f32::min);
+        let avg_blind = (crowd as f32 - avg_focus - avg_awareness).max(0.0);
+        println!("-------- COUVERTURE DE PERCEPTION (8.0, mesure D22) --------");
+        println!("Foule réellement à portée (co-localisée) : {crowd} pairs/nœud");
+        println!("Perçus par nœud                    : FOCUS moy {avg_focus:.1} + CONSCIENCE moy {avg_awareness:.1}");
+        println!("  (CONSCIENCE = LOD basse fidélité : tier inexistant aujourd'hui → arrive en 8.2)");
+        println!(
+            "COUVERTURE de la foule             : moy {:.0}%, min {:.0}%  (perçus ÷ à portée)",
+            avg_cov * 100.0,
+            min_cov * 100.0
+        );
+        if avg_blind >= 1.0 {
+            println!("⚠ D22 NON RÉSOLU : chaque nœud est AVEUGLE à ~{avg_blind:.0} voisins présents.");
+            println!("  Plafond dur {MAX_NEIGHBORS} au rendez-vous + link.peers écrasé par le roster → le 33e");
+            println!("  n'est jamais appris (le water-filling ne répartit qu'entre les {MAX_NEIGHBORS} connus).");
+            println!("  But du ch.8 : couverture → ~100 % SANS plafond ET débit ↓ qui reste PLAT quand N grandit.");
+        } else {
+            println!("✓ Couverture ~complète : la foule tient sous le plafond (pas un cas dense ici).");
         }
     }
     println!("===========================================");

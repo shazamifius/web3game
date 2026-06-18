@@ -59,5 +59,5 @@ pub use netcode::{
 pub use orb::{orb_grab, orb_migrate, orb_send, orb_simulate, setup_orb};
 pub use punch::{net_punch, Holes};
 pub use rendezvous::run_rendezvous;
-pub use sim::run_sim;
+pub use sim::{run_crowd, run_sim};
 pub use skin::{random_color, MyColor};

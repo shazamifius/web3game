@@ -63,6 +63,16 @@ fn main() {
         return;
     }
 
+    // `cargo run -- crowd <N> [secondes]`  lance une FOULE DENSE de N nœuds au même
+    // endroit (chap. 8.0) et mesure la COUVERTURE DE PERCEPTION — le mur D22 : au-delà
+    // de 32 voisins, on est AVEUGLE. Sert à CHIFFRER le problème avant de le résoudre.
+    if mode == Some("crowd") {
+        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+        net::run_crowd(n, secs);
+        return;
+    }
+
     // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
     // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
     if mode == Some("nat-test") {

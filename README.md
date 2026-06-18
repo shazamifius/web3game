@@ -223,9 +223,14 @@ anti-triche).
 >   vision ») ; **découverte par gossip** (le rendez-vous démoté à un simple amorçage) ; **cellules
 >   spatiales + hôte agrégateur** pour tenir l'invariant clé : *réception = O(focus + cellules),
 >   indépendante de la taille N de la foule*. L'ancien « Chapitre 8 — Inclusivité » (D3/D4/D5) est
->   **fusionné** dans ce chapitre (même problème vu des deux bouts). **Prochaine action concrète =
->   8.0** : mode `sim crowd <N>` + métrique de **couverture de perception** pour CHIFFRER le mur
->   (≈16 % de couverture à 200 voisins) avant de le casser. **Tout le plan post-chapitre-6 (chapitres
+>   **fusionné** dans ce chapitre (même problème vu des deux bouts). **8.0 ✓ FAIT — le mur est
+>   chiffré.** Nouveau mode `cargo run -- crowd <N>` : une foule dense de N nœuds au même endroit,
+>   qui mesure la **couverture de perception** (perçus ÷ à portée) et les tiers *focus / conscience*.
+>   **Prouvé :** `crowd 200` → couverture **16 %** (FOCUS 32 + CONSCIENCE 0), **aveugle à 167** ;
+>   débit de référence **↓ 24,8 Ko/s** (le nombre qui devra rester PLAT quand la couverture montera) ;
+>   l'essaim tient (orbe 0/200). 36 tests, 0 warning. **Prochaine action = 8.1** (découverte par
+>   gossip : ne plus écraser `link.peers`, l'amorcer ; les pairs s'échangent des « cartes de visite »
+>   → la table s'enrichit sans plafond, couverture 16 % → ~100 %). **Tout le plan post-chapitre-6 (chapitres
 >   7→14 + les 22 doutes D1→D22) est dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)** — la liste
 >   ci-dessous n'est qu'un aperçu.
 > - **Comment je vérifie (sans GPU, en terminaux) :** `cargo test` + le bot
