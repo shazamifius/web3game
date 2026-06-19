@@ -24,6 +24,26 @@ pub struct Player;
 pub struct PlayerCamera;
 
 /// Crée le joueur (corps articulé) et sa caméra première personne.
+/// Position de départ pseudo-aléatoire (x, z) dans la salle (chap. 8.2c). Même générateur
+/// maison que la couleur de skin (xorshift, graine = nanosecondes ^ identifiant de processus
+/// → deux fenêtres lancées quasi en même temps tombent à des endroits différents). Aucune
+/// dépendance externe. On garde une marge d'1 m depuis les murs.
+fn random_spawn_xz() -> (f32, f32) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let mut s = (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) | 1;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        (s as f32 / u32::MAX as f32) * 2.0 - 1.0 // ramené dans [-1, 1)
+    };
+    let half = crate::world::ROOM_SIZE / 2.0 - 1.0; // marge depuis les murs
+    (next() * half, next() * half)
+}
+
 pub fn setup_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -42,11 +62,16 @@ pub fn setup_player(
     let magenta = materials.add(body_mat(r * 1.3, g * 1.3, b * 1.3)); // tête (plus vive)
     let violet = materials.add(body_mat(r * 0.55, g * 0.55, b * 0.55)); // jambes (plus sombres)
 
+    // Position de départ ÉPARPILLÉE dans la salle (chap. 8.2c) : sans ça, tous les clients
+    // lancés par `tools/foule-3d.sh` apparaissent au même point → on ne peut pas distinguer
+    // le focus (proches, détaillés) de la conscience (lointains, imposteurs).
+    let (sx, sz) = random_spawn_xz();
+
     commands
         .spawn((
             Player,
             // Centre du corps à 0,7 m : les pieds arrivent ~au sol.
-            Transform::from_xyz(0.0, 0.7, 0.0),
+            Transform::from_xyz(sx, 0.7, sz),
             Visibility::default(),
         ))
         .with_children(|p| {
