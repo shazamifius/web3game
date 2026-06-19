@@ -198,11 +198,18 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 >    reste muet. `is_muted`/`add_strike`/`muted_count` réécrits ; [bot.rs] `muted()` passe par `muted_count()`.
 >    Preuve : tests `score_de_fautes_decroit_avec_le_temps` + `rehabilitation_apres_decroissance_mais_pas_le_recidiviste`
 >    (injection de `now` → pas de `sleep`). 59 tests, 0 warning ; non-régression sim → 30 sourdines, orbe 0/40.
-> 3. **9.2c — Standing par DURÉE.** Raffine la crédibilité (9.2) : standing gradé par l'ancienneté/quantité de
->    participation, pas binaire → durcit le dernier cran du résidu patient. **Risque : moyen.**
+> 3. **9.2c — Standing par DURÉE. ⏸ RE-ÉVALUÉ → PAS FAIT (arrêt volontaire au doute, 19 juin).** En le concevant,
+>    constat : **9.4b (cap par sous-réseau /24) ferme DÉJÀ l'essentiel du résidu patient** — des Sybils même
+>    établis ET co-localisés pour de vrai partagent les IP de l'attaquant → comptés comme UNE voix. 9.2c n'ajouterait
+>    qu'un gain marginal, contre une vraie complexité + un tradeoff (métrique durée/quantité ; risque de freiner la
+>    propagation de réputation en fenêtre courte). Le faire en autonomie = gold-plating (rustine pour cocher une
+>    case). **Décision : on s'arrête, à TRANCHER avec l'utilisateur** (le faire quand même ? le supprimer du plan ?).
 > 4. **⛔ STOP — je NE fais PAS en autonomie (forks qui t'appartiennent) :** **9.1(b) PoW adaptative** (comment
 >    les nœuds s'accordent sur la difficulté = vraie décision, cf. 🧭 carrefour) et **9.5 fédération** (plusieurs
->    rendez-vous). J'irai jusqu'à l'étape 3 si tout est propre, puis je m'arrête et te résume.
+>    rendez-vous). 
+>
+> **▶ Rush autonome TERMINÉ : 9.5a ✓ + 9.3 ✓ faits et poussés ; arrêt propre au doute sur 9.2c. Reste pour
+> l'utilisateur : trancher 9.2c, puis les forks 9.1(b) et 9.5-fédération.**
 
 **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 
