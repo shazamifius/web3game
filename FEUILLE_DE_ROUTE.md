@@ -145,8 +145,9 @@ sur la Phase B (inclusivité : D3/D4/D5). Voir §D, Chapitre 8.
 >   fenêtres sur UN PC, la balle saute/revient (« avance par à-coups »). **Diagnostiqué = artefact mono-PC**
 >   (80 GPU sur une machine → bas FPS → `dt` énorme → le dead-reckoning `pos += vel*dt` fait des pas géants
 >   qui dépassent puis re-snappent ; + maître affamé → migrations en boucle). **Sur 80 machines réelles, ça
->   disparaît** → on NE corrige PAS (la simu ne reflète pas la réalité ici). Discriminateur : `foule-3d.sh 8`
->   doit être fluide. **Deux vrais résidus exposés, à traiter au bon chapitre, PAS maintenant :**
+>   disparaît** → on NE corrige PAS (la simu ne reflète pas la réalité ici). **✓ CONFIRMÉ (19 juin) :
+>   `foule-3d.sh 8` = orbe PARFAITEMENT fluide → l'artefact mono-PC est prouvé, doute levé.** **Deux vrais
+>   résidus exposés malgré tout, à traiter au bon chapitre, PAS maintenant :**
 >   **R1** l'orbe n'est pas interpolée (snap à chaque paquet → à lisser, comme les avatars ; petit correctif futur) ;
 >   **R2** la migration peut split-brain si les listes de pairs diffèrent en grande foule → c'est **D11** (→ ch.11.2,
 >   migration confirmée par quorum).
@@ -898,6 +899,44 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
     dis-le, on ajustera.* **→ ✓ CONFIRMÉ À L'ÉCRAN (19 juin, capture utilisateur, 80 fenêtres) : LOD parfait,
     > 64 visibles, pas de lag de rendu. D24 FERMÉ.** *(Les 80 fenêtres se sont ouvertes sans souci — niri +
     netcode encaissent une vraie foule.) Spawn éparpillé dans la salle ajouté pour distinguer les tiers à l'œil.*
+
+> **⚙ CONCEPTION DÉTAILLÉE 8.3 (écrite AVANT de coder, 19 juin) — pourquoi la conscience NE scale PAS seule.**
+>
+> **Le mur qui reste (mesurable).** 8.2 a borné le DÉBIT reçu (plat 80↔160). Mais la conscience distribue
+> un budget FIXE entre TOUS les pairs lointains : à N=5000, chaque émetteur donne à chaque conscient
+> `80 Hz / ~5000 ≈ 0,016 Hz` = **une mise à jour par MINUTE**. Le débit reste plat (bien), mais la
+> FRAÎCHEUR par pair lointain s'effondre en 1/N → la « foule lointaine » devient une purée figée, inutile.
+> C'est le résidu noté depuis 8.1. **8.3 le règle en remplaçant N flux individuels lointains par
+> QUELQUES flux de RÉSUMÉ.**
+>
+> **L'idée : des CELLULES, chacune avec un HÔTE agrégateur.**
+> - Le monde est découpé en **cellules** (grille ; `cell = (floor(x/T), floor(z/T))`).
+> - Chaque cellule a un **hôte élu** (réutilise l'élection déterministe + migration de l'orbe : plus petit
+>   id parmi les pairs connus DANS la cellule ; relie **D12** « tout est codé pour un objet » → on généralise).
+> - L'hôte produit **UN résumé basse fréquence** de sa cellule : nombre d'occupants + quelques positions
+>   représentatives (échantillon) — pas les 500 individus. Il le diffuse à qui regarde cette cellule.
+> - Un observateur lointain s'abonne aux **cellules** (un flux résumé chacune) au lieu des N individus.
+>   Réception = `focus (plein) + voisinage proche (conscience) + C_cellules (résumés)` = **O(K + C),
+>   indépendant de N** — l'invariant tenu jusqu'à 5000, ET avec une fraîcheur correcte des lointains.
+>
+> **Un point clé qui SIMPLIFIE (et qui répond à R2/D11) :** un résumé est **consultatif**, pas autoritaire
+> comme l'orbe. Si deux hôtes résument la même cellule (split-brain de migration en grande foule), on a
+> juste **deux flux redondants** — un peu de gaspillage, AUCUNE corruption. Donc **8.3 N'A PAS besoin que la
+> migration soit durcie d'abord** (D11/ch.11.2) : il TOLÈRE le multi-hôte par nature. (À l'inverse de l'orbe,
+> où le split-brain corrompt l'autorité.) On construit donc 8.3 sur l'élection simple existante, sans béton sur du sable.
+>
+> **Bonus :** l'index spatial des cellules sert AUSSI à choisir le focus en O(K) au lieu du tri O(N log N)
+> de `refresh_focus` (la dette du 8.2a-bis) — on ne trie plus que les pairs des cellules proches.
+>
+> **Sous-étapes prévues :** **8.3a** grille de cellules + `cell_of(pos)` + index « qui est dans quelle
+> cellule » (depuis `peer_pos`) — pur, testé. **8.3b** élection/migration d'hôte de cellule (réutilise la
+> machinerie orbe, généralisée) — testé en headless. **8.3c** paquet `KIND_CELL_SUMMARY` (occupants +
+> représentants) + émission par l'hôte + ingestion (affichage des lointains via résumé). **8.3d** preuve :
+> `crowd 500 → 1000 → 2000` en headless → fraîcheur des lointains correcte ET débit ↓ PLAT, + brancher le
+> focus sur l'index (vire le O(N log N)).
+> **Doutes d'avance :** (a) coût/justice de l'hôte (il bosse pour les autres → relie D4, l'économie du parent,
+> Phase B) ; (b) un hôte malveillant ment sur sa cellule (cache/invente des gens → relie D5/D9 ; corroboration 8.8) ;
+> (c) granularité de la cellule (trop grosse = résumé grossier ; trop fine = trop de cellules) — à calibrer par la mesure.
 
 - [ ] 8.3 — **Cellules spatiales + hôte de cellule agrégateur (ce qui fait tenir l'invariant
   à 500/5000).** Partitionner le monde en cellules ; chaque cellule a un **hôte élu** (réutilise
