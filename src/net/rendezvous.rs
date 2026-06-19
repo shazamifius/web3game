@@ -18,6 +18,24 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+/// Plafond du nombre de clients que le rendez-vous garde en mémoire (chap. 9.5a, D21). Sa table
+/// est indexée par ADRESSE SOURCE (lue dans le paquet), or une source UDP est usurpable → sans
+/// borne, un flood de HELLO depuis des adresses bidon ferait croître la table jusqu'à épuiser la
+/// RAM (le rendez-vous est notre SEUL point central → le protéger compte, D21). Large devant une
+/// vraie instance ; l'éviction des silencieux (5 s) libère en continu.
+/// *Limite ASSUMÉE (résidu) : une fois plein, un nouveau venu HONNÊTE peut être refusé tant que la
+/// table est saturée de sources usurpées. La vraie parade = routabilité (handshake prouvant que la
+/// source est réelle) → plus lourd, étape ultérieure (anti-spoofing). Ici on borne la MÉMOIRE
+/// (anti-crash), pas encore l'éviction par usurpation.*
+const MAX_CLIENTS: usize = 8192;
+
+/// Admet-on ce HELLO dans la table du rendez-vous (chap. 9.5a) ? Un client DÉJÀ connu est toujours
+/// admis (on rafraîchit). Un NOUVEAU n'est admis que s'il reste de la place sous le plafond. Pur →
+/// testable sans lancer la boucle réseau.
+fn should_admit(is_known: bool, current_len: usize, cap: usize) -> bool {
+    is_known || current_len < cap
+}
+
 /// Ce que le rendez-vous retient d'un client : son id, sa dernière activité, sa
 /// position (pour l'AoI), et son dernier nombre de voisins (pour ne logger qu'au
 /// changement).
@@ -55,6 +73,12 @@ pub fn run_rendezvous() {
             };
             // 6.2 : une identité sans preuve de travail n'est même pas listée.
             if !id.has_pow(pow_bits()) {
+                continue;
+            }
+            // 9.5a (D21) : borne MÉMOIRE. Un client déjà connu est rafraîchi ; un nouveau n'entre
+            // que s'il reste de la place sous le plafond → un flood de sources usurpées ne peut
+            // plus faire enfler la table sans fin (au pire il sature, l'éviction 5 s la draine).
+            if !should_admit(clients.contains_key(&from), clients.len(), MAX_CLIENTS) {
                 continue;
             }
             let pos = (px, pz);
@@ -98,5 +122,24 @@ pub fn run_rendezvous() {
         });
 
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 9.5a — la politique d'admission borne la table : un NOUVEAU venu est refusé quand c'est
+    /// plein (anti-DoS mémoire), mais un client DÉJÀ connu est toujours rafraîchi (il ne perd pas
+    /// sa place parce que la table est pleine).
+    #[test]
+    fn admission_borne_la_table_mais_garde_les_connus() {
+        // De la place : tout le monde entre.
+        assert!(should_admit(false, 10, 8192)); // nouveau, place libre
+        assert!(should_admit(true, 10, 8192)); // connu
+        // Pleine : le nouveau est refusé, le connu reste admis.
+        assert!(!should_admit(false, 8192, 8192)); // nouveau + plein → refusé
+        assert!(should_admit(true, 8192, 8192)); // connu + plein → rafraîchi quand même
+        assert!(!should_admit(false, 9000, 8192)); // au-delà du plafond aussi
     }
 }

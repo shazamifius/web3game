@@ -187,8 +187,11 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > contredit, ou décision qui t'appartient — je ne pose JAMAIS de rustine pour avancer. Chaque étape = design
 > (+ challenge si besoin) → code → PREUVE (test unitaire + non-régression `sim`) → commit → push → maj de ce doc.
 > Ce plan n'est PAS gravé : si une étape révèle qu'il faut le changer, je le change et je le note.*
-> 1. **9.5a — Rendez-vous BORNÉ (anti-DoS mémoire, D21).** Sa table `clients` est non bornée → un flood de HELLO
->    (sources usurpées) épuise sa RAM. Cap + admission testable. Isolé à [rendezvous.rs]. **Risque : faible.**
+> 1. **9.5a — Rendez-vous BORNÉ (anti-DoS mémoire, D21). ✓ FAIT (19 juin).** `MAX_CLIENTS = 8192` + `should_admit`
+>    (un connu est toujours rafraîchi ; un nouveau seulement s'il reste de la place) dans [rendezvous.rs] → un
+>    flood de HELLO usurpés ne fait plus enfler la table sans fin (au pire elle sature, l'éviction 5 s la draine).
+>    57 tests, 0 warning ; non-régression sim 40/40, orbe 0/40. *Résidu ASSUMÉ : table pleine → un honnête peut
+>    être refusé ; vraie parade = routabilité (handshake anti-spoofing) → étape ultérieure. Ici on borne la RAM.*
 > 2. **9.3 — Réhabilitation (D8).** Les fautes sont PERMANENTES (mute à vie) — injuste pour une faute transitoire.
 >    Score de fautes à DÉCROISSANCE temporelle (`Instant` interne ; fonction de décroissance PURE testable) →
 >    un pair qui cesse de mal se comporter se réhabilite ; un vrai tricheur récidiviste reste muet. **Risque : moyen**
