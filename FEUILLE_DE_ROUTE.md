@@ -994,6 +994,51 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 **But :** rendre la triche *coordonnée* coûteuse et l'isolement impossible.
 - [ ] 9.1 — **Refonte anti-Sybil** : difficulté PoW bien plus haute + adaptative ; étude
   d'un second facteur (vouching social). Ferme D6.
+
+> ### 🧭 CARREFOUR D'ARCHITECTURE 9.1 — comment rendre une identité « chère » (écrit AVANT de coder, 19 juin)
+> *Réversible. On note les trois pistes pour pouvoir y revenir ; rien n'est figé. État actuel du code :
+> `crypto::POW_BITS = 16`, une **constante de compilation GLOBALE et figée** — le « jouet » de D6. Une
+> identité coûte ~2¹⁶ essais ≈ instantané → 3 identities Sybil suffisent à frame un honnête via le quorum
+> d'accusation (6.7, `ACCUSE_QUORUM = 3`). C'est CE trou que 9.1+9.2 referment.*
+>
+> **La tension de fond (à garder en tête) :** anti-Sybil et **inclusivité tirent en sens opposés**. Plus on
+> rend l'identité chère (CPU), plus on punit le joueur FAIBLE (un téléphone qui doit miner 2²⁴ avant de
+> jouer) — ce qui contredit la vision « du 0-connexion à la fibre, chacun joue » (D3/D4, la Phase B du ch.8
+> qu'on vient de mettre en pause). Une PoW dure mal pensée *referme* l'inclusivité par la fenêtre. Le bon
+> design doit donc être **cher pour l'attaquant en masse, mais léger pour l'honnête isolé**.
+>
+> **Piste (a) — PoW FIXE mais bien plus haute.** On monte simplement `POW_BITS` (ex. 20–24) et on le rend
+> réglable (plus une constante de compilation). *Pour :* trivial, aucun mécanisme nouveau, aucun accord
+> entre nœuds à trouver. *Contre :* taxe à PLAT — même prix pour l'attaquant et pour le téléphone du
+> débutant ; ne s'adapte pas à une attaque (toujours trop cher en temps calme, ou trop peu sous assaut).
+> → **rôle naturel : un SOCLE (prix plancher minimal), pas la réponse entière.**
+>
+> **Piste (b) — PoW LOCALEMENT ADAPTATIVE.** Chaque nœud, en bon « Shield », relève le prix d'admission
+> qu'il EXIGE des autres selon la pression LOCALE qu'il observe (cadence de nouvelles identités, taux
+> d'accusations…). *Pour :* pas de serveur ni de consensus global (un nœud calme exige peu, un nœud sous
+> assaut exige plus) ; la PoW est *monotone* — miner 24 bits satisfait quiconque demande ≤ 24, donc un
+> honnête mine juste au plus haut niveau exigé là où il veut aller, et ne paie cher QUE pendant une
+> attaque. *Contre :* la difficulté devient relative au nœud ; un nœud (ou un faux rendez-vous) qui exige
+> une PoW absurde peut exclure les nouveaux → c'est un vecteur d'ÉCLIPSE, à traiter avec 9.4/9.5.
+> → **rôle naturel : la DÉFENSE STRUCTURELLE (le prix monte tout seul sous attaque, redescend au calme).**
+>
+> **Piste (c) — VOUCHING SOCIAL (second facteur).** Un pair déjà connu se porte GARANT d'un nouveau → le
+> coût devient SOCIAL (une relation), pas CPU. *Pour :* ami des faibles (un téléphone avec un ami entre
+> sans miner) ; et le graphe de garants résiste aux Sybils par sa STRUCTURE (un essaim de faux comptes
+> peine à se faire parrainer par des honnêtes — façon SybilGuard/SybilLimit). *Contre :* amorçage (le tout
+> premier joueur n'a pas de parrain → il faut une voie « sans parrain » qui retombe sur (a)/(b)) ; c'est un
+> sous-système plus gros. → **rôle naturel : un SECOND FACTEUR ajouté plus tard, qui PRÉSERVE l'inclusivité
+> (relie la Phase B du ch.8).**
+>
+> **💡 L'insight : ce ne sont PAS trois rivales, ce sont trois COUCHES.** Le design solide est probablement
+> *(a) socle plancher + (b) adaptatif structurel maintenant (ch.9) + (c) vouching en second facteur plus
+> tard (à la reprise de la Phase B du ch.8)*. On ne « choisit » donc pas une voie contre les autres : on
+> choisit **dans quel ORDRE** on pose les couches. *Décision concrète (combien de bits, quel signal de
+> pression pour (b)) prise APRÈS l'étape de preuve ci-dessous — la mesure tranchera, pas ce document.*
+>
+> **Premier pas (avant tout codage de correctif) :** PROUVER le trou — une attaque rouge « Sybil-framing »
+> (3 identités minées qui accusent un bot honnête → il passe en sourdine à tort), comme `gossip-flood` a
+> prouvé D23. On saura alors exactement la forme de la menace avant de poser la couche (a)/(b).
 - [ ] 9.2 — **Quorum d'accusation pondéré** : par réputation de l'accusateur + plausibilité
   de voisinage ; K attaquants ne peuvent pas framer un honnête. Ferme D7, D20.
 - [ ] 9.3 — **Réhabilitation** : fenêtre glissante des fautes + appel/quarantaine. Ferme D8.
@@ -1077,6 +1122,13 @@ un labo réseau complet. C'est ça qui transforme nos tests « localhost » en v
 > Note : 7 → 8 → 9 → 10 est le chemin « solide ». Mais si un jour tu veux du *visible*
 > vite (pour le moral), 8.3 (le 0-connexion qui joue via un parent) est très
 > spectaculaire. À toi de doser preuve vs effet.
+>
+> **🔀 ORDRE RÉVISÉ (décidé le 19 juin, cf. pivot §0) : 7 → 8 (partiel : jusqu'à 8.2c) →
+> 9 (entier) → REPRISE de 8 (8.3 cellules + Phase B inclusivité) → 10.** Pourquoi on
+> intercale le 9 au milieu du 8 : le reste du chapitre 8 (hôte de cellule, parent agrégateur)
+> bâtit une couche d'**agrégateurs de confiance** ; on durcit donc la confiance (ch.9 : Sybil,
+> éclipse, quorum pondéré) AVANT de s'appuyer dessus. Décision RÉVERSIBLE et tracée — si la
+> reprise du 8 révèle qu'on s'est trompé, on rouvre.
 
 ---
 
