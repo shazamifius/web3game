@@ -229,9 +229,21 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > `crowd 200` (30 s) : perception par résumé moy 112 / max 154 occupants (sur 199) via O(cellules) flux, débit ↓
 > ~46 Ko/s borné (+6 vs pré-8.3 = coût des résumés), orbe 0/200, essaim tenu. 65 tests, 0 warning.** *(Les `#[allow(dead_code)]`
 > de 8.3a/8.3b sont levés : cell_of/cell_host/CellSummary sont désormais utilisés.)*
-> **PROCHAINE ACTION = 8.3d** : prouver l'INVARIANT à l'échelle — `crowd 500→2000` : la perception par résumé
-> doit SUIVRE N (foule perçue ∝ N) à débit ↓ PLAT. + affiner (foule centrée sur une cellule pour le cas dense pur ;
-> mesurer la FRAÎCHEUR, pas que la couverture). La confiance de l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9).
+> **PROCHAINE ACTION = 8.3d (preuve à l'échelle). Doutes à lever (écrits noir sur blanc) :**
+> 1. **112/199, pas ~199.** La foule-test est sur un cercle À CHEVAL sur l'origine (un coin de grille) → elle se
+>    répartit sur ~4 cellules + convergence gossip non finie en 30 s. *À faire :* tester aussi une foule CENTRÉE
+>    dans une cellule (cas dense pur → un hôte → count ≈ N), et laisser converger.
+> 2. **Le vrai trophée = la FRAÎCHEUR, pas la couverture.** La conscience atteignait déjà ~94 % de couverture, mais
+>    au compte-gouttes 1/N. Le résumé donne la foule à fraîcheur FIXE — mais je ne l'ai pas encore MESURÉE. *À faire :*
+>    chiffrer la fraîcheur (âge moyen de la perception d'un lointain) AVEC vs SANS résumés → prouver qu'on tue le 1/N.
+> 3. **L'INVARIANT.** À `crowd 500→2000`, la perception-par-résumé doit SUIVRE N à débit ↓ PLAT. C'est LA preuve
+>    que « 55k sans serveur » tient. La confiance de l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9).
+>
+> ### 🔬 APRÈS le ch.8/9 — PASSE DE VALIDATION par simulation (proposée par l'utilisateur, avant le ch.10)
+> *Finir au PROPRE les chapitres 8 et 9, puis — AVANT d'attaquer le ch.10 — une passe dédiée qui POSE DE VRAIS
+> RÉSULTATS MESURÉS sur chaque doute du tableau d'audit (§C) : on ne se contente pas de DÉCLARER « fermé », on
+> rejoue l'attaque/la simu et on colle le chiffre. Objectif : que chaque ✅ de l'audit soit adossé à une preuve
+> reproductible (orbe 0, sourdines, framing ÉCHOUÉ, débit plat, perception ∝ N…), pas à une affirmation.*
 
 **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 
