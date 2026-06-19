@@ -1063,6 +1063,9 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 
 ### Chapitre 9 — Durcissement de la confiance (Sybil, éclipse, rendez-vous) 🔴 *priorité 3*
 **But :** rendre la triche *coordonnée* coûteuse et l'isolement impossible.
+> **État (19 juin) :** ✅ 9.1a (PoW réglable) · ✅ 9.2 (quorum pondéré par crédibilité) · ✅ 9.3 (réhabilitation) ·
+> ✅ 9.4a (positions corroborées) · ✅ 9.4b (diversité IP) · ✅ 9.5a (rendez-vous borné). **Le cœur dur est tenu.**
+> Les parties avancées **9.1(b) adaptative, 9.2c, 9.5-fédération, vouching → reportées en ANNEXE H (optionnel)**.
 - [ ] 9.1 — **Refonte anti-Sybil** : difficulté PoW bien plus haute + adaptative ; étude
   d'un second facteur (vouching social). Ferme D6.
 
@@ -1272,6 +1275,31 @@ Ces choix ont été tranchés avec l'utilisateur. Ils orientent le plan :
 4. **Identité persistante → OUI, clé sauvée dans un fichier** (comme une clé SSH).
    Simple d'abord ; protection par mot de passe plus tard, avec le chiffrement du
    chapitre 10. Réalisé au **chapitre 10.1**.
+
+---
+
+## H. Annexe — features avancées OPTIONNELLES (reportées, décidé le 19 juin)
+
+> *Ces durcissements sont réels et intéressants, mais **trop complexes pour le gain actuel** : le cœur dur
+> (Sybil, éclipse, framing, réputation) est déjà tenu et prouvé sans eux. On les **sort du chemin critique**
+> pour rester concentré sur ce qui valide la vision (échelle + inclusivité + vie privée). On y reviendra
+> seulement si une MESURE ou un vrai déploiement les rend nécessaires — surtout au moment du portage vers un
+> vrai moteur (Unreal/Unity) à grande échelle. Rien n'est perdu : le raisonnement est tracé, prêt à reprendre.*
+
+- **9.1(b) — PoW localement ADAPTATIVE.** Chaque nœud relève la difficulté qu'il EXIGE selon la pression locale
+  (cadence de nouvelles identités / d'accusations). Vraie défense *dynamique* de masse, mais soulève la question
+  « comment les nœuds s'accordent » (pas de consensus). *Le socle réglable (9.1a) suffit pour l'instant.* Détail :
+  🧭 CARREFOUR 9.1 (§D, ch.9), piste (b).
+- **9.2c — Standing par DURÉE.** Graduer la crédibilité d'un témoin par son ancienneté/quantité de participation
+  (pas binaire). *Reporté car 9.4b (cap par sous-réseau /24) ferme déjà l'essentiel du résidu patient* : des
+  Sybils même établis et co-localisés partagent les IP de l'attaquant → comptés comme UNE voix. Gain marginal.
+- **9.5 — FÉDÉRATION de rendez-vous.** Plusieurs rendez-vous indépendants qui s'échangent des pairs (résilience
+  ultime de l'amorçage, ferme la fin de D10/D21). *L'amorçage actuel tient (rendez-vous borné 9.5a + découverte
+  par gossip 8.1) ; la fédération est un gros morceau d'archi distribuée, à faire quand le besoin réel se posera.*
+- **Vouching social (2ᵉ facteur anti-Sybil).** Parrainage social (coût relationnel, pas CPU → ami des faibles).
+  *Relié à l'inclusivité (Phase B, ch.8) — à étudier là-bas si besoin.* Détail : 🧭 CARREFOUR 9.1, piste (c).
+
+*(Les chapitres 13 « voix » et 14 « portabilité moteurs » restent eux aussi « plus tard », comme déjà noté en §D.)*
 
 ---
 
