@@ -110,9 +110,14 @@ découverte honnête intacte (`crowd 60` → couverture 100 %), essaim TENU avec
 même avec de vraies identités PoW minées pointées sur une victime, la réflexion est BORNÉE — mesuré
 **96 perçages/2 s pendant ~10 s puis 0** (l'abandon mord), au lieu du flot infini d'avant.
 
-**PROCHAINE ACTION CONCRÈTE = 8.2** (AoI à deux tiers : focus plein débit / conscience LOD basse
-fidélité) + corriger la métrique de couverture (compter « entendus », pas « connus ») + amorcer D24
-(relier `MAX_AVATARS` au rendu à deux tiers). Voir §D, Chapitre 8.
+**8.2 (netcode) ✓ FAIT (19 juin) — AoI à DEUX TIERS, focus COLLANT, invariant TENU.** 8.2a (alloc deux
+tiers) → 8.2b (métrique « entendus » qui a DÉMASQUÉ un churn du focus) → 8.2a-bis (focus collant par
+hystérésis, churn tué). **Prouvé :** `crowd 160` FOCUS 0,2 → 9,4 ; pair 80↔160 → FOCUS borné (8,8→10,5),
+CONSCIENCE scale (68→134 = foule en LOD), **débit ↓ PLAT (43,8→40,4 Ko/s) quand N double**. 51 tests, 0 warning.
+
+**PROCHAINE ACTION CONCRÈTE = 8.2c** (rendu 3D à deux tiers dans [receive.rs] : focus = avatar détaillé,
+conscience = imposteur LOD bon marché → ferme l'amorce D24 ; `MAX_AVATARS` ne borne plus que les détaillés)
++ `tools/foule-3d.sh <N>` pour ouvrir une foule d'un coup. **Vérif 3D = l'utilisateur** (GPU). Voir §D, Chapitre 8.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
