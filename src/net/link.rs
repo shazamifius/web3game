@@ -12,6 +12,7 @@ use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::time::Instant;
 
 #[derive(Resource)]
 pub struct NetLink {
@@ -49,7 +50,7 @@ pub struct NetLink {
     /// RÉPUTATION (chap. 5.4) : nombre de « fautes » constatées par pair (état
     /// impossible, orbe trichée…). Au-delà de `MAX_STRIKES`, le pair est mis en
     /// sourdine (« mute ») : on ignore tout ce qu'il envoie.
-    pub(crate) strikes: HashMap<PeerId, u32>,
+    pub(crate) strikes: HashMap<PeerId, Strike>,
     /// RÉPUTATION PARTAGÉE (chap. 6.7) : pour chaque tricheur, l'ensemble des nœuds
     /// DISTINCTS qui l'ont accusé. Au-delà de `ACCUSE_QUORUM`, on le bannit aussi.
     pub(crate) accusations: HashMap<PeerId, HashSet<PeerId>>,
@@ -72,6 +73,25 @@ pub struct NetLink {
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
 /// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
 pub(crate) const MAX_STRIKES: u32 = 5;
+
+/// RÉHABILITATION (chap. 9.3, D8) : temps (s) pour qu'UNE faute se dissipe. Le score de fautes
+/// décroît linéairement → 5 fautes = sourdine, mais il suffit de ~`5 × STRIKE_DECAY_SECS` sans
+/// récidive pour redevenir audible. Un glitch transitoire ne bannit donc plus À VIE ; un
+/// récidiviste, lui, ré-accumule plus vite qu'il ne décroît et reste muet. (Réglage assumé.)
+const STRIKE_DECAY_SECS: f32 = 60.0;
+
+/// Une marque de réputation à DÉCROISSANCE (chap. 9.3) : un score de fautes + l'instant de la
+/// dernière mise à jour, pour décroître paresseusement à la lecture (pas de balayage périodique).
+pub(crate) struct Strike {
+    score: f32,
+    last: Instant,
+}
+
+/// Score de fautes APRÈS décroissance, étant donné le temps écoulé depuis la dernière faute
+/// (chap. 9.3). Pur → testable sans horloge. Décroissance linéaire, plancher à 0.
+fn decayed_score(score: f32, elapsed_secs: f32) -> f32 {
+    (score - elapsed_secs / STRIKE_DECAY_SECS).max(0.0)
+}
 /// Nombre d'accusateurs DISTINCTS requis avant de bannir un tricheur qu'on n'a PAS
 /// vu soi-même (chap. 6.7). Anti-framing : un seul (ou quelques) menteur(s) ne suffit
 /// pas. ⚠ Depuis 9.2, ce n'est plus un simple COMPTE : c'est le seuil de POIDS cumulé
@@ -400,20 +420,49 @@ impl NetLink {
         self.cell_host(cell_of(me.0, me.1), me, my_id) == Some(my_id)
     }
 
-    /// Ce pair est-il en sourdine (trop de fautes) ? Si oui, on ignore ses paquets.
-    pub(crate) fn is_muted(&self, id: PeerId) -> bool {
-        self.strikes.get(&id).copied().unwrap_or(0) >= MAX_STRIKES
+    /// Score de fautes COURANT d'un pair (après décroissance) à l'instant `now` (chap. 9.3).
+    fn strike_score_at(&self, id: PeerId, now: Instant) -> f32 {
+        match self.strikes.get(&id) {
+            Some(s) => decayed_score(s.score, now.duration_since(s.last).as_secs_f32()),
+            None => 0.0,
+        }
     }
 
-    /// Inscrit une faute au compteur d'un pair et la journalise. Quand le seuil est
-    /// franchi, on l'annonce : le pair est désormais ignoré (banni localement).
+    /// Ce pair est-il en sourdine (trop de fautes RÉCENTES) ? Si oui, on ignore ses paquets.
+    /// Le score décroît avec le temps (9.3) → une faute transitoire finit par se dissiper.
+    pub(crate) fn is_muted(&self, id: PeerId) -> bool {
+        self.is_muted_at(id, Instant::now())
+    }
+
+    /// Variante testable de `is_muted` (chap. 9.3) : on injecte `now` pour vérifier la
+    /// réhabilitation sans dormir, et SANS arithmétique `Instant` risquée (on avance `now`).
+    fn is_muted_at(&self, id: PeerId, now: Instant) -> bool {
+        self.strike_score_at(id, now) >= MAX_STRIKES as f32
+    }
+
+    /// Compte les pairs ACTUELLEMENT en sourdine (score décru ≥ seuil) — pour la simu (chap. 9.3).
+    pub(crate) fn muted_count(&self) -> usize {
+        let now = Instant::now();
+        self.strikes
+            .values()
+            .filter(|s| decayed_score(s.score, now.duration_since(s.last).as_secs_f32()) >= MAX_STRIKES as f32)
+            .count()
+    }
+
+    /// Inscrit une faute (chap. 5.4, à décroissance 9.3) : on décroît d'abord le score existant,
+    /// puis on ajoute 1, et on date la faute. Quand le seuil est franchi (et qu'on ne l'était pas
+    /// déjà), on l'annonce : le pair est ignoré (banni localement, mais RÉVERSIBLE dans le temps).
     pub(crate) fn add_strike(&mut self, id: PeerId, reason: &str) {
-        let n = self.strikes.entry(id).or_insert(0);
-        *n += 1;
-        if *n == MAX_STRIKES {
-            eprintln!("🛡 Pair {} mis en SOURDINE après {n} fautes (dernière : {reason}).", id.short());
-        } else if *n < MAX_STRIKES {
-            eprintln!("🛡 Faute de {} ({n}/{MAX_STRIKES}) : {reason}.", id.short());
+        let now = Instant::now();
+        let was_muted = self.is_muted_at(id, now);
+        let score = self.strike_score_at(id, now) + 1.0; // décroît avant d'incrémenter
+        self.strikes.insert(id, Strike { score, last: now });
+        if score >= MAX_STRIKES as f32 {
+            if !was_muted {
+                eprintln!("🛡 Pair {} mis en SOURDINE (dernière : {reason}).", id.short());
+            }
+        } else {
+            eprintln!("🛡 Faute de {} ({score:.0}/{MAX_STRIKES}) : {reason}.", id.short());
         }
     }
 
@@ -498,7 +547,7 @@ impl NetLink {
         }
         let weight: f32 = by_subnet.values().sum();
         if weight >= ACCUSE_WEIGHT_QUORUM {
-            self.strikes.insert(offender, MAX_STRIKES); // force la sourdine
+            self.strikes.insert(offender, Strike { score: MAX_STRIKES as f32, last: Instant::now() }); // force la sourdine (décroît ensuite comme les autres, 9.3)
             eprintln!("🛡 Pair {} mis en SOURDINE par QUORUM pondéré (poids {weight:.1} ≥ {ACCUSE_WEIGHT_QUORUM:.0}).", offender.short());
             return true;
         }
@@ -693,6 +742,36 @@ mod tests {
         assert!(link.is_muted(tricheur)); // banni localement
         // Un pair sans faute reste audible.
         assert!(!link.is_muted(pid(10)));
+    }
+
+    /// 9.3 — la décroissance du score : pleine au temps 0, diminue avec le temps, plancher à 0.
+    #[test]
+    fn score_de_fautes_decroit_avec_le_temps() {
+        assert_eq!(decayed_score(5.0, 0.0), 5.0); // tout de suite : intact
+        assert!(decayed_score(5.0, STRIKE_DECAY_SECS) < 5.0); // une faute dissipée
+        assert!((decayed_score(5.0, STRIKE_DECAY_SECS) - 4.0).abs() < 1e-3);
+        assert_eq!(decayed_score(1.0, 10_000.0), 0.0); // jamais négatif
+    }
+
+    /// 9.3 (RÉHABILITATION, D8) : un pair muté redevient audible après assez de temps SANS
+    /// récidive ; mais un RÉCIDIVISTE (qui re-fauve avant l'expiration) reste muet. On injecte
+    /// `now` (via `is_muted_at`) pour vérifier sans dormir.
+    #[test]
+    fn rehabilitation_apres_decroissance_mais_pas_le_recidiviste() {
+        let mut link = link_de_test();
+        let id = pid(42);
+        let t0 = Instant::now();
+        // 5 fautes « maintenant » → muté.
+        link.strikes.insert(id, Strike { score: 5.0, last: t0 });
+        assert!(link.is_muted_at(id, t0));
+        // Après ~5 × le délai sans récidive : score décru à 0 → RÉHABILITÉ.
+        let plus_tard = t0 + std::time::Duration::from_secs_f32(STRIKE_DECAY_SECS * 5.0 + 1.0);
+        assert!(!link.is_muted_at(id, plus_tard));
+        // Un récidiviste : à mi-chemin il reste 2,5 de score ; s'il re-fauve, il repasse muet.
+        let mi = t0 + std::time::Duration::from_secs_f32(STRIKE_DECAY_SECS * 2.5);
+        assert!(!link.is_muted_at(id, mi)); // score ~2.5 < 5 → audible…
+        // …mais on ne le réhabilite PAS « gratuitement » : il a fallu attendre. (Garde-fou.)
+        assert!(link.strike_score_at(id, mi) > 2.0);
     }
 
     /// Adresse de test sur un sous-réseau /24 DISTINCT par id (chap. 9.4b) : `10.b0.b5.1`, donc

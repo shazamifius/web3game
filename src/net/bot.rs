@@ -16,7 +16,7 @@ use super::aoi::{allocate_tiers, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
-use super::link::{NetLink, MAX_STRIKES};
+use super::link::NetLink;
 use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
@@ -146,11 +146,7 @@ impl Bot {
     }
     /// Combien de pairs ce nœud a-t-il mis en sourdine (directement ou par quorum) ?
     pub(crate) fn muted(&self) -> usize {
-        self.link
-            .strikes
-            .values()
-            .filter(|n| **n >= MAX_STRIKES)
-            .count()
+        self.link.muted_count() // 9.3 : score décru ≥ seuil (la réhabilitation est prise en compte)
     }
     pub(crate) fn orb_master(&self) -> Option<PeerId> {
         self.orb.owner

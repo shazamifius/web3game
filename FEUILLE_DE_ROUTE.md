@@ -192,10 +192,12 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 >    flood de HELLO usurpés ne fait plus enfler la table sans fin (au pire elle sature, l'éviction 5 s la draine).
 >    57 tests, 0 warning ; non-régression sim 40/40, orbe 0/40. *Résidu ASSUMÉ : table pleine → un honnête peut
 >    être refusé ; vraie parade = routabilité (handshake anti-spoofing) → étape ultérieure. Ici on borne la RAM.*
-> 2. **9.3 — Réhabilitation (D8).** Les fautes sont PERMANENTES (mute à vie) — injuste pour une faute transitoire.
->    Score de fautes à DÉCROISSANCE temporelle (`Instant` interne ; fonction de décroissance PURE testable) →
->    un pair qui cesse de mal se comporter se réhabilite ; un vrai tricheur récidiviste reste muet. **Risque : moyen**
->    (touche `strikes`, lu par [bot.rs]). 
+> 2. **9.3 — Réhabilitation (D8). ✓ FAIT (19 juin).** `strikes` est passé d'un compteur `u32` permanent à un
+>    `Strike { score, last }` qui DÉCROÎT (`decayed_score`, pure/testée ; `STRIKE_DECAY_SECS = 60 s`/faute) →
+>    une faute transitoire se dissipe (réhabilitation après ~5 min sans récidive), un récidiviste ré-accumule et
+>    reste muet. `is_muted`/`add_strike`/`muted_count` réécrits ; [bot.rs] `muted()` passe par `muted_count()`.
+>    Preuve : tests `score_de_fautes_decroit_avec_le_temps` + `rehabilitation_apres_decroissance_mais_pas_le_recidiviste`
+>    (injection de `now` → pas de `sleep`). 59 tests, 0 warning ; non-régression sim → 30 sourdines, orbe 0/40.
 > 3. **9.2c — Standing par DURÉE.** Raffine la crédibilité (9.2) : standing gradé par l'ancienneté/quantité de
 >    participation, pas binaire → durcit le dernier cran du résidu patient. **Risque : moyen.**
 > 4. **⛔ STOP — je NE fais PAS en autonomie (forks qui t'appartiennent) :** **9.1(b) PoW adaptative** (comment
