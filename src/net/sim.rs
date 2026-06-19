@@ -28,6 +28,10 @@ use std::time::{Duration, Instant};
 /// Le bilan d'un nœud à la fin de la simulation.
 struct NodeStat {
     neighbors: usize,
+    /// Tiers de perception ENTENDUS sur la fenêtre (chap. 8.2b) : pairs entendus à plein
+    /// débit (focus) et en basse fidélité (conscience). Remplace « connus » pour la couverture.
+    focus: usize,
+    conscience: usize,
     accepted: u64,
     rejected: u64,
     muted: usize,
@@ -66,6 +70,7 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
             let cpu0 = thread_cpu_secs();
             let up0 = bot.bytes_up();
             let down0 = bot.bytes_down();
+            bot.reset_heard(); // 8.2b : les tiers focus/conscience ne comptent QUE la fenêtre
             let mut last = Instant::now();
             while start.elapsed().as_secs() < secs {
                 let dt = last.elapsed().as_secs_f32();
@@ -73,8 +78,11 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
                 bot.step(dt, start.elapsed().as_secs_f32());
                 thread::sleep(tick);
             }
+            let (focus, conscience) = bot.heard_tiers(secs as f32);
             let ns = NodeStat {
                 neighbors: bot.neighbors(),
+                focus,
+                conscience,
                 accepted: bot.accepted(),
                 rejected: bot.rejected(),
                 muted: bot.muted(),
@@ -184,37 +192,33 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
         // mesure la FRACTION de cette foule qu'il perçoit vraiment. C'est la métrique reine
         // du chapitre 8 : on veut la voir monter à ~100 % SANS que le débit ↓ explose.
         let crowd = active.len().saturating_sub(1).max(1);
-        // FOCUS = pairs à lien plein débit (= le voisinage actuel). CONSCIENCE = pairs
-        // perçus en basse fidélité SANS lien plein : ce tier N'EXISTE PAS encore (il
-        // arrive en 8.2) → 0 partout. C'est précisément l'état « rouge » à casser.
-        let avg_focus = active.iter().map(|s| s.neighbors).sum::<usize>() as f32 / n;
-        let avg_awareness = 0.0f32; // tier CONSCIENCE pas encore implémenté (→ 8.2)
+        // 8.2b : on compte les pairs ENTENDUS sur la fenêtre, pas seulement CONNUS. FOCUS =
+        // entendus à plein débit (lien net) ; CONSCIENCE = entendus en basse fidélité (LOD).
+        // (Avant 8.2, conscience = 0 et focus = nb de connus → métrique optimiste, corrigée ici.)
+        let avg_focus = active.iter().map(|s| s.focus).sum::<usize>() as f32 / n;
+        let avg_awareness = active.iter().map(|s| s.conscience).sum::<usize>() as f32 / n;
         let coverages: Vec<f32> = active
             .iter()
-            .map(|s| (s.neighbors as f32 / crowd as f32).min(1.0))
+            .map(|s| ((s.focus + s.conscience) as f32 / crowd as f32).min(1.0))
             .collect();
         let avg_cov = coverages.iter().sum::<f32>() / n;
         let min_cov = coverages.iter().cloned().fold(f32::INFINITY, f32::min);
         let avg_blind = (crowd as f32 - avg_focus - avg_awareness).max(0.0);
-        println!("-------- COUVERTURE DE PERCEPTION (8.0, mesure D22) --------");
+        println!("-------- COUVERTURE DE PERCEPTION (8.2b, ENTENDUS ≠ connus) --------");
         println!("Foule réellement à portée (co-localisée) : {crowd} pairs/nœud");
-        println!("Perçus (connus) par nœud           : moy {avg_focus:.1}  (8.1 : appris par GOSSIP, sans plafond)");
-        println!("  (séparation FOCUS plein débit / CONSCIENCE LOD basse fidélité : arrive en 8.2)");
-        let _ = avg_awareness; // le tier conscience (8.2) sera distingué ici
+        println!("ENTENDUS par nœud (8.2 deux tiers) : FOCUS moy {avg_focus:.1} (plein débit) + CONSCIENCE moy {avg_awareness:.1} (LOD basse fidélité)");
         println!(
-            "COUVERTURE de la foule             : moy {:.0}%, min {:.0}%  (perçus ÷ à portée)",
+            "COUVERTURE de la foule             : moy {:.0}%, min {:.0}%  (ENTENDUS ÷ à portée)",
             avg_cov * 100.0,
             min_cov * 100.0
         );
         if avg_blind >= 1.0 {
-            println!("D22 : encore AVEUGLE à ~{avg_blind:.0} voisins (couverture {:.0}%).", avg_cov * 100.0);
-            println!("  ✓ 8.1 FAIT : le plafond dur {MAX_NEIGHBORS} est CASSÉ — le GOSSIP fait apprendre toute");
-            println!("  la foule SANS énumération centrale (link.peers AMORCÉ par le WELCOME, plus écrasé).");
-            println!("  Résidu = (a) convergence dans la fenêtre de simu (démarrage échelonné des nœuds),");
-            println!("  (b) le tier CONSCIENCE/LOD (8.2) : distinguer proches=net et lointains=dégradés.");
-            println!("  Invariant TENU : le débit ↓ reste PLAT quand N grandit (200→500) — c'est l'essentiel.");
+            println!("D22 : ~{avg_blind:.0} voisins ni entendus au focus ni en conscience (couverture {:.0}%).", avg_cov * 100.0);
+            println!("  ✓ 8.1 : plafond dur {MAX_NEIGHBORS} CASSÉ (gossip). ✓ 8.2 : deux tiers (focus net + conscience LOD).");
+            println!("  Résidu attendu = convergence dans la fenêtre (démarrage échelonné) + seuil focus/conscience (~5 Hz).");
+            println!("  L'ESSENTIEL (invariant) : le débit ↓ doit rester PLAT quand N grandit (rejouer 200→500).");
         } else {
-            println!("✓ Couverture ~complète : chacun perçoit (presque) toute la foule, débit borné.");
+            println!("✓ Couverture ~complète (ENTENDUS) : focus net + conscience LOD couvrent (presque) toute la foule, débit borné.");
         }
     }
     println!("===========================================");

@@ -829,7 +829,29 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
     8 (×20 = 160) laissent **80 Hz garantis** à la conscience. Sanity `crowd 60` : essaim TENU, orbe
     0/60, débit borné (↑45 Ko/s). 50 tests, 0 warning. *La preuve PARLANTE (focus net / conscience LOD
     distingués) vient avec 8.2b — la métrique actuelle compte les CONNUS, pas la fidélité d'écoute.*
-  - [ ] **8.2b** — métrique « entendus récemment » + tiers focus/conscience au rapport `crowd`.
+  - **8.2b ✓ FAIT (19 juin) — et la métrique a DÉMASQUÉ un défaut de 8.2a (le but d'une bonne mesure).**
+    Le rapport `crowd` compte désormais les pairs **ENTENDUS** sur la fenêtre (compteur par pair dans
+    [bot.rs], remis à zéro au début de la fenêtre) et les classe en **FOCUS** (≥ ~5 Hz, plein débit) vs
+    **CONSCIENCE** (entendu mais moins). ⚠️ **CE QU'ELLE RÉVÈLE (mesuré) :** `crowd 80` → FOCUS 8,6 +
+    CONSCIENCE 68 (couv. 98 %) — beau ; MAIS `crowd 160` → **FOCUS 0,2** + CONSCIENCE 147 (couv. 92 %),
+    et ça **ne remonte pas** avec une fenêtre plus longue (40 s) → **pas un artefact de convergence, un
+    vrai défaut.** *Cause (en relisant le code) :* le focus CHURNE — `relevance_weight` dépend des
+    positions VIVANTES (les bots bougent) → le « top-8 » se recalcule à chaque tick ; en foule dense des
+    dizaines de pairs sont à quasi-égalité au bord du top-8 → l'ensemble focus change sans cesse → aucun
+    lien 20 Hz SOUTENU. *Pire :* un pair pas-encore-entendu a distance 0 → poids MAX (le coup de pouce
+    « découvre vite ») → le focus cible les INCONNUS, qui sortent une fois entendus → rotation perpétuelle.
+    **Conséquence : le budget plein débit est ÉTALÉ → retour au « tout le monde flou » que 8.2 devait
+    casser.** À 80 ça marchait par chance (moins de churn). *La métrique a fait son travail : 8.2 n'est
+    PAS fini.* 50 tests, 0 warning.
+  - [ ] **8.2a-bis — STABILISER le focus (le vrai cœur de 8.2, révélé par 8.2b).** Le focus doit être
+    COLLANT (hystérésis) : une fois qu'on tient un lien plein débit avec un pair, on le GARDE tant qu'il
+    reste pertinent et présent, au lieu de recomposer le top-8 à chaque tick. Et il faut DÉCOUPLER la
+    découverte (le « poids max aux inconnus ») du choix de focus, pour qu'un inconnu ne vole pas une place
+    de focus à un pair qu'on suit déjà. *Piste :* mémoriser l'ensemble focus entre les ticks ; n'en évincer
+    un membre que s'il quitte la portée ou qu'un autre est NETTEMENT plus pertinent (marge anti-oscillation) ;
+    servir la découverte sur un petit budget à part (ou via la conscience), pas sur les slots de focus.
+    **Preuve :** `crowd 160` (puis 200/500) → FOCUS stable ≈ K_FOCUS, CONSCIENCE = le reste, couverture
+    haute ET débit ↓ PLAT quand N grandit (l'invariant, enfin tenu pour de vrai).
   - [ ] **8.2c** — rendu à deux tiers ([receive.rs]) + `tools/foule-3d.sh` (amorce D24, vérif 3D par l'utilisateur).
 
 - [ ] 8.3 — **Cellules spatiales + hôte de cellule agrégateur (ce qui fait tenir l'invariant

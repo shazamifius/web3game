@@ -47,6 +47,10 @@ const GOSSIP_PERIOD: f32 = 0.5;
 /// Nombre de destinataires (au trou ouvert) à qui on envoie notre lot de cartes par
 /// tic. Petit : la diffusion épidémique couvre la foule en quelques rounds (log N).
 const GOSSIP_FANOUT: usize = 4;
+/// Seuil (Hz) au-delà duquel on a entendu un pair « au FOCUS » (plein débit) plutôt qu'en
+/// « conscience » (basse fidélité) — chap. 8.2b. Entre le plafond conscience (`CONSCIENCE_HZ` = 2)
+/// et le plein débit (`SEND_HZ` = 20) : tout seuil intermédiaire sépare nettement les deux tiers.
+const FOCUS_RATE_MIN: f32 = 5.0;
 const TICK: Duration = Duration::from_millis(50);
 const WANDER_RADIUS: f32 = 3.0;
 
@@ -68,6 +72,10 @@ pub(crate) struct Bot {
     /// réel du jeu (budget réparti par pertinence), pas un envoi naïf plein débit à tous.
     send_credits: HashMap<PeerId, f32>,
     last_state: HashMap<PeerId, (Vec3, f32)>,
+    /// MÉTRIQUE DE FIDÉLITÉ (chap. 8.2b) : combien d'états on a ACCEPTÉS de chaque pair sur
+    /// la fenêtre de mesure. Sert à classer, à la fin, qui on a ENTENDU à plein débit (focus)
+    /// vs en basse fidélité (conscience) — au lieu de juste compter les pairs CONNUS.
+    heard_count: HashMap<PeerId, u64>,
     orb: Orb,
     seq: u64,
     hello_acc: f32,
@@ -99,6 +107,7 @@ impl Bot {
             relay_credits: HashMap::new(),
             send_credits: HashMap::new(),
             last_state: HashMap::new(),
+            heard_count: HashMap::new(),
             orb: Orb::headless(),
             seq: 0,
             hello_acc: HELLO_PERIOD,
@@ -145,6 +154,32 @@ impl Bot {
     }
     pub(crate) fn orb_master(&self) -> Option<PeerId> {
         self.orb.owner
+    }
+
+    /// Remet à zéro le compteur d'écoute (chap. 8.2b) : appelé au DÉBUT de la fenêtre de
+    /// mesure, pour que les tiers focus/conscience ne reflètent QUE la fenêtre.
+    pub(crate) fn reset_heard(&mut self) {
+        self.heard_count.clear();
+    }
+
+    /// Tiers de fidélité ENTENDUS sur la fenêtre (chap. 8.2b) : `(focus, conscience)`. Un pair
+    /// entendu à ≥ `FOCUS_RATE_MIN` Hz est au focus (plein débit) ; entendu mais moins = conscience
+    /// (basse fidélité). Les pairs CONNUS mais jamais entendus ne comptent dans aucun tier — c'est
+    /// la correction d'honnêteté du 8.2b (avant, on comptait les connus, pas les entendus).
+    pub(crate) fn heard_tiers(&self, secs: f32) -> (usize, usize) {
+        let mut focus = 0usize;
+        let mut conscience = 0usize;
+        for &c in self.heard_count.values() {
+            if c == 0 {
+                continue;
+            }
+            if c as f32 / secs.max(1.0) >= FOCUS_RATE_MIN {
+                focus += 1;
+            } else {
+                conscience += 1;
+            }
+        }
+        (focus, conscience)
     }
 
     /// UNE itération du nœud : HELLO, rate-limit, réception (mêmes décisions de
@@ -258,6 +293,7 @@ impl Bot {
                                     self.last_state.insert(state.id, (np, now));
                                     self.link.note_pos(state.id, (np.x, np.z));
                                     self.holes.insert(state.id, true);
+                                    *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                                     self.accepted += 1;
                                 }
                             }
@@ -308,6 +344,7 @@ impl Bot {
                                         }
                                     }
                                 }
+                                *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                                 self.accepted += 1;
                                 self.relayed += n as u64;
                                 if n > 0 && self.verbose {
