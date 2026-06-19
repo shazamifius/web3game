@@ -182,10 +182,24 @@ modèle (ids PoW aléatoires → buckets non discriminants) ; le vrai levier est
 Loopback distingué par port → simu intacte. Test dédié + non-régression `sim 40 3 15` → 40 sourdines, orbe 0/40.
 **56 tests, 0 warning.** *Le résidu patient/co-localisé de 9.2 est fermé pour un attaquant à IP rares.*
 
-**PROCHAINE ACTION CONCRÈTE = au choix** : **9.3** (réhabilitation : fenêtre glissante de fautes + appel/quarantaine,
-ferme D8) ; **9.5** (rendez-vous résilient : rate-limit + éviction + fédération, ferme D10/D21) ; **9.1 (b)**
-(PoW adaptative) ; ou **9.2c** (standing par DURÉE, dernier cran du résidu patient). Le cœur dur de D9 est tenu.
-Voir §D, Chapitre 9.
+> ### 🤖 PLAN DE RUSH AUTONOME (établi le 19 juin, l'utilisateur s'absente)
+> *Ordre choisi du MOINS risqué au FORK. Règle absolue : je m'ARRÊTE net au premier vrai doute, mesure qui
+> contredit, ou décision qui t'appartient — je ne pose JAMAIS de rustine pour avancer. Chaque étape = design
+> (+ challenge si besoin) → code → PREUVE (test unitaire + non-régression `sim`) → commit → push → maj de ce doc.
+> Ce plan n'est PAS gravé : si une étape révèle qu'il faut le changer, je le change et je le note.*
+> 1. **9.5a — Rendez-vous BORNÉ (anti-DoS mémoire, D21).** Sa table `clients` est non bornée → un flood de HELLO
+>    (sources usurpées) épuise sa RAM. Cap + admission testable. Isolé à [rendezvous.rs]. **Risque : faible.**
+> 2. **9.3 — Réhabilitation (D8).** Les fautes sont PERMANENTES (mute à vie) — injuste pour une faute transitoire.
+>    Score de fautes à DÉCROISSANCE temporelle (`Instant` interne ; fonction de décroissance PURE testable) →
+>    un pair qui cesse de mal se comporter se réhabilite ; un vrai tricheur récidiviste reste muet. **Risque : moyen**
+>    (touche `strikes`, lu par [bot.rs]). 
+> 3. **9.2c — Standing par DURÉE.** Raffine la crédibilité (9.2) : standing gradé par l'ancienneté/quantité de
+>    participation, pas binaire → durcit le dernier cran du résidu patient. **Risque : moyen.**
+> 4. **⛔ STOP — je NE fais PAS en autonomie (forks qui t'appartiennent) :** **9.1(b) PoW adaptative** (comment
+>    les nœuds s'accordent sur la difficulté = vraie décision, cf. 🧭 carrefour) et **9.5 fédération** (plusieurs
+>    rendez-vous). J'irai jusqu'à l'étape 3 si tout est propre, puis je m'arrête et te résume.
+
+**Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
