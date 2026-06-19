@@ -48,6 +48,11 @@ pub(super) struct RemotePlayer {
     /// Rôle : identité (clé) de SON tuteur (relais) si ce joueur est sous tutelle,
     /// sinon `None`. Alimente les badges de rôle (cf. `nameplates`).
     pub(super) parent: Option<PeerId>,
+    /// TIER DE RENDU (chap. 8.2c, ferme D24) : `true` = avatar DÉTAILLÉ (corps articulé +
+    /// tête), réservé au FOCUS et borné par `MAX_FOCUS_DETAIL` (anti-DoS) ; `false` = IMPOSTEUR
+    /// LOD bon marché (une silhouette), pour la CONSCIENCE — plafond bien plus haut. C'est ce
+    /// qui permet d'AFFICHER des centaines de joueurs sans fondre le GPU ni le plafond plat de 64.
+    pub(super) detailed: bool,
 }
 
 /// Mémorise tous les joueurs distants connus, par identité (clé).

@@ -52,16 +52,20 @@ pub fn update_nameplates(
         .filter_map(|p| p.parent)
         .collect();
 
-    // 1) Retirer les étiquettes des avatars disparus.
+    // 1) Retirer les étiquettes des avatars disparus OU passés en imposteur LOD (8.2c :
+    //    on n'étiquette que le focus, sinon une foule de 500 = 500 labels UI illisibles).
     plates.map.retain(|id, ent| {
-        let keep = avatars.map.contains_key(id);
+        let keep = avatars.map.get(id).map_or(false, |p| p.detailed);
         if !keep {
             commands.entity(*ent).despawn();
         }
         keep
     });
-    // 2) Créer une étiquette pour chaque nouvel avatar.
-    for id in avatars.map.keys() {
+    // 2) Créer une étiquette pour chaque avatar DÉTAILLÉ (focus) sans étiquette.
+    for (id, p) in avatars.map.iter() {
+        if !p.detailed {
+            continue; // 8.2c : la foule en conscience (LOD) n'est pas étiquetée
+        }
         plates.map.entry(*id).or_insert_with(|| {
             commands
                 .spawn((

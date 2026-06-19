@@ -35,9 +35,14 @@ use std::collections::VecDeque;
 const BUCKET_RATE: f32 = 150.0;
 /// Réserve maximale de jetons (tolère une courte rafale sans pénaliser un pair honnête).
 const BUCKET_CAP: f32 = 300.0;
-/// Plafond d'avatars distants affichés (anti-DoS : un attaquant ne peut pas nous
-/// faire créer trop d'avatars). Large pour un voisinage AoI normal.
-const MAX_AVATARS: usize = 64;
+/// Plafond d'avatars DÉTAILLÉS (corps articulé + tête), chap. 8.2c. Réservé au FOCUS
+/// (les pairs à plein débit) → borne anti-DoS conservée sur le rendu COÛTEUX. Les autres
+/// joueurs ne sont pas perdus : ils sont rendus en imposteurs LOD (cf. `MAX_AWARE`).
+const MAX_FOCUS_DETAIL: usize = 64;
+/// Plafond TOTAL d'avatars affichés (détaillés + imposteurs LOD), chap. 8.2c. Bien plus haut
+/// que les détaillés : on AFFICHE des centaines de silhouettes lointaines (la foule de D22)
+/// sans fondre le GPU, tout en gardant la borne dure anti-DoS sur les avatars coûteux.
+const MAX_AWARE: usize = 512;
 /// Plafond du nombre de « seaux » d'adresses suivis (chap. 6.5). Sans borne, un
 /// attaquant qui USURPE des milliers d'adresses sources nous ferait créer autant
 /// d'entrées → mémoire saturée. Au-delà, on jette les seaux PLEINS (= adresses
@@ -183,9 +188,10 @@ pub fn net_receive(
                             }
                             // On affiche le protégé chez nous même si le budget est épuisé.
                             link.note_pos(state.id, (state.x, state.z)); // 8.1 : AoI + gossip
+                            let want_detailed = link.is_focus(&state.id); // 8.2c : tier de rendu
                             ingest_state(
-                                state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                                &mut meshes, &mut materials,
+                                state, now, link.my_id, want_detailed, &mut holes, &mut avatars,
+                                &mut commands, &mut meshes, &mut materials,
                             );
                         }
                     }
@@ -221,9 +227,10 @@ pub fn net_receive(
                             link.punish(state.id, "téléport (vitesse impossible)");
                         } else {
                             link.note_pos(state.id, (state.x, state.z)); // 8.1 : pour l'AoI + le gossip
+                            let want_detailed = link.is_focus(&state.id); // 8.2c : tier de rendu
                             ingest_state(
-                                state, now, link.my_id, &mut holes, &mut avatars, &mut commands,
-                                &mut meshes, &mut materials,
+                                state, now, link.my_id, want_detailed, &mut holes, &mut avatars,
+                                &mut commands, &mut meshes, &mut materials,
                             );
                         }
                     }
@@ -326,13 +333,18 @@ fn check_orb(bytes: &[u8]) -> OrbChecked {
     }
 }
 
-/// Range un état reçu (direct ou relayé) : marque le trou ouvert, empile
-/// l'instantané dans la file du joueur, et crée son avatar au premier paquet.
+/// Range un état reçu (direct ou relayé) : marque le trou ouvert, empile l'instantané, et
+/// gère le RENDU À DEUX TIERS (chap. 8.2c) — `want_detailed` = ce pair est-il dans MON focus ?
+///   - au premier paquet : avatar DÉTAILLÉ si focus ET sous `MAX_FOCUS_DETAIL`, sinon imposteur
+///     LOD (sous `MAX_AWARE`) — ainsi on AFFICHE la foule sans le plafond plat de 64 (ferme D24) ;
+///   - ensuite : si le tier voulu a CHANGÉ (le pair entre/sort de mon focus), on bascule le
+///     visuel (despawn + respawn) — rare, car le focus est COLLANT (8.2a-bis).
 #[allow(clippy::too_many_arguments)]
 fn ingest_state(
     state: PlayerState,
     now: f32,
     my_id: Option<PeerId>,
+    want_detailed: bool,
     holes: &mut Holes,
     avatars: &mut RemoteAvatars,
     commands: &mut Commands,
@@ -350,34 +362,61 @@ fn ingest_state(
         yaw: state.yaw,
         pitch: state.pitch,
     };
+    // Comptes par tier (avant tout emprunt mutable) : pour respecter les plafonds.
+    let detailed_count = avatars.map.values().filter(|p| p.detailed).count();
+    let total = avatars.map.len();
+
     if let Some(player) = avatars.map.get_mut(&state.id) {
         player.parent = state.parent; // rôle à jour (sous tutelle ? de qui ?)
         player.buffer.push_back(snap);
         while player.buffer.len() > 2 && now - player.buffer.front().unwrap().t > 1.0 {
             player.buffer.pop_front();
         }
+        // BASCULE DE TIER (8.2c) : monter en détaillé seulement si le focus a de la place ;
+        // redescendre en imposteur toujours permis. Despawn de l'ancien visuel + respawn.
+        let can_upgrade = want_detailed && !player.detailed && detailed_count < MAX_FOCUS_DETAIL;
+        let must_downgrade = !want_detailed && player.detailed;
+        if can_upgrade || must_downgrade {
+            commands.entity(player.body).despawn();
+            let (body, head) = if can_upgrade {
+                spawn_avatar(commands, meshes, materials, &state)
+            } else {
+                spawn_imposter(commands, meshes, materials, &state)
+            };
+            player.body = body;
+            player.head = head;
+            player.detailed = can_upgrade;
+        }
     } else {
-        // Plafond anti-DoS : on refuse de créer un avatar de plus au-delà de la limite.
-        if avatars.map.len() >= MAX_AVATARS {
+        // Premier paquet : on choisit le tier. Détaillé si focus + place ; sinon imposteur
+        // (s'il reste de la place dans la borne totale) ; sinon on n'affiche pas (anti-DoS).
+        let as_detailed = want_detailed && detailed_count < MAX_FOCUS_DETAIL;
+        if !as_detailed && total >= MAX_AWARE {
             return;
         }
-        let parts = spawn_avatar(commands, meshes, materials, &state);
+        let (body, head) = if as_detailed {
+            spawn_avatar(commands, meshes, materials, &state)
+        } else {
+            spawn_imposter(commands, meshes, materials, &state)
+        };
         let mut buffer = VecDeque::new();
         buffer.push_back(snap);
         avatars.map.insert(
             state.id,
             RemotePlayer {
-                body: parts.0,
-                head: parts.1,
+                body,
+                head,
                 buffer,
                 clock: now - INTERP_DELAY,
                 smooth_vel: Vec3::ZERO,
                 yaw_vel: 0.0,
                 pitch_vel: 0.0,
                 parent: state.parent,
+                detailed: as_detailed,
             },
         );
-        println!("Nouveau joueur {} apparu.", state.id.short());
+        let tier = if as_detailed { "focus (détaillé)" } else { "conscience (LOD)" };
+        println!("Nouveau joueur {} apparu — {tier}.", state.id.short());
     }
 }
 
@@ -449,6 +488,32 @@ fn spawn_avatar(
         .id();
 
     (body, head_entity)
+}
+
+/// Crée un IMPOSTEUR LOD (chap. 8.2c) : une seule silhouette émissive bon marché (pas de
+/// tête/membres), pour la CONSCIENCE (foule lointaine). Beaucoup moins cher que l'avatar
+/// détaillé → on en affiche des centaines. Pas d'entité de tête → `head = PLACEHOLDER` ;
+/// `net_interpolate` saute proprement l'animation de tête (son `heads.get_mut` renverra Err).
+/// Renvoie (entité du corps, `PLACEHOLDER`) pour rester homogène avec `spawn_avatar`.
+fn spawn_imposter(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    state: &PlayerState,
+) -> (Entity, Entity) {
+    let blob = meshes.add(Capsule3d::new(0.17, 0.55)); // une silhouette unique (pas de membres)
+    let skin = materials.add(body_skin(state.r, state.g, state.b));
+    let body = commands
+        .spawn((
+            RemoteAvatar { id: state.id },
+            Mesh3d(blob),
+            MeshMaterial3d(skin),
+            Transform::from_xyz(state.x, state.y, state.z)
+                .with_rotation(Quat::from_rotation_y(state.yaw)),
+            Visibility::default(),
+        ))
+        .id();
+    (body, Entity::PLACEHOLDER)
 }
 
 /// Matériau de skin émissif (glow néon) pour les avatars distants.
