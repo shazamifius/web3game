@@ -208,8 +208,19 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 >    les nœuds s'accordent sur la difficulté = vraie décision, cf. 🧭 carrefour) et **9.5 fédération** (plusieurs
 >    rendez-vous). 
 >
-> **▶ Rush autonome TERMINÉ : 9.5a ✓ + 9.3 ✓ faits et poussés ; arrêt propre au doute sur 9.2c. Reste pour
-> l'utilisateur : trancher 9.2c, puis les forks 9.1(b) et 9.5-fédération.**
+> **▶ Rush autonome TERMINÉ : 9.5a ✓ + 9.3 ✓ faits et poussés ; arrêt propre au doute sur 9.2c.**
+
+> ### 🧭 CAP REPRIS (19 juin, soir) — décidé avec l'utilisateur
+> Le **chapitre 9 est tenu** (cœur dur Sybil/éclipse/framing/réputation) ; les durcissements avancés sont
+> **rangés en ANNEXE H** (optionnels). **Audit des doutes FAIT** → tableau d'état D1→D24 en tête de §C : **7
+> fermés, 7 bornés, 10 ouverts**, et les 10 ouverts se regroupent en 4 chantiers (inclusivité / vie privée /
+> autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
+> chapitre 10 (vie privée + identité) — ça ferme à soi seul 6 des 10 doutes ouverts, les plus proches de la
+> vision.** Le portage moteur (Unreal/VRChat, ch.14) reste APRÈS : on contrôle tout, moteur compris, jusque-là.
+>
+> **PROCHAINE ACTION CONCRÈTE = reprendre 8.3** (cellules + hôte agrégateur → prouver que l'invariant tient
+> jusqu'à 5000, fin de l'effondrement de fraîcheur en 1/N ; le 8.3a est déjà posé/testé, en pause). La confiance
+> dont dépend l'agrégateur (un hôte de cellule menteur = D5/D9) est désormais durcie (ch.9) → on bâtit sur du solide.
 
 **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 
@@ -325,6 +336,46 @@ Chaque doute a : **Constat** (ce qui ne va pas / ce dont je ne suis pas sûr),
 **Pourquoi ça compte**, **Gravité** (🔴 critique / 🟠 important / 🟡 à surveiller),
 **Piste de correction**, **Comment on le vérifiera**. Le chapitre qui le ferme est
 indiqué entre crochets `[ch. X]`.
+
+> ### 📊 AUDIT DES DOUTES — état honnête au 19 juin (ce tableau fait FOI ; l'analyse détaillée suit)
+> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). 7 fermés, 7 bornés,
+> 10 ouverts — et les 10 ouverts se regroupent PROPREMENT en 4 chantiers, ce qui confirme le plan (voir sous le tableau).*
+>
+> | # | Statut | Où en est-on / qui le ferme |
+> |---|---|---|
+> | **D1** tests = localhost | ✅ | ch.7 : `tc netem` + NAT réel en namespaces (7.1→7.5) |
+> | **D2** bot ≠ jeu | 🟡 | décisions de confiance partagées ; orchestration encore dupliquée → ch.12.2 |
+> | **D3** lien faible noyé (réception) | 🔴 | inclusivité, **ch.8 Phase B** (8.4/8.6) |
+> | **D4** économie du parent (free-riding) | 🔴 | inclusivité, **ch.8 Phase B** (8.7) |
+> | **D5** parent qui censure | 🔴 | inclusivité, **ch.8 Phase B** (8.8) |
+> | **D6** PoW « jouet » | 🟡 | 9.1a : PoW **réglable**, socle 18 (mesuré) ; adaptative → annexe H |
+> | **D7** framing par quorum | ✅ | 9.2 (crédibilité) + 9.4b (diversité IP) — prouvé par `attack sybil-frame` |
+> | **D8** pas de réhabilitation | ✅ | 9.3 : fautes à décroissance temporelle |
+> | **D9** position non vérifiée / éclipse | ✅ | 9.4a (positions corroborées) + 9.4b (cap /24) ; résidu botnet = limite P2P |
+> | **D10** rendez-vous point unique | 🟡 | 9.5a (borné + PoW entrée) ; fédération + DHT → annexe H |
+> | **D11** migration de l'orbe | 🔴 | autorité, **ch.11.2** (quorum) |
+> | **D12** tout codé pour 1 objet | 🔴 | autorité, **ch.11.1** (registre générique) |
+> | **D13** pas d'horloge commune | 🔴 | autorité, **ch.11.3** |
+> | **D14** identité non persistante | 🔴 | **ch.10.1** (clé sauvée sur disque) |
+> | **D15** tout en clair (vie privée) | 🔴 | **ch.10.2** (chiffrement X25519) |
+> | **D16** fuites mémoire long terme | 🔴 | longévité, **ch.12.1** (TTL/éviction) |
+> | **D17** NAT symétrique | 🔴 | longévité, **ch.12.3** (relais/IPv6) |
+> | **D18** speed-hack grossier | 🟡 | à surveiller, **ch.11.4** |
+> | **D19** coût réel jamais mesuré | ✅ | 7.4/7.4b : Ko/s ↑↓, %CPU, RAM par nœud |
+> | **D20** attaques combinées | 🟡 | `sim` lance plusieurs attaquants en // ; pas encore de scénario coordonné adaptatif |
+> | **D21** sécurité du rendez-vous | 🟡 | 9.5a (cap mémoire + PoW) ; reste rate-limit débit + anti-spoofing |
+> | **D22** foule dense (aveugle > 32) | 🟡 | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) ; reste **8.3 échelle 5000** |
+> | **D23** gossip = ampli DDoS | ✅ | 8.1b : prouvé par `attack gossip-flood` |
+> | **D24** foule visible plafonnée 64 | ✅ | 8.2c : rendu deux tiers, confirmé à l'écran |
+>
+> **Les 10 doutes 🔴 ouverts se rangent en 4 chantiers — ça VALIDE le plan :**
+> - **Inclusivité** (D3, D4, D5) → **fin du ch.8, Phase B** *(prochain gros cap)*
+> - **Vie privée & identité** (D14, D15) → **ch.10**
+> - **Autorité & ordre** (D11, D12, D13) → **ch.11**
+> - **Longévité** (D16, D17) → **ch.12**
+> Plus le résidu D22 (échelle 5000) = **8.3**, juste avant la Phase B. **Donc : finir le ch.8 (8.3 + Phase B) puis
+> le ch.10 ferme à lui seul 6 des 10 doutes ouverts — les plus proches de la vision.** Le reste (ch.11/12) est du
+> durcissement « confort », pas un bloqueur de la promesse P2P.
 
 ### Catégorie 1 — Le réalisme de nos tests
 
