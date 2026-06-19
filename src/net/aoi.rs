@@ -22,6 +22,19 @@ pub(crate) const CANDIDATE_RADIUS: f32 = 500.0;
 /// pairs réunis. Plus tard : fonction de la qualité du lien (bon wifi = grand B).
 pub(crate) const SEND_BUDGET_HZ: f32 = 240.0;
 
+/// Côté d'une CELLULE spatiale (m), chap. 8.3 : une cellule = une RÉGION qu'un hôte élu
+/// RÉSUME. Plus grand que la portée de focus (~`COMFORT_DIST`) : ce qui est dans une cellule
+/// LOINTAINE est perçu via UN résumé basse fréquence, pas N flux individuels → la fraîcheur
+/// des lointains ne s'effondre plus en 1/N. Réglage à calibrer (8.3d) : trop grand = résumé
+/// grossier ; trop petit = trop de cellules. (Index aussi réutilisé pour le focus en O(K).)
+///
+/// ⏸ **8.3 EN PAUSE** (pivot sur le chapitre 9, juin 2026) : la grille de cellules est posée et
+/// testée (8.3a) mais PAS encore câblée dans l'émission/réception (pas de `KIND_CELL_SUMMARY`).
+/// On durcit d'abord la CONFIANCE (ch.9) avant de bâtir l'agrégateur, qui suppose des hôtes
+/// semi-fiables (un hôte malveillant = D5/D9). `#[allow(dead_code)]` assumé jusqu'au câblage 8.3c.
+#[allow(dead_code)]
+pub(crate) const CELL_SIZE: f32 = 16.0;
+
 /// Nombre MAXIMAL de voisins qu'un joueur suit / à qui il parle (chap. 6.6). C'est
 /// LA borne d'échelle : sans elle, chacun parlerait à tous → O(N²) de connexions et
 /// un WELCOME qui déborde le tampon. Le rendez-vous ne renvoie donc que les
@@ -54,6 +67,16 @@ pub(crate) fn dist2(a: (f32, f32), b: (f32, f32)) -> f32 {
 /// Deux positions sont-elles dans la borne grossière de candidats ?
 pub(crate) fn within_radius(a: (f32, f32), b: (f32, f32)) -> bool {
     dist2(a, b) <= CANDIDATE_RADIUS * CANDIDATE_RADIUS
+}
+
+/// La CELLULE (colonne, rangée) qui contient la position (x, z), chap. 8.3. Grille infinie
+/// ancrée à l'origine. `floor` (pas un cast brut) pour que les coordonnées NÉGATIVES tombent
+/// dans la bonne case : −0,1 → cellule −1, jamais 0 (un cast `as i32` tronquerait vers 0 et
+/// collerait deux régions distinctes dans la même cellule autour de l'origine).
+/// ⏸ 8.3 en pause (cf. `CELL_SIZE`) : testé mais pas encore câblé → `#[allow(dead_code)]`.
+#[allow(dead_code)]
+pub(crate) fn cell_of(x: f32, z: f32) -> (i32, i32) {
+    ((x / CELL_SIZE).floor() as i32, (z / CELL_SIZE).floor() as i32)
 }
 
 /// Poids de pertinence d'un pair, à partir de la distance² qui nous sépare.
@@ -233,6 +256,17 @@ mod tests {
         let r = allocate_tiers(&weights, &is_focus, 240.0, 20.0);
         assert!(r[0] <= CONSCIENCE_HZ + 0.01); // gros poids mais conscience → plafonné bas
         assert!((r[1] - 20.0).abs() < 0.01); // le focus (même petit poids) est servi plein
+    }
+
+    /// 8.3a — la grille de cellules : origine, frontières, et coordonnées NÉGATIVES (le piège
+    /// du cast brut). `cell_of` doit utiliser `floor`, donc −0,1 tombe dans la cellule −1.
+    #[test]
+    fn cell_of_gere_origine_frontieres_et_negatifs() {
+        assert_eq!(cell_of(0.0, 0.0), (0, 0));
+        assert_eq!(cell_of(CELL_SIZE - 0.01, 0.0), (0, 0)); // juste avant la frontière
+        assert_eq!(cell_of(CELL_SIZE, CELL_SIZE), (1, 1)); // sur la frontière → cellule suivante
+        assert_eq!(cell_of(-0.1, -0.1), (-1, -1)); // négatif proche de 0 → −1 (pas 0 !)
+        assert_eq!(cell_of(-CELL_SIZE, -CELL_SIZE), (-1, -1));
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
 use super::accuse::encode_accuse;
-use super::aoi::{dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
+use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
 use super::crypto::{Identity, PeerId, POW_BITS};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -335,6 +335,37 @@ impl NetLink {
         self.focus.contains(id)
     }
 
+    /// HÔTE d'une cellule (chap. 8.3) : élection DÉTERMINISTE = le plus petit id parmi les
+    /// occupants connus de cette cellule (moi inclus si j'y suis). Même règle que la migration
+    /// de l'orbe → tout le monde tombe sur le même hôte SANS vote. `me` = ma position, `my_id` =
+    /// mon identité. Renvoie `None` si la cellule est vide (personne de connu, ni moi). On ne
+    /// place un pair que si on connaît sa position (`peer_pos`) ET qu'il est encore dans la table.
+    ///
+    /// Contrairement à l'orbe, l'hôte n'est pas une AUTORITÉ : il ne fait que RÉSUMER sa région
+    /// (8.3c). Donc un désaccord transitoire (deux hôtes) ne corrompt rien — juste un résumé
+    /// redondant. C'est pourquoi cette élection simple suffit ici (pas besoin du quorum de D11).
+    /// ⏸ 8.3 EN PAUSE (pivot ch.9, cf. `aoi::CELL_SIZE`) : élection posée et testée, pas encore
+    /// utilisée par l'émission de résumés (8.3c) → `#[allow(dead_code)]` assumé jusqu'au câblage.
+    #[allow(dead_code)]
+    pub(crate) fn cell_host(&self, cell: (i32, i32), me: (f32, f32), my_id: PeerId) -> Option<PeerId> {
+        let mut host: Option<PeerId> = if cell_of(me.0, me.1) == cell { Some(my_id) } else { None };
+        for (id, pos) in &self.peer_pos {
+            if self.peers.contains_key(id) && cell_of(pos.0, pos.1) == cell {
+                host = Some(match host {
+                    Some(h) => h.min(*id),
+                    None => *id,
+                });
+            }
+        }
+        host
+    }
+
+    /// Suis-je l'hôte de MA propre cellule (chap. 8.3) ? `me` = ma position. ⏸ 8.3 en pause.
+    #[allow(dead_code)]
+    pub(crate) fn am_i_cell_host(&self, me: (f32, f32), my_id: PeerId) -> bool {
+        self.cell_host(cell_of(me.0, me.1), me, my_id) == Some(my_id)
+    }
+
     /// Ce pair est-il en sourdine (trop de fautes) ? Si oui, on ignore ses paquets.
     pub(crate) fn is_muted(&self, id: PeerId) -> bool {
         self.strikes.get(&id).copied().unwrap_or(0) >= MAX_STRIKES
@@ -420,6 +451,31 @@ mod tests {
 
     fn addr(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la
+    /// cellule (moi inclus), DÉTERMINISTE, et qui ignore les pairs d'AUTRES cellules. Cellule
+    /// vide → None.
+    #[test]
+    fn cell_host_est_le_plus_petit_id_de_la_cellule() {
+        let mut link = link_de_test();
+        let me_pos = (1.0, 1.0); // cellule (0,0)
+        // pid(5) et pid(2) dans MA cellule ; pid(1) (plus petit) AILLEURS (cellule lointaine).
+        link.peers.insert(pid(5), addr(7005));
+        link.peer_pos.insert(pid(5), (2.0, 2.0)); // (0,0)
+        link.peers.insert(pid(2), addr(7002));
+        link.peer_pos.insert(pid(2), (3.0, 1.0)); // (0,0)
+        link.peers.insert(pid(1), addr(7001));
+        link.peer_pos.insert(pid(1), (200.0, 200.0)); // cellule lointaine → ne compte pas ici
+        let me = pid(9);
+        // Dans (0,0) : occupants {pid9(moi), pid5, pid2} → plus petit = pid2.
+        assert_eq!(link.cell_host(cell_of(me_pos.0, me_pos.1), me_pos, me), Some(pid(2)));
+        assert!(!link.am_i_cell_host(me_pos, me)); // pid2 < pid9 → ce n'est pas moi
+        // La cellule lointaine de pid1 : son seul occupant connu = pid1 → c'est lui l'hôte.
+        let loin = cell_of(200.0, 200.0);
+        assert_eq!(link.cell_host(loin, me_pos, me), Some(pid(1)));
+        // Une cellule vide n'a pas d'hôte.
+        assert_eq!(link.cell_host((50, 50), me_pos, me), None);
     }
 
     /// 8.2a-bis — le focus est COLLANT : il prend les plus proches, NE bouge PAS sous un petit

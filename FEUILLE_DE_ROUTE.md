@@ -122,9 +122,25 @@ chapitre 8 « VOIR la foule » (Phase A, D22+D24) est bouclé** — sauf 8.3 (sc
 *Observé en passant : l'orbe saute en foule 80-fenêtres → diagnostiqué ARTEFACT mono-PC (cf. panneau dans
 le registre), NON corrigé ; résidus réels R1 (orbe non interpolée) / R2 (migration split-brain = D11) logués.*
 
-**PROCHAINE ACTION CONCRÈTE = 8.3** (cellules spatiales + hôte agrégateur : 1 flux résumé par région →
-tenir l'invariant jusqu'à 5000 ; corrige aussi le tri focus O(N log N) via index spatial), OU bifurquer
-sur la Phase B (inclusivité : D3/D4/D5). Voir §D, Chapitre 8.
+**8.3a ⏸ POSÉ MAIS EN PAUSE (19 juin) — grille de cellules + élection d'hôte, testé, PAS câblé.** Premières
+briques de 8.3 écrites et prouvées : `aoi::cell_of` (grille infinie, `floor` pour gérer les négatifs) et
+`NetLink::cell_host`/`am_i_cell_host` (hôte = plus petit id connu dans la cellule, même règle que la migration
+de l'orbe, mais NON autoritaire → un double hôte ne corrompt rien, juste un résumé redondant). 53 tests, 0
+warning (`#[allow(dead_code)]` documenté : pas encore d'émission `KIND_CELL_SUMMARY`). **8.3b/c/d restent.**
+
+**🔀 PIVOT DÉCIDÉ (19 juin) : on attaque le CHAPITRE 9 (confiance dure) AVANT de finir le chapitre 8.**
+*Pourquoi (re-think assumé, pas une rustine) :* 8.3 (hôte de cellule) et toute la Phase B (parent agrégateur,
+8.4→8.8) bâtissent une couche d'**agrégateurs** où un hôte/parent **résume la foule pour les autres**. Un
+agrégateur **malveillant qui ment sur sa région** (cache/invente des gens) = **D5/D9** ; la feuille elle-même
+renvoie la corroboration anti-éclipse au ch.9 (note 8.3 doute (b), étape 8.8). Bâtir l'agrégateur sur une
+confiance non durcie = béton sur du sable. **De plus, un trou VIVANT avant le ch.9 :** la réputation partagée
+(6.7) est *frameable* aujourd'hui — `ACCUSE_QUORUM = 3` + PoW jouet 16 bits (D6) → **3 Sybils bon marché font
+taire n'importe quel honnête** (D6/D7/D20). Le ch.9 (9.1 anti-Sybil dur/réglable, 9.2 quorum pondéré, 9.4
+anti-éclipse + corroboration des positions, 9.5 rendez-vous résilient) referme ça AVANT qu'on s'appuie dessus.
+**Reprise de 8.3** (câblage `KIND_CELL_SUMMARY` + Phase B inclusivité) : APRÈS le ch.9, sur une confiance solide.
+
+**PROCHAINE ACTION CONCRÈTE = 9.1** (refonte anti-Sybil : difficulté PoW réglable + adaptative — décision G#2
+déjà prise). Voir §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
