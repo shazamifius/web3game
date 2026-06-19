@@ -218,9 +218,14 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > chapitre 10 (vie privée + identité) — ça ferme à soi seul 6 des 10 doutes ouverts, les plus proches de la
 > vision.** Le portage moteur (Unreal/VRChat, ch.14) reste APRÈS : on contrôle tout, moteur compris, jusque-là.
 >
-> **PROCHAINE ACTION CONCRÈTE = reprendre 8.3** (cellules + hôte agrégateur → prouver que l'invariant tient
-> jusqu'à 5000, fin de l'effondrement de fraîcheur en 1/N ; le 8.3a est déjà posé/testé, en pause). La confiance
-> dont dépend l'agrégateur (un hôte de cellule menteur = D5/D9) est désormais durcie (ch.9) → on bâtit sur du solide.
+> **8.3 EN COURS (reprise) :** ✅ 8.3a (grille `cell_of` + élection d'hôte `cell_host`, posé/testé) · ✅ **8.3b
+> (19 juin) : le RÉSUMÉ de cellule** — nouveau `src/net/cell.rs` (`CellSummary` : cellule + count + échantillon
+> RÉPARTI de positions ; `build_cell_summary` + `encode/decode`, purs et testés, sur le modèle de `gossip.rs` ;
+> `KIND_CELL_SUMMARY = 9`). 65 tests, 0 warning (`#[allow(dead_code)]` documenté tant que non câblé, comme 8.3a).
+> **PROCHAINE ACTION = 8.3c** : l'HÔTE émet le résumé de sa cellule (bot/jeu), les observateurs l'INGÈRENT et
+> s'en servent pour percevoir la foule lointaine à bonne fraîcheur (au lieu du filet 1/N de la conscience).
+> Puis **8.3d** : preuve `crowd 500→2000` (foule étalée) → couverture ~100 % à débit PLAT + fraîcheur correcte.
+> La confiance dont dépend l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9) → on bâtit sur du solide.
 
 **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 

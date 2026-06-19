@@ -6,6 +6,7 @@
 //!   - `message`    : le format d'un état de joueur (`PlayerState`, encode/decode)
 //!   - `control`    : les messages de l'annuaire (HELLO / WELCOME)
 //!   - `gossip`     : « cartes de visite » — découverte décentralisée des pairs (8.1, D22)
+//!   - `cell`       : RÉSUMÉ de cellule — percevoir une foule lointaine sans N flux (8.3, D22)
 //!   - `crypto`     : signatures à clé publique (Ed25519) — la frontière de confiance
 //!   - `aoi`        : Area of Interest (allocation de budget : qui reçoit quel débit)
 //!   - `punch`      : hole punching (percer les NAT pour une connexion directe)
@@ -32,6 +33,7 @@ mod anticheat;
 mod aoi;
 mod attack;
 mod bot;
+mod cell;
 mod control;
 mod crypto;
 mod demo;
