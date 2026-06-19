@@ -5,7 +5,7 @@
 //!      pairs connus, à débit limité (SEND_HZ fois/s).
 
 use super::state::{RemoteAvatars, SEND_HZ};
-use crate::net::aoi::{allocate_two_tier, dist2, relevance_weight, SEND_BUDGET_HZ};
+use crate::net::aoi::{allocate_tiers, dist2, relevance_weight, SEND_BUDGET_HZ};
 use crate::net::control::encode_hello;
 use crate::net::crypto::PeerId;
 use crate::net::gossip::{encode_gossip, sample_cards};
@@ -29,7 +29,7 @@ pub fn net_send(
     mut seq: Local<u64>, // compteur anti-rejeu : +1 à chaque état émis (chap. 5.2)
     mut gossip_acc: Local<f32>,
     mut gossip_cursor: Local<usize>,
-    link: Res<NetLink>,
+    mut link: ResMut<NetLink>,
     avatars: Res<RemoteAvatars>,
     holes: Res<Holes>,
     player: Query<&Transform, With<crate::player::Player>>,
@@ -168,6 +168,10 @@ pub fn net_send(
     let bytes = encode_signed(&me, &link.identity);
     let me_xz = (pos.x, pos.z);
 
+    // 0) FOCUS COLLANT (chap. 8.2a-bis) : on met à jour l'ensemble des pairs à plein débit AVANT
+    //    d'allouer, avec hystérésis → on ne recompose pas le top-K à chaque image (fin du churn).
+    link.refresh_focus(me_xz);
+
     // 1) PERTINENCE : un poids par pair, à partir de sa dernière position connue
     //    (lue dans sa file d'instantanés). Un pair inconnu → distance 0 → poids
     //    max, pour le découvrir vite.
@@ -186,10 +190,10 @@ pub fn net_send(
         })
         .collect();
 
-    // 2) AoI À DEUX TIERS (chap. 8.2) : les K_FOCUS plus pertinents au plein débit (focus),
-    //    le reste en CONSCIENCE basse fidélité. Casse le « tout le monde flou » de la foule
-    //    dense que le water-filling simple laissait passer (poids ~égaux → étalement uniforme).
-    let rates = allocate_two_tier(&weights, SEND_BUDGET_HZ, SEND_HZ);
+    // 2) AoI À DEUX TIERS (chap. 8.2 / 8.2a-bis) : le FOCUS COLLANT (link.focus) au plein débit,
+    //    le reste en CONSCIENCE basse fidélité. Casse le « tout le monde flou » de la foule dense.
+    let is_focus: Vec<bool> = peers.iter().map(|(id, _)| link.is_focus(id)).collect();
+    let rates = allocate_tiers(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ);
 
     // 3) CADENCEMENT par crédit : chaque pair accumule `débit × temps` ; dès qu'il
     //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace

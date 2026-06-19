@@ -843,15 +843,22 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
     **Conséquence : le budget plein débit est ÉTALÉ → retour au « tout le monde flou » que 8.2 devait
     casser.** À 80 ça marchait par chance (moins de churn). *La métrique a fait son travail : 8.2 n'est
     PAS fini.* 50 tests, 0 warning.
-  - [ ] **8.2a-bis — STABILISER le focus (le vrai cœur de 8.2, révélé par 8.2b).** Le focus doit être
-    COLLANT (hystérésis) : une fois qu'on tient un lien plein débit avec un pair, on le GARDE tant qu'il
-    reste pertinent et présent, au lieu de recomposer le top-8 à chaque tick. Et il faut DÉCOUPLER la
-    découverte (le « poids max aux inconnus ») du choix de focus, pour qu'un inconnu ne vole pas une place
-    de focus à un pair qu'on suit déjà. *Piste :* mémoriser l'ensemble focus entre les ticks ; n'en évincer
-    un membre que s'il quitte la portée ou qu'un autre est NETTEMENT plus pertinent (marge anti-oscillation) ;
-    servir la découverte sur un petit budget à part (ou via la conscience), pas sur les slots de focus.
-    **Preuve :** `crowd 160` (puis 200/500) → FOCUS stable ≈ K_FOCUS, CONSCIENCE = le reste, couverture
-    haute ET débit ↓ PLAT quand N grandit (l'invariant, enfin tenu pour de vrai).
+  - **8.2a-bis ✓ FAIT (19 juin) — focus COLLANT : le churn est mort, l'invariant TIENT.** Ensemble
+    focus PERSISTANT dans `NetLink` (`focus: Vec<PeerId>` + `refresh_focus`/`is_focus`), maintenu par
+    HYSTÉRÉSIS : (1) on retire les partis, (2) on remplit les places libres par les plus pertinents, (3)
+    on ne REMPLACE un membre que si un autre est `FOCUS_SWAP_MARGIN = 1,5`× plus pertinent (un échange/tick).
+    DÉCOUPLAGE découverte/focus : la pertinence vient de la position CONNUE (`peer_pos`) ; un pair sans
+    position connue a pertinence 0 → il n'accapare plus de slot (il se fait entendre par la conscience, pas
+    en volant le plein débit). `allocate_rates` → `allocate_tiers(weights, is_focus, …)` : le focus est
+    DONNÉ, plus recalculé au tri. Logique centralisée dans `NetLink` → partagée [send.rs] (passé en `ResMut`)
+    ET [bot.rs] (anti-D2). **PROUVÉ (fenêtre identique 30 s) :** `crowd 160` FOCUS **0,2 → 9,4** (le churn
+    était bien la cause). Pair d'invariant 80↔160 : **FOCUS borné 8,8 → 10,5** (ne grossit pas avec N),
+    **CONSCIENCE 68 → 134** (= LOD de toute la foule, scale avec N), **débit ↓ 43,8 → 40,4 Ko/s = PLAT**
+    quand N double, orbe 0 volée. +1 test (`focus_est_collant_pas_de_churn` : stable sous bruit, accepte un
+    pair nettement plus proche). 51 tests, 0 warning. *L'invariant de D22 est enfin tenu POUR DE VRAI :
+    couverture en deux tiers (proches nets + foule en LOD) à débit reçu CONSTANT. Reste 8.2c (rendu 3D).*
+    *Résidu honnête : couverture « entendue » à 30 s = 91 % à 160 (convergence non finie dans la fenêtre,
+    comme au 8.1) ; le tri des candidats focus est O(N log N)/tick → à revoir pour 5000 (index spatial, 8.3).*
   - [ ] **8.2c** — rendu à deux tiers ([receive.rs]) + `tools/foule-3d.sh` (amorce D24, vérif 3D par l'utilisateur).
 
 - [ ] 8.3 — **Cellules spatiales + hôte de cellule agrégateur (ce qui fait tenir l'invariant

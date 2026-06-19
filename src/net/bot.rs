@@ -12,7 +12,7 @@
 
 use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
-use super::aoi::{allocate_two_tier, dist2, relevance_weight, SEND_BUDGET_HZ};
+use super::aoi::{allocate_tiers, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, POW_BITS};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
@@ -415,6 +415,10 @@ impl Bot {
                 let bytes = encode_signed(&me, &self.link.identity);
                 let me_xz = (pos.x, pos.z);
 
+                // 0) FOCUS COLLANT (chap. 8.2a-bis) : mise à jour hystérétique de l'ensemble plein
+                //    débit AVANT d'allouer → pas de recomposition du top-K à chaque tick (fin du churn).
+                self.link.refresh_focus(me_xz);
+
                 // a) PERTINENCE : un poids par pair selon sa dernière position connue
                 //    (inconnu → distance 0 → poids max, pour le découvrir vite).
                 let peers: Vec<(PeerId, SocketAddr)> =
@@ -430,9 +434,10 @@ impl Bot {
                         relevance_weight(d2)
                     })
                     .collect();
-                // b) AoI À DEUX TIERS (chap. 8.2) : focus (K_FOCUS plus pertinents) au plein
-                //    débit, conscience (le reste) en basse fidélité — comme le vrai client.
-                let rates = allocate_two_tier(&weights, SEND_BUDGET_HZ, SEND_HZ);
+                // b) AoI À DEUX TIERS (chap. 8.2 / 8.2a-bis) : le FOCUS COLLANT au plein débit,
+                //    la conscience (le reste) en basse fidélité — comme le vrai client.
+                let is_focus: Vec<bool> = peers.iter().map(|(id, _)| self.link.is_focus(id)).collect();
+                let rates = allocate_tiers(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ);
                 // c) CADENCEMENT par crédit, vers les pairs au trou OUVERT seulement.
                 for ((id, addr), rate) in peers.iter().zip(&rates) {
                     if !*self.holes.get(id).unwrap_or(&false) {

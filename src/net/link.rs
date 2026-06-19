@@ -5,6 +5,7 @@
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
 use super::accuse::encode_accuse;
+use super::aoi::{dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
 use super::crypto::{Identity, PeerId, POW_BITS};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -53,6 +54,11 @@ pub struct NetLink {
     /// (réflexion) ni gonfler nos tables au-delà de ce débit borné — même protocole que
     /// le rate-limit de réception (5.5), mais appliqué à l'APPRENTISSAGE, pas au paquet.
     pub(crate) gossip_credit: HashMap<SocketAddr, f32>,
+    /// ENSEMBLE FOCUS COLLANT (chap. 8.2a-bis) : les pairs à qui on tient un lien plein débit
+    /// (20 Hz, prédiction, avatar détaillé). Maintenu avec HYSTÉRÉSIS par `refresh_focus` →
+    /// on NE recompose PAS le top-K à chaque tick (ce qui causait le « churn » mesuré au 8.2b),
+    /// on garde les membres tant qu'ils restent pertinents. Le reste de la table = la CONSCIENCE.
+    pub(crate) focus: Vec<PeerId>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
@@ -167,6 +173,7 @@ impl NetLink {
             accusations: HashMap::new(),
             accused_broadcast: HashSet::new(),
             gossip_credit: HashMap::new(),
+            focus: Vec::new(),
             weak,
         })
     }
@@ -259,6 +266,75 @@ impl NetLink {
         self.peer_pos.insert(id, xz);
     }
 
+    /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
+    /// Le focus = les pairs à qui on tient un lien plein débit ; on le STABILISE :
+    ///   1. on retire les membres qui ont quitté la table ;
+    ///   2. on remplit les places libres avec les pairs connus les PLUS pertinents ;
+    ///   3. on ne REMPLACE un membre que si un autre est `FOCUS_SWAP_MARGIN`× plus pertinent
+    ///      (un seul échange par appel) → marge anti-oscillation, fin du churn du 8.2b.
+    /// La pertinence vient de la dernière position CONNUE (`peer_pos`) ; un pair SANS position
+    /// connue a pertinence 0 → il n'accapare PAS de slot de focus. C'est le DÉCOUPLAGE
+    /// découverte/focus : un inconnu se fait entendre par la CONSCIENCE, pas en volant le plein débit.
+    pub(crate) fn refresh_focus(&mut self, my: (f32, f32)) {
+        // Pertinence par pair connu (snapshot local → pas de double emprunt de self).
+        let rel: HashMap<PeerId, f32> = self
+            .peers
+            .keys()
+            .map(|id| {
+                let r = self.peer_pos.get(id).map(|&p| relevance_weight(dist2(my, p))).unwrap_or(0.0);
+                (*id, r)
+            })
+            .collect();
+        let rel_of = |id: &PeerId| rel.get(id).copied().unwrap_or(0.0);
+
+        // 1) on retire les membres partis (et l'identité nulle par précaution).
+        self.focus.retain(|id| self.peers.contains_key(id));
+
+        // 2) on remplit les places libres avec les plus pertinents hors focus (position connue).
+        if self.focus.len() < K_FOCUS {
+            let mut cands: Vec<PeerId> = self
+                .peers
+                .keys()
+                .filter(|id| !self.focus.contains(id) && rel_of(id) > 0.0)
+                .copied()
+                .collect();
+            cands.sort_by(|a, b| rel_of(b).partial_cmp(&rel_of(a)).unwrap_or(std::cmp::Ordering::Equal));
+            for id in cands {
+                if self.focus.len() >= K_FOCUS {
+                    break;
+                }
+                self.focus.push(id);
+            }
+        }
+
+        // 3) UN échange hystérétique : le meilleur hors focus déloge le pire du focus seulement
+        //    s'il est NETTEMENT plus pertinent (× FOCUS_SWAP_MARGIN) → pas de va-et-vient.
+        if self.focus.len() == K_FOCUS {
+            let worst = self
+                .focus
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| rel_of(a).partial_cmp(&rel_of(b)).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, id)| (i, *id));
+            let best = self
+                .peers
+                .keys()
+                .filter(|id| !self.focus.contains(id))
+                .max_by(|a, b| rel_of(a).partial_cmp(&rel_of(b)).unwrap_or(std::cmp::Ordering::Equal))
+                .copied();
+            if let (Some((wi, worst_id)), Some(best_id)) = (worst, best) {
+                if rel_of(&best_id) > rel_of(&worst_id) * FOCUS_SWAP_MARGIN {
+                    self.focus[wi] = best_id;
+                }
+            }
+        }
+    }
+
+    /// Ce pair est-il actuellement au FOCUS (lien plein débit) ? (chap. 8.2a-bis)
+    pub(crate) fn is_focus(&self, id: &PeerId) -> bool {
+        self.focus.contains(id)
+    }
+
     /// Ce pair est-il en sourdine (trop de fautes) ? Si oui, on ignore ses paquets.
     pub(crate) fn is_muted(&self, id: PeerId) -> bool {
         self.strikes.get(&id).copied().unwrap_or(0) >= MAX_STRIKES
@@ -344,6 +420,37 @@ mod tests {
 
     fn addr(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    /// 8.2a-bis — le focus est COLLANT : il prend les plus proches, NE bouge PAS sous un petit
+    /// bruit de position (fin du churn du 8.2b), mais accepte un pair NETTEMENT plus pertinent.
+    #[test]
+    fn focus_est_collant_pas_de_churn() {
+        let mut link = link_de_test();
+        let me = (0.0, 0.0);
+        // 20 pairs à distances croissantes : pid(1) le plus proche … pid(20) le plus loin.
+        for i in 1..=20u8 {
+            link.peers.insert(pid(i), addr(7000 + i as u16));
+            link.peer_pos.insert(pid(i), (i as f32, 0.0));
+        }
+        link.refresh_focus(me);
+        let f0 = link.focus.clone();
+        assert_eq!(f0.len(), K_FOCUS);
+        for i in 1..=K_FOCUS as u8 {
+            assert!(link.is_focus(&pid(i))); // les K_FOCUS plus proches
+        }
+
+        // Petit bruit de position (< marge) → focus STRICTEMENT inchangé (pas de churn).
+        for i in 1..=20u8 {
+            link.peer_pos.insert(pid(i), (i as f32 + 0.1, 0.0));
+        }
+        link.refresh_focus(me);
+        assert_eq!(link.focus, f0);
+
+        // Un lointain devient TRÈS proche (au-delà de la marge) → il entre au focus.
+        link.peer_pos.insert(pid(20), (0.01, 0.0));
+        link.refresh_focus(me);
+        assert!(link.is_focus(&pid(20)));
     }
 
     /// 8.1b (a) — une carte de gossip SANS preuve de travail est IGNORÉE (pas de
