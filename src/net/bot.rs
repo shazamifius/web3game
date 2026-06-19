@@ -14,7 +14,7 @@ use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
 use super::aoi::{allocate_tiers, dist2, relevance_weight, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::{PeerId, POW_BITS};
+use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::{NetLink, MAX_STRIKES};
 use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
@@ -277,7 +277,7 @@ impl Bot {
                     }
                     match decode_canonical(&bytes) {
                         Some(state) => {
-                            if state.id.has_pow(POW_BITS)
+                            if state.id.has_pow(pow_bits())
                                 && !self.link.is_muted(state.id)
                                 && self.link.accept_seq(state.id, state.seq)
                             {
@@ -311,7 +311,7 @@ impl Bot {
                         continue;
                     }
                     if let Some(state) = decode_canonical(&bytes) {
-                        if state.id.has_pow(POW_BITS)
+                        if state.id.has_pow(pow_bits())
                             && !self.link.is_muted(state.id)
                             && self.link.accept_seq(state.id, state.seq)
                         {
@@ -361,7 +361,7 @@ impl Bot {
                     match decode_orb(&bytes) {
                         Some(w) => {
                             let owner = w.owner;
-                            if owner.has_pow(POW_BITS) && !self.link.is_muted(owner) {
+                            if owner.has_pow(pow_bits()) && !self.link.is_muted(owner) {
                                 let claimer_pos = self.last_state.get(&owner).map(|(p, _)| *p);
                                 match apply_incoming(&mut self.orb, w, now, claimer_pos) {
                                     OrbApply::Implausible => self.link.punish(owner, "orbe : saut de version aberrant"),
@@ -379,7 +379,7 @@ impl Bot {
                 }
                 Some(KIND_ACCUSE) => {
                     if let Some((accuser, offender)) = decode_accuse(&bytes) {
-                        if accuser.has_pow(POW_BITS) && accuser != offender && !self.link.is_muted(accuser) {
+                        if accuser.has_pow(pow_bits()) && accuser != offender && !self.link.is_muted(accuser) {
                             self.link.record_accusation(offender, accuser);
                         }
                     }

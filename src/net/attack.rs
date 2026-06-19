@@ -27,7 +27,7 @@
 
 use super::accuse::{decode_accuse, encode_accuse};
 use super::control::{decode_welcome, encode_hello};
-use super::crypto::{Identity, PeerId, POW_BITS, PUBKEY_LEN};
+use super::crypto::{Identity, PeerId, pow_bits, PUBKEY_LEN};
 use super::gossip::{encode_gossip, Card};
 use super::link::{rendezvous_addr, NetLink, ACCUSE_QUORUM};
 use super::message::{encode_signed, mark_as_relay, PlayerState};
@@ -53,7 +53,7 @@ pub fn run_attack(attack: &str) {
     };
     // L'attaquant aussi doit MINER son identité (chap. 6.2), sinon il est ignoré
     // partout : il « paie » donc son entrée comme tout le monde.
-    let identity = Identity::generate_pow(POW_BITS);
+    let identity = Identity::generate_pow(pow_bits());
     let rv = rendezvous_addr();
     println!(
         "[attaquant] prise {:?}, rendez-vous {rv}. Attaque demandée : « {attack} ».",
@@ -278,7 +278,7 @@ fn attack_sybil(socket: &Socket, identity: &Identity, my_id: PeerId, victims: &[
         }
     };
     // Depuis 6.2 : reconnexion = re-payer la preuve de travail. Ce n'est plus gratuit.
-    let id2 = Identity::generate_pow(POW_BITS);
+    let id2 = Identity::generate_pow(pow_bits());
     let (my_id2, victims2) = join_and_discover(&socket2, &id2, rv);
     if victims2.is_empty() {
         println!("[attaquant]   (pas de victimes à la reconnexion)");
@@ -374,7 +374,7 @@ fn attack_gossip_flood(socket: &Socket, victims: &[Victim]) {
     //     la preuve précédente ne couvrait pas (doute #1). On veut voir une RAFALE puis le SILENCE.
     const N_POW: usize = 4;
     println!("[attaquant]   je MINE {N_POW} identités PoW neuves (le cas dur du doute #1)…");
-    let pow_ids: Vec<PeerId> = (0..N_POW).map(|_| Identity::generate_pow(POW_BITS).id()).collect();
+    let pow_ids: Vec<PeerId> = (0..N_POW).map(|_| Identity::generate_pow(pow_bits()).id()).collect();
 
     let mut cards: Vec<Card> = Vec::new();
     for k in 0..4u8 {
@@ -450,14 +450,14 @@ fn attack_sybil_frame() {
 
     // Un TÉMOIN honnête (un nœud quelconque du réseau) et un INNOCENT qu'on veut bannir CHEZ LUI.
     let mut temoin = NetLink::new((0.5, 0.5, 0.5), false).expect("témoin honnête");
-    let innocent = Identity::generate_pow(POW_BITS).id();
+    let innocent = Identity::generate_pow(pow_bits()).id();
     println!("[attaquant]   cible : l'innocent {} — il n'a JAMAIS triché.", innocent.short());
 
     // On MINE le quorum d'identités Sybil et on MESURE le coût (preuve chiffrée que c'est trivial).
     let t0 = Instant::now();
-    let sybils: Vec<Identity> = (0..ACCUSE_QUORUM).map(|_| Identity::generate_pow(POW_BITS)).collect();
+    let sybils: Vec<Identity> = (0..ACCUSE_QUORUM).map(|_| Identity::generate_pow(pow_bits())).collect();
     let cout = t0.elapsed();
-    println!("[attaquant]   {ACCUSE_QUORUM} identités Sybil MINÉES en {cout:?} (PoW {POW_BITS} bits = un jouet, D6).");
+    println!("[attaquant]   {ACCUSE_QUORUM} identités Sybil MINÉES en {cout:?} (PoW {} bits, RÉGLABLE — 9.1).", pow_bits());
 
     // Chaque Sybil signe une accusation contre l'innocent ; on la fait transiter par le VRAI
     // chemin (encode → decode → garde du récepteur), exactement comme un bot honnête la traiterait.
@@ -469,7 +469,7 @@ fn attack_sybil_frame() {
         };
         // Garde du récepteur, COPIE FIDÈLE de bot.rs : PoW exigée, pas d'auto-accusation, accusateur
         // non déjà muet. Le point de l'attaque : ces gardes laissent passer des Sybils bon marché.
-        if accuser.has_pow(POW_BITS) && accuser != offender && !temoin.is_muted(accuser) {
+        if accuser.has_pow(pow_bits()) && accuser != offender && !temoin.is_muted(accuser) {
             temoin.record_accusation(offender, accuser);
         }
         println!("[attaquant]   accusation #{} signée par la Sybil {} → livrée au témoin.", k + 1, accuser.short());

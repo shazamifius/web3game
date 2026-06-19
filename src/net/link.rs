@@ -6,7 +6,7 @@
 
 use super::accuse::encode_accuse;
 use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
-use super::crypto::{Identity, PeerId, POW_BITS};
+use super::crypto::{Identity, PeerId, pow_bits};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
@@ -167,10 +167,15 @@ impl NetLink {
     pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
         let rendezvous = rendezvous_addr();
-        // On MINE notre identité (preuve de travail anti-Sybil, chap. 6.2) une fois,
-        // au lancement. La privée reste ici. Ce petit coût rend une identité « chère »
-        // → on ne peut plus se reconnecter gratuitement après un bannissement.
-        let identity = Identity::generate_pow(POW_BITS);
+        // On MINE notre identité (preuve de travail anti-Sybil, chap. 6.2/9.1) une fois,
+        // au lancement. La privée reste ici. Ce coût (réglable, `pow_bits()`) rend une
+        // identité « chère » → ni reconnexion gratuite après bannissement, ni Sybil de masse.
+        // En TESTS : identité NON minée (rapide) — sinon `cargo test` minerait à pleine
+        // difficulté à chaque `NetLink::new` ; la PoW elle-même est testée dans `crypto`.
+        #[cfg(test)]
+        let identity = Identity::generate();
+        #[cfg(not(test))]
+        let identity = Identity::generate_pow(pow_bits());
         println!(
             "Client réseau : port local {}, rendez-vous {}{}.",
             socket.local_addr()?,
@@ -209,7 +214,7 @@ impl NetLink {
     /// D22), mais la mémoire SI — sinon un menteur nous noierait. Table pleine → on refuse le
     /// nouveau (l'éviction fine par TTL est le chap. 12 / D16 ; ici, borne dure).
     pub(crate) fn learn_peer(&mut self, id: PeerId, addr: SocketAddr, pos: Option<(f32, f32)>) -> bool {
-        if id.is_none() || Some(id) == self.my_id || !id.has_pow(POW_BITS) {
+        if id.is_none() || Some(id) == self.my_id || !id.has_pow(pow_bits()) {
             return false;
         }
         if let Some(xz) = pos {
@@ -254,7 +259,7 @@ impl NetLink {
         addr: SocketAddr,
         pos: (f32, f32),
     ) -> bool {
-        if id.is_none() || Some(id) == self.my_id || !id.has_pow(POW_BITS) {
+        if id.is_none() || Some(id) == self.my_id || !id.has_pow(pow_bits()) {
             return false; // (a) identité nulle / soi-même / sans preuve de travail
         }
         if self.peers.contains_key(&id) {
@@ -565,7 +570,7 @@ mod tests {
     fn gossip_rejette_id_sans_pow() {
         let mut link = link_de_test();
         let sans_pow = pid(7); // 0x07… → 5 bits de tête à zéro < 16 → has_pow(16) faux
-        assert!(!sans_pow.has_pow(POW_BITS));
+        assert!(!sans_pow.has_pow(pow_bits()));
         assert!(!link.learn_from_gossip(addr(9000), sans_pow, addr(5001), (0.0, 0.0)));
         assert!(!link.learn_peer(sans_pow, addr(5001), None));
         assert!(link.peers.is_empty()); // rien appris

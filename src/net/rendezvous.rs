@@ -10,7 +10,7 @@
 
 use super::aoi::{dist2, keep_nearest, within_radius, MAX_NEIGHBORS};
 use super::control::{decode_hello, encode_welcome};
-use super::crypto::{PeerId, POW_BITS};
+use super::crypto::{PeerId, pow_bits};
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -54,7 +54,7 @@ pub fn run_rendezvous() {
                 continue; // le rendez-vous ne comprend que HELLO
             };
             // 6.2 : une identité sans preuve de travail n'est même pas listée.
-            if !id.has_pow(POW_BITS) {
+            if !id.has_pow(pow_bits()) {
                 continue;
             }
             let pos = (px, pz);

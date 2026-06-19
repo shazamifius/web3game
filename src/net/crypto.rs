@@ -23,19 +23,54 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::io::Read;
+use std::sync::OnceLock;
 
 /// Taille d'une clé publique Ed25519 (octets) : c'est l'identité d'un joueur.
 pub(crate) const PUBKEY_LEN: usize = 32;
 /// Taille d'une signature Ed25519 (octets) : le « sceau » apposé sur un paquet.
 pub(crate) const SIG_LEN: usize = 64;
 
-/// DIFFICULTÉ anti-Sybil (chap. 6.2) : nombre de bits de tête à ZÉRO qu'une clé
-/// publique doit avoir pour être une identité VALIDE. Comme une clé Ed25519 est
-/// ~aléatoire, en trouver une qui satisfait ça exige d'en essayer ~2^bits (du
-/// « minage », façon Hashcash). Vérifier, en revanche, est gratuit. Conséquence :
-/// **créer une identité COÛTE** → un banni ne se reconnecte plus gratuitement avec
-/// une clé neuve (la réputation reprend du sens). Réglage MVP, à monter plus tard.
-pub(crate) const POW_BITS: u32 = 16;
+/// DIFFICULTÉ anti-Sybil par DÉFAUT (chap. 6.2, montée au 9.1) : nombre de bits de tête à
+/// ZÉRO qu'une clé publique doit avoir pour être une identité VALIDE. Comme une clé Ed25519
+/// est ~aléatoire, en trouver une qui satisfait ça exige d'en essayer ~2^bits (du « minage »,
+/// façon Hashcash). Vérifier, en revanche, est gratuit. Conséquence : **créer une identité
+/// COÛTE** → un banni ne se reconnecte plus gratuitement, et fabriquer une FOULE de Sybils
+/// devient cher (anti-Sybil de masse). Le 16 d'origine était un « jouet » (D6).
+///
+/// **Pourquoi 18 et pas plus (choix MESURÉ, 9.1) :** courbe relevée sur ce PC (×4 par +2 bits) —
+/// 16 bits ≈ 0,3 s, **18 ≈ 3 s**, 20 ≈ 14 s, 22 ≈ 55 s *par identité*. (1) **Inclusivité** (pilier) :
+/// 18 bits ≈ ~25-30 s sur un vieux téléphone = un coût d'entrée UNIQUE acceptable (comme générer une
+/// clé SSH) ; 20+ l'exclurait. (2) **Depuis 9.2, la PoW n'a plus à être punitive** : le framing est
+/// fermé par la CRÉDIBILITÉ des témoins, pas par le prix de l'identité ; la PoW ne sert plus qu'à
+/// rendre une identité NON GRATUITE (anti reconnexion-spam, anti inondation de table). 4× le jouet
+/// suffit. La vraie défense DYNAMIQUE sous attaque sera la couche (b) ADAPTATIVE (carrefour 9.1).
+const DEFAULT_POW_BITS: u32 = 18;
+
+/// Borne de sûreté : au-delà, le minage devient interminable (2³² ≈ minutes/heures) — on
+/// refuse une difficulté absurde venue de l'environnement plutôt que de geler au démarrage.
+const MAX_POW_BITS: u32 = 28;
+
+/// DIFFICULTÉ anti-Sybil EFFECTIVE (chap. 9.1) — désormais **RÉGLABLE**, plus une constante
+/// figée. C'est un paramètre de PROTOCOLE *réseau-large* : tous les nœuds d'une même instance
+/// doivent exiger ET miner la MÊME difficulté (sinon ils se rejettent mutuellement). Surchargée
+/// par la variable d'environnement `POW_BITS` — pour DURCIR un déploiement réel, ou l'ABAISSER
+/// en simu/tests (le minage de centaines de bots à pleine difficulté serait lent). Résolue UNE
+/// SEULE fois par processus (cache) : pas de relecture d'env à chaque paquet. (La couche (b)
+/// *adaptative* du carrefour 9.1 — chaque nœud relève sa propre barre sous pression — viendra
+/// au-dessus de ce socle réglable, plus tard.)
+pub(crate) fn pow_bits() -> u32 {
+    static BITS: OnceLock<u32> = OnceLock::new();
+    *BITS.get_or_init(|| {
+        match std::env::var("POW_BITS").ok().and_then(|s| s.parse::<u32>().ok()) {
+            Some(b) if b <= MAX_POW_BITS => b,
+            Some(b) => {
+                eprintln!("POW_BITS={b} dépasse le plafond {MAX_POW_BITS} ; on retombe sur le défaut {DEFAULT_POW_BITS}.");
+                DEFAULT_POW_BITS
+            }
+            None => DEFAULT_POW_BITS,
+        }
+    })
+}
 
 /// Compte les bits de tête à zéro d'une suite d'octets (gros-boutiste).
 fn leading_zero_bits(bytes: &[u8]) -> u32 {

@@ -156,11 +156,23 @@ entendu) pèse **0**. *Preuve :* `attack sybil-frame` est passée de « FRAMING 
 standing → innocent intact). *Non-régression :* `sim 40 3 15` → **40 sourdines** (vrais tricheurs toujours
 neutralisés), orbe 0/40, couverture 100 %, débit plat. **54 tests, 0 warning.**
 
-**PROCHAINE ACTION CONCRÈTE = 9.1 (PoW réglable), puis durcir 9.2 (couche patiente).** L'ordre intra-chapitre
-a été inversé d'après la preuve (9.2 avant 9.1) ; le framing bon marché étant fermé, on traite maintenant la
-menace de MASSE : **9.1** rendre `POW_BITS` réglable + le monter (socle), décider (b) adaptatif (🧭 CARREFOUR
-9.1, §D). Résidus 9.2 notés (attaquant PATIENT qui donne du standing à ses Sybils → **9.2c** standing par durée
-+ **9.4** corroboration des positions, D9). Voir §D, Chapitre 9.
+**9.1 (couche a — socle réglable) ✓ FAIT (19 juin) — la PoW n'est plus figée, et le socle est choisi PAR LA
+MESURE.** `POW_BITS` n'est plus une constante de compilation : nouvelle fonction `crypto::pow_bits()` résolue
+une fois par processus, **surchargée par la variable d'env `POW_BITS`** (plafonnée à 28 ; comme `RENDEZVOUS_ADDR`).
+Tous les sites (minage `generate_pow`, vérif `has_pow`) passent par elle. En `#[cfg(test)]`, `NetLink::new` n'utilise
+PAS de minage (sinon `cargo test` minerait à pleine difficulté à chaque lien). **Courbe coût/difficulté MESURÉE**
+(ce PC, ×4 par +2 bits) : 16 b ≈ 0,3 s · **18 b ≈ 3 s** · 20 b ≈ 14 s · 22 b ≈ 55 s *par identité*. **Socle par
+défaut = 18** (et plus 16) : choix MESURÉ — (1) inclusivité (~25-30 s sur vieux téléphone = coût d'entrée unique
+acceptable ; 20+ exclurait les faibles) ; (2) depuis 9.2 la PoW n'a plus à être punitive (le framing est fermé par
+la CRÉDIBILITÉ, pas par le prix de l'identité) → 4× le jouet suffit. **54 tests, 0 warning.** *Insight tracé
+(challenge de la feuille) : « difficulté bien plus haute » était la mauvaise cible — la data montre que cogner haut
+taxe surtout les honnêtes/faibles pour un gain marginal post-9.2. La vraie défense de MASSE dynamique = la couche
+(b) ADAPTATIVE (relève la barre LOCALEMENT sous pression), pas un gros nombre fixe.*
+
+**PROCHAINE ACTION CONCRÈTE = 9.1 couche (b) adaptative** (chaque nœud relève la PoW qu'il EXIGE selon la pression
+locale : cadence de nouvelles identités / d'accusations), OU enchaîner sur **9.3** (réhabilitation) / **9.4**
+(anti-éclipse + corroboration des positions, qui durcit aussi le résidu 9.2 patient). Résidus 9.2 notés (**9.2c**
+standing par durée + **9.4**). Voir §D, Chapitre 9 et 🧭 CARREFOUR 9.1.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,

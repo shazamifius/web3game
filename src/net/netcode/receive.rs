@@ -17,7 +17,7 @@ use super::state::{
 use crate::net::accuse::decode_accuse;
 use crate::net::anticheat::move_plausible;
 use crate::net::control::decode_welcome;
-use crate::net::crypto::{PeerId, POW_BITS};
+use crate::net::crypto::{PeerId, pow_bits};
 use crate::net::gossip::decode_gossip;
 use crate::net::link::NetLink;
 use crate::net::message::{claimed_id, decode_canonical, sig_ok, PlayerState};
@@ -244,7 +244,7 @@ pub fn net_receive(
             //     déjà muet chez nous (un banni ne vote plus). ----------------------
             Some(KIND_ACCUSE) => {
                 if let Some((accuser, offender)) = decode_accuse(&bytes) {
-                    if accuser.has_pow(POW_BITS) && accuser != offender && !link.is_muted(accuser) {
+                    if accuser.has_pow(pow_bits()) && accuser != offender && !link.is_muted(accuser) {
                         link.record_accusation(offender, accuser);
                     }
                 }
@@ -288,10 +288,10 @@ fn check_packet(bytes: &[u8]) -> Checked {
     match decode_canonical(bytes) {
         // 6.2 : une identité sans preuve de travail est tout bonnement ignorée
         // (elle n'a pas « payé » son entrée) — et on ne la juge pas (pas de strike).
-        Some(state) if !state.id.has_pow(POW_BITS) => Checked::Unknown,
+        Some(state) if !state.id.has_pow(pow_bits()) => Checked::Unknown,
         Some(state) => Checked::Good(state),
         None => match claimed_id(bytes) {
-            Some(id) if id.has_pow(POW_BITS) => Checked::Faulty(id), // signé + payé MAIS contenu impossible
+            Some(id) if id.has_pow(pow_bits()) => Checked::Faulty(id), // signé + payé MAIS contenu impossible
             _ => Checked::Unknown,
         },
     }
@@ -324,10 +324,10 @@ fn check_orb(bytes: &[u8]) -> OrbChecked {
         return OrbChecked::Unknown; // sceau invalide → jeté sans accuser
     }
     match decode_orb(bytes) {
-        Some(w) if !w.owner.has_pow(POW_BITS) => OrbChecked::Unknown, // identité non minée → ignorée
+        Some(w) if !w.owner.has_pow(pow_bits()) => OrbChecked::Unknown, // identité non minée → ignorée
         Some(w) => OrbChecked::Good(w),
         None => match claimed_owner(bytes) {
-            Some(id) if id.has_pow(POW_BITS) => OrbChecked::Faulty(id),
+            Some(id) if id.has_pow(pow_bits()) => OrbChecked::Faulty(id),
             _ => OrbChecked::Unknown,
         },
     }
