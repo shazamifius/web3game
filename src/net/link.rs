@@ -67,9 +67,27 @@ pub struct NetLink {
 pub(crate) const MAX_STRIKES: u32 = 5;
 /// Nombre d'accusateurs DISTINCTS requis avant de bannir un tricheur qu'on n'a PAS
 /// vu soi-même (chap. 6.7). Anti-framing : un seul (ou quelques) menteur(s) ne suffit
-/// pas ; et chaque identité coûte une preuve de travail (6.2), donc fabriquer un
-/// quorum de fausses identités est coûteux.
+/// pas. ⚠ Depuis 9.2, ce n'est plus un simple COMPTE : c'est le seuil de POIDS cumulé
+/// (`ACCUSE_WEIGHT_QUORUM`) — l'attaque `sybil-frame` a prouvé qu'avec une PoW jouet, 3
+/// identités conjurées suffisaient (D6/D7/D20). On PONDÈRE désormais chaque accusateur.
 pub(crate) const ACCUSE_QUORUM: usize = 3;
+
+/// Seuil de POIDS cumulé d'accusations pour bannir par quorum (chap. 9.2). On ne compte
+/// plus des têtes (frameable par des Sybils bon marché) : on SOMME le poids de crédibilité
+/// de chaque accusateur (`accusation_weight`) et on ne bannit qu'au-delà de ce seuil. Égal au
+/// vieux compte → il faut ~3 TÉMOINS CRÉDIBLES co-localisés (et 0 Sybil conjuré ne contribue).
+pub(crate) const ACCUSE_WEIGHT_QUORUM: f32 = ACCUSE_QUORUM as f32;
+
+/// Rayon (m) sous lequel un accusateur a pu ÊTRE TÉMOIN de la triche de l'accusé (chap. 9.2) :
+/// au-delà, il n'était pas à portée pour « voir » → plausibilité réduite. Large (englobe l'AoI
+/// proche) car la triche se constate dans le voisinage.
+pub(crate) const WITNESS_RADIUS: f32 = 50.0;
+
+/// Poids PLANCHER d'un accusateur ÉTABLI (il a du standing) mais dont je ne peux pas confirmer
+/// la co-localisation avec l'accusé (chap. 9.2). Il compte un peu (réputation de voisin réel),
+/// mais il faut alors BEAUCOUP plus d'accusateurs qu'avec des témoins co-localisés → dégradation
+/// gracieuse, sans jamais ouvrir la porte au framing bon marché (un Sybil SANS standing pèse 0).
+pub(crate) const WITNESS_FLOOR: f32 = 0.34;
 
 /// Plafond MÉMOIRE de la table de pairs connus (chap. 8.1, D22). Le gossip lève le
 /// plafond de VISION (32) — on peut apprendre toute la foule — mais pas celui de la
@@ -397,16 +415,48 @@ impl NetLink {
         }
     }
 
+    /// POIDS DE CRÉDIBILITÉ d'un accusateur (chap. 9.2) — le cœur du quorum pondéré. Répond à :
+    /// « cette accusation mérite-t-elle de compter, et combien ? ». Deux facteurs :
+    ///   - **STANDING** : l'accusateur m'a-t-il déjà envoyé un VRAI état signé que j'ai accepté
+    ///     (entrée dans `replay`) ? Sinon c'est une identité qui SURGIT juste pour accuser (un Sybil
+    ///     conjuré, cf. `attack sybil-frame`) → **poids 0**. C'est LE verrou qui ferme le framing
+    ///     bon marché : peser exige d'avoir réellement participé au monde, pas juste miné une clé.
+    ///   - **CO-LOCALISATION** : si je connais les positions de l'accusateur ET de l'accusé et
+    ///     qu'elles sont à portée (`WITNESS_RADIUS`), il a pu VOIR la triche → poids plein (1.0) ;
+    ///     sinon poids plancher (`WITNESS_FLOOR`) — établi, mais témoin non confirmé à portée.
+    /// (Résidu honnête : un attaquant patient qui fait VIVRE ses Sybils gagne du standing → durci
+    /// par 9.2c (standing par durée) et 9.4 (corroboration des positions, D9).)
+    fn accusation_weight(&self, accuser: PeerId, offender_pos: Option<(f32, f32)>) -> f32 {
+        if !self.replay.contains_key(&accuser) {
+            return 0.0; // jamais entendu un état de lui → témoin non crédible (Sybil conjuré)
+        }
+        match (self.peer_pos.get(&accuser).copied(), offender_pos) {
+            (Some(a), Some(o)) if dist2(a, o) <= WITNESS_RADIUS * WITNESS_RADIUS => 1.0,
+            _ => WITNESS_FLOOR, // établi mais co-localisation inconnue/lointaine → poids réduit
+        }
+    }
+
     /// Enregistre une accusation REÇUE (`accuser` accuse `offender`). Renvoie `true`
-    /// si elle vient d'atteindre le QUORUM → on bannit `offender` à notre tour, même
-    /// sans l'avoir vu tricher. On ne RE-diffuse PAS (pas de cascade) : la réputation
-    /// se propage à un saut des témoins directs. Anti-framing : accusateurs DISTINCTS.
+    /// si le POIDS CUMULÉ des accusateurs crédibles vient de franchir `ACCUSE_WEIGHT_QUORUM`
+    /// → on bannit `offender` à notre tour, même sans l'avoir vu tricher. On ne RE-diffuse PAS
+    /// (pas de cascade) : la réputation se propage à un saut des témoins directs.
+    ///
+    /// **Anti-framing pondéré (chap. 9.2) :** on ne compte plus des têtes (frameable par des Sybils
+    /// bon marché, cf. `attack sybil-frame`) — on somme `accusation_weight` sur les accusateurs
+    /// DISTINCTS. Un Sybil conjuré (sans standing) pèse 0 → un essaim d'identités fraîches ne fait
+    /// plus taire un innocent. La position de l'accusé sert à juger la co-localisation des témoins.
     pub(crate) fn record_accusation(&mut self, offender: PeerId, accuser: PeerId) -> bool {
-        let set = self.accusations.entry(offender).or_default();
-        set.insert(accuser);
-        if set.len() >= ACCUSE_QUORUM && !self.is_muted(offender) {
+        self.accusations.entry(offender).or_default().insert(accuser);
+        if self.is_muted(offender) {
+            return false;
+        }
+        let off_pos = self.peer_pos.get(&offender).copied();
+        // Snapshot des accusateurs (évite le double emprunt de self pendant le calcul de poids).
+        let accusers: Vec<PeerId> = self.accusations[&offender].iter().copied().collect();
+        let weight: f32 = accusers.iter().map(|a| self.accusation_weight(*a, off_pos)).sum();
+        if weight >= ACCUSE_WEIGHT_QUORUM {
             self.strikes.insert(offender, MAX_STRIKES); // force la sourdine
-            eprintln!("🛡 Pair {} mis en SOURDINE par QUORUM ({} accusateurs).", offender.short(), ACCUSE_QUORUM);
+            eprintln!("🛡 Pair {} mis en SOURDINE par QUORUM pondéré (poids {weight:.1} ≥ {ACCUSE_WEIGHT_QUORUM:.0}).", offender.short());
             return true;
         }
         false
@@ -602,19 +652,53 @@ mod tests {
         assert!(!link.is_muted(pid(10)));
     }
 
-    /// RÉPUTATION PARTAGÉE (6.7) : un quorum d'accusateurs DISTINCTS met en sourdine,
-    /// même sans avoir vu le tricheur soi-même. Un accusateur qui se répète ne compte
-    /// qu'une fois (anti-framing à un seul menteur).
+    /// Donne du STANDING à un pair pour les tests (chap. 9.2) : simule qu'on a déjà accepté un
+    /// état signé de lui (entrée `replay`) et qu'on connaît sa position. Sans ça, un accusateur
+    /// pèse 0 (il n'a jamais participé) — c'est exactement ce qui ferme le framing.
+    fn donne_standing(link: &mut NetLink, id: PeerId, pos: (f32, f32)) {
+        link.accept_seq(id, 1); // un état accepté → entrée dans `replay` = standing
+        link.peer_pos.insert(id, pos);
+    }
+
+    /// RÉPUTATION PARTAGÉE PONDÉRÉE (6.7 + 9.2) : un quorum de TÉMOINS CRÉDIBLES (standing +
+    /// co-localisés avec l'accusé) met en sourdine ; un accusateur répété ne compte qu'une fois.
     #[test]
-    fn quorum_d_accusations_met_en_sourdine() {
+    fn quorum_de_temoins_credibles_met_en_sourdine() {
         let mut link = link_de_test();
         let tricheur = pid(50);
+        link.peer_pos.insert(tricheur, (0.0, 0.0)); // je connais la position de l'accusé
+        for s in 1..=3u8 {
+            donne_standing(&mut link, pid(s), (1.0, 1.0)); // 3 témoins établis, à portée
+        }
         assert!(!link.record_accusation(tricheur, pid(1)));
         assert!(!link.record_accusation(tricheur, pid(2)));
         assert!(!link.record_accusation(tricheur, pid(2))); // doublon : ne compte pas
-        assert!(!link.is_muted(tricheur)); // 2 distincts < quorum (3)
-        assert!(link.record_accusation(tricheur, pid(3))); // 3e distinct → quorum
+        assert!(!link.is_muted(tricheur)); // 2 témoins (poids 2.0) < seuil (3.0)
+        assert!(link.record_accusation(tricheur, pid(3))); // 3e témoin crédible → poids 3.0 ≥ seuil
         assert!(link.is_muted(tricheur));
+    }
+
+    /// 9.2 (LE CORRECTIF, preuve unitaire de `sybil-frame`) : un quorum de Sybils CONJURÉS — des
+    /// identités qui n'ont JAMAIS envoyé d'état (aucun standing) — ne fait PAS taire un innocent,
+    /// même à 3, 10 ou 100. Avant 9.2, 3 suffisaient (compte de têtes). Maintenant ils pèsent 0.
+    #[test]
+    fn framing_par_sybils_sans_standing_echoue() {
+        let mut link = link_de_test();
+        let innocent = pid(50);
+        link.peer_pos.insert(innocent, (0.0, 0.0));
+        // 100 accusateurs conjurés : connus de personne, jamais entendus (pas de `replay`).
+        for s in 1..=100u8 {
+            assert!(!link.record_accusation(innocent, pid(s)));
+        }
+        assert!(!link.is_muted(innocent)); // poids cumulé = 0 → l'innocent reste audible
+        // En revanche, dès que le quorum d'accusateurs gagne standing + co-localisation, ils
+        // PÈSENT : ils sont déjà dans l'ensemble, donc un seul ré-enregistrement recalcule le
+        // poids cumulé (3 × 1.0 = 3.0 ≥ seuil) → sourdine. (Ce sont alors de VRAIS témoins.)
+        for s in 1..=3u8 {
+            donne_standing(&mut link, pid(s), (1.0, 1.0));
+        }
+        assert!(link.record_accusation(innocent, pid(1))); // le recalcul franchit le seuil
+        assert!(link.is_muted(innocent));
     }
 }
 

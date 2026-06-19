@@ -147,9 +147,20 @@ garde du récepteur recopiée de [bot.rs] → `record_accusation`) à un témoin
 l'innocent en SOURDINE** (« FRAMING RÉUSSI »). Trou **D6/D7/D20 prouvé bout-en-bout**. L'attaque est sa
 PROPRE preuve : après le correctif, le même binaire devra imprimer « framing ÉCHOUÉ ». **53 tests, 0 warning.**
 
-**PROCHAINE ACTION CONCRÈTE = poser la couche de correctif 9.1** : (a) socle plancher = rendre `POW_BITS`
-réglable et le monter ; puis décider (b) adaptatif. Cf. le 🧭 CARREFOUR 9.1 (§D). Re-jouer `attack sybil-frame`
-à la fin → doit basculer en « framing ÉCHOUÉ ». Voir §D, Chapitre 9.
+**9.2 (1re couche) ✓ FAIT (19 juin) — le framing BON MARCHÉ est FERMÉ et PROUVÉ.** On a remplacé le quorum
+qui comptait des TÊTES par un **quorum PONDÉRÉ par crédibilité** (`record_accusation` + `accusation_weight`
+dans [link.rs]) : un accusateur ne pèse que s'il a du **standing** (il m'a déjà envoyé un état signé accepté
+→ entrée `replay`) ET selon sa **co-localisation** avec l'accusé (`WITNESS_RADIUS`). Un Sybil conjuré (jamais
+entendu) pèse **0**. *Preuve :* `attack sybil-frame` est passée de « FRAMING RÉUSSI » à **« framing ÉCHOUÉ »**
+(même binaire = harnais de régression) ; +2 tests unitaires (témoins crédibles → sourdine ; 100 Sybils sans
+standing → innocent intact). *Non-régression :* `sim 40 3 15` → **40 sourdines** (vrais tricheurs toujours
+neutralisés), orbe 0/40, couverture 100 %, débit plat. **54 tests, 0 warning.**
+
+**PROCHAINE ACTION CONCRÈTE = 9.1 (PoW réglable), puis durcir 9.2 (couche patiente).** L'ordre intra-chapitre
+a été inversé d'après la preuve (9.2 avant 9.1) ; le framing bon marché étant fermé, on traite maintenant la
+menace de MASSE : **9.1** rendre `POW_BITS` réglable + le monter (socle), décider (b) adaptatif (🧭 CARREFOUR
+9.1, §D). Résidus 9.2 notés (attaquant PATIENT qui donne du standing à ses Sybils → **9.2c** standing par durée
++ **9.4** corroboration des positions, D9). Voir §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
@@ -1051,6 +1062,30 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 > l'attaque sert maintenant de harnais de régression (elle imprimera « framing ÉCHOUÉ » une fois (a)/(b) posées).
 - [ ] 9.2 — **Quorum d'accusation pondéré** : par réputation de l'accusateur + plausibilité
   de voisinage ; K attaquants ne peuvent pas framer un honnête. Ferme D7, D20.
+
+> ### ⚙ CONCEPTION 9.2 — le « TÉMOIN CRÉDIBLE » (écrit avant de coder, 19 juin ; FAIT en 1re couche)
+> *L'attaque `sybil-frame` l'a prouvé : compter des TÊTES distinctes est naïf — 3 identités bon marché
+> suffisent. La réponse : ne pas COMPTER les accusateurs mais SOMMER leur POIDS de crédibilité, et ne bannir
+> qu'au-delà d'un seuil (`ACCUSE_WEIGHT_QUORUM`). Un accusateur ne pèse que s'il est un TÉMOIN PLAUSIBLE.*
+>
+> **Poids d'un accusateur (1re couche, codée) = STANDING × co-localisation :**
+> - **Standing (le verrou anti-Sybil-conjuré) :** l'accusateur m'a-t-il déjà envoyé un VRAI état signé que
+>   j'ai accepté ? (= a-t-il une entrée dans `replay` ?) Un Sybil fraîchement miné qui ne fait que CRACHER des
+>   accusations n'a JAMAIS participé au monde chez moi → **poids 0**. Pour peser, il faut avoir été un acteur
+>   observé (coûteux à entretenir, et visible). *C'est ce qui ferme `sybil-frame` : les Sybils n'ont pas de standing.*
+> - **Co-localisation (plausibilité de voisinage) :** si je connais les positions de l'accusateur ET de
+>   l'accusé et qu'elles sont à portée (`WITNESS_RADIUS`), poids plein (1.0) — il a pu VOIR la triche ; sinon
+>   poids plancher réduit (`WITNESS_FLOOR`) — établi mais témoin lointain, il compte un peu, pas plein.
+> - **Seuil :** `ACCUSE_WEIGHT_QUORUM = ACCUSE_QUORUM` (3.0) → il faut ~3 témoins crédibles co-localisés,
+>   OU beaucoup plus d'établis-lointains, et **AUCUN** Sybil conjuré ne contribue. *Dégradation gracieuse.*
+>
+> **Preuve :** re-jouer `attack sybil-frame` → doit basculer de « FRAMING RÉUSSI » à « framing ÉCHOUÉ ».
+> **Doutes honnêtes (résidus, couches suivantes) :** (a) un attaquant PATIENT qui fait VIVRE ses Sybils comme
+> de vrais participants (ils envoient des états, gagnent du standing) puis les co-localise avec la victime peut
+> encore peser → durci par **9.2c** (standing par DURÉE/quantité, pas binaire) et surtout par **9.4**
+> (corroboration des positions : les positions de gossip sont non vérifiées, D9). (b) un témoin honnête dont je
+> n'ai jamais reçu d'état (lointain) ne compte pas chez moi → acceptable : la réputation se propage entre
+> voisins réellement connectés. La 1re couche ferme le framing BON MARCHÉ ; le patient/coordonné = 9.2c+9.4.
 - [ ] 9.3 — **Réhabilitation** : fenêtre glissante des fautes + appel/quarantaine. Ferme D8.
 - [ ] 9.4 — **Anti-éclipse** : diversité forcée du voisinage (proches + aléatoires
   vérifiés, façon Kademlia) + corroboration des positions. Ferme D9.
