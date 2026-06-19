@@ -27,12 +27,6 @@ pub(crate) const SEND_BUDGET_HZ: f32 = 240.0;
 /// LOINTAINE est perçu via UN résumé basse fréquence, pas N flux individuels → la fraîcheur
 /// des lointains ne s'effondre plus en 1/N. Réglage à calibrer (8.3d) : trop grand = résumé
 /// grossier ; trop petit = trop de cellules. (Index aussi réutilisé pour le focus en O(K).)
-///
-/// ⏸ **8.3 EN PAUSE** (pivot sur le chapitre 9, juin 2026) : la grille de cellules est posée et
-/// testée (8.3a) mais PAS encore câblée dans l'émission/réception (pas de `KIND_CELL_SUMMARY`).
-/// On durcit d'abord la CONFIANCE (ch.9) avant de bâtir l'agrégateur, qui suppose des hôtes
-/// semi-fiables (un hôte malveillant = D5/D9). `#[allow(dead_code)]` assumé jusqu'au câblage 8.3c.
-#[allow(dead_code)]
 pub(crate) const CELL_SIZE: f32 = 16.0;
 
 /// Nombre MAXIMAL de voisins qu'un joueur suit / à qui il parle (chap. 6.6). C'est
@@ -73,8 +67,6 @@ pub(crate) fn within_radius(a: (f32, f32), b: (f32, f32)) -> bool {
 /// ancrée à l'origine. `floor` (pas un cast brut) pour que les coordonnées NÉGATIVES tombent
 /// dans la bonne case : −0,1 → cellule −1, jamais 0 (un cast `as i32` tronquerait vers 0 et
 /// collerait deux régions distinctes dans la même cellule autour de l'origine).
-/// ⏸ 8.3 en pause (cf. `CELL_SIZE`) : testé mais pas encore câblé → `#[allow(dead_code)]`.
-#[allow(dead_code)]
 pub(crate) fn cell_of(x: f32, z: f32) -> (i32, i32) {
     ((x / CELL_SIZE).floor() as i32, (z / CELL_SIZE).floor() as i32)
 }

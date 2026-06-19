@@ -222,10 +222,16 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > (19 juin) : le RÉSUMÉ de cellule** — nouveau `src/net/cell.rs` (`CellSummary` : cellule + count + échantillon
 > RÉPARTI de positions ; `build_cell_summary` + `encode/decode`, purs et testés, sur le modèle de `gossip.rs` ;
 > `KIND_CELL_SUMMARY = 9`). 65 tests, 0 warning (`#[allow(dead_code)]` documenté tant que non câblé, comme 8.3a).
-> **PROCHAINE ACTION = 8.3c** : l'HÔTE émet le résumé de sa cellule (bot/jeu), les observateurs l'INGÈRENT et
-> s'en servent pour percevoir la foule lointaine à bonne fraîcheur (au lieu du filet 1/N de la conscience).
-> Puis **8.3d** : preuve `crowd 500→2000` (foule étalée) → couverture ~100 % à débit PLAT + fraîcheur correcte.
-> La confiance dont dépend l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9) → on bâtit sur du solide.
+> ✅ **8.3c (19 juin) : émission/ingestion CÂBLÉES (épidémique, fanout borné).** L'hôte de cellule émet son
+> résumé ; chacun le RELAIE (échantillon tournant, comme le gossip) → propagation en log(N) SANS que l'hôte
+> n'inonde personne (O(fanout), pas O(N) : ferme le piège « hôte qui fond », relie D4). Réception → `ingest_summary`
+> (dernier par cellule, borné `MAX_CELLS`). Métrique simu `summary_perceived` (somme des cellules suivies). **Mesuré
+> `crowd 200` (30 s) : perception par résumé moy 112 / max 154 occupants (sur 199) via O(cellules) flux, débit ↓
+> ~46 Ko/s borné (+6 vs pré-8.3 = coût des résumés), orbe 0/200, essaim tenu. 65 tests, 0 warning.** *(Les `#[allow(dead_code)]`
+> de 8.3a/8.3b sont levés : cell_of/cell_host/CellSummary sont désormais utilisés.)*
+> **PROCHAINE ACTION = 8.3d** : prouver l'INVARIANT à l'échelle — `crowd 500→2000` : la perception par résumé
+> doit SUIVRE N (foule perçue ∝ N) à débit ↓ PLAT. + affiner (foule centrée sur une cellule pour le cas dense pur ;
+> mesurer la FRAÎCHEUR, pas que la couverture). La confiance de l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9).
 
 **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
 

@@ -21,14 +21,13 @@
 //! besoin que la migration soit durcie d'abord (D11). *(Trust : un hôte peut MENTIR sur sa cellule
 //! — cacher/inventer des gens, D5/D9 ; corroboration multi-informateurs = 8.8, plus tard.)*
 //!
-//! ⏸ 8.3b : ce module est POSÉ et testé ; l'émission/ingestion par l'hôte et l'observateur est
-//! câblée au **8.3c** → `#[allow(dead_code)]` documenté en attendant (même démarche que `gossip.rs`).
+//! 8.3c : l'émission par l'hôte (épidémique, fanout borné), le relais et l'ingestion sont câblés
+//! dans `bot.rs` (et `NetLink::build_my_cell_summary` / `ingest_summary`). Preuve d'échelle = 8.3d.
 
 use super::wire::{KIND_CELL_SUMMARY, PROTO_VERSION};
 
 /// Nombre MAX de positions représentatives dans un résumé. 16 × 8 o + 15 o d'en-tête = 143 o,
 /// bien sous un datagramme. Borne le coût d'un résumé quelle que soit la taille de la foule.
-#[allow(dead_code)]
 pub(crate) const MAX_CELL_SAMPLES: usize = 16;
 
 /// En-tête : KIND + VERSION + cell.0 (i32) + cell.1 (i32) + count (u32) + n_samples (u8) = 15 o.
@@ -51,7 +50,6 @@ pub(crate) struct CellSummary {
 /// Construit le résumé d'une cellule à partir des positions de ses occupants connus (chap. 8.3).
 /// `count` = nombre réel d'occupants ; `samples` = un échantillon RÉPARTI (pas les 16 premiers : on
 /// prend un pas régulier dans la liste → représentatif de toute la foule, pas d'un coin).
-#[allow(dead_code)]
 pub(crate) fn build_cell_summary(cell: (i32, i32), occupants: &[(f32, f32)]) -> CellSummary {
     let count = occupants.len() as u32;
     let samples: Vec<(f32, f32)> = if occupants.len() <= MAX_CELL_SAMPLES {
@@ -65,7 +63,6 @@ pub(crate) fn build_cell_summary(cell: (i32, i32), occupants: &[(f32, f32)]) -> 
 }
 
 /// Sérialise un résumé : en-tête + positions. Tronque à `MAX_CELL_SAMPLES` (borne de coût).
-#[allow(dead_code)]
 pub(crate) fn encode_cell_summary(s: &CellSummary) -> Vec<u8> {
     let n = s.samples.len().min(MAX_CELL_SAMPLES);
     let mut buf = Vec::with_capacity(HEADER + n * SAMPLE_SIZE);
@@ -85,7 +82,6 @@ pub(crate) fn encode_cell_summary(s: &CellSummary) -> Vec<u8> {
 /// Désérialise un résumé. `None` si type/version/taille invalides. Tronqué → on garde ce qu'on a
 /// lu (comme `decode_gossip`). Une position non finie (NaN/Inf) fait rejeter l'échantillon
 /// (jamais de poison numérique dans l'AoI).
-#[allow(dead_code)]
 pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
     if buf.len() < HEADER || buf[0] != KIND_CELL_SUMMARY || buf[1] != PROTO_VERSION {
         return None;

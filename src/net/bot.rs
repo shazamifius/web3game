@@ -21,9 +21,10 @@ use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, Player
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
+use super::cell::{decode_cell_summary, encode_cell_summary, CellSummary};
 use super::wire::{
-    kind, KIND_ACCUSE, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE, KIND_WELCOME,
-    PROTO_VERSION,
+    kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE,
+    KIND_WELCOME, PROTO_VERSION,
 };
 use bevy::prelude::Vec3;
 use std::collections::HashMap;
@@ -47,6 +48,12 @@ const GOSSIP_PERIOD: f32 = 0.5;
 /// Nombre de destinataires (au trou ouvert) à qui on envoie notre lot de cartes par
 /// tic. Petit : la diffusion épidémique couvre la foule en quelques rounds (log N).
 const GOSSIP_FANOUT: usize = 4;
+/// RÉSUMÉS DE CELLULE (chap. 8.3c) : période d'émission/relais, nombre de destinataires par tic,
+/// et nombre max de résumés relayés par tic. Mêmes principes que le gossip (propagation épidémique
+/// bornée) → l'hôte n'inonde personne (O(fanout), pas O(N) : ferme le piège « hôte qui fond », D4).
+const CELL_SUMMARY_PERIOD: f32 = 2.0;
+const CELL_SUMMARY_FANOUT: usize = 4;
+const MAX_RELAY_SUMMARIES: usize = 8;
 /// Seuil (Hz) au-delà duquel on a entendu un pair « au FOCUS » (plein débit) plutôt qu'en
 /// « conscience » (basse fidélité) — chap. 8.2b. Entre le plafond conscience (`CONSCIENCE_HZ` = 2)
 /// et le plein débit (`SEND_HZ` = 20) : tout seuil intermédiaire sépare nettement les deux tiers.
@@ -83,6 +90,8 @@ pub(crate) struct Bot {
     send_acc: f32,
     gossip_acc: f32,
     gossip_cursor: usize,
+    cell_summary_acc: f32, // 8.3c : cadence d'émission/relais des résumés de cellule
+    summary_cursor: usize, // 8.3c : curseur tournant pour relayer les résumés détenus
     wander: f32,
     last_pos: Option<Vec3>,
     warned_version: bool,
@@ -115,6 +124,8 @@ impl Bot {
             send_acc: 0.0,
             gossip_acc: 0.0,
             gossip_cursor: 0,
+            cell_summary_acc: 0.0,
+            summary_cursor: 0,
             wander: phase,
             last_pos: None,
             warned_version: false,
@@ -150,6 +161,12 @@ impl Bot {
     }
     pub(crate) fn orb_master(&self) -> Option<PeerId> {
         self.orb.owner
+    }
+
+    /// 8.3 : foule TOTALE perçue via les résumés de cellule détenus (somme des cellules suivies).
+    /// ≈ taille de la foule ⇒ l'invariant tient (toute la foule via quelques flux, pas N états).
+    pub(crate) fn summary_perceived(&self) -> u32 {
+        self.link.summary_perceived()
     }
 
     /// Remet à zéro le compteur d'écoute (chap. 8.2b) : appelé au DÉBUT de la fenêtre de
@@ -258,6 +275,13 @@ impl Bot {
                                 }
                             }
                         }
+                    }
+                }
+                // 8.3c : RÉSUMÉ DE CELLULE. On le retient (dernier par cellule) → on perçoit la foule
+                // de cette région via UN flux, à fraîcheur fixe, au lieu du compte-gouttes 1/N.
+                Some(KIND_CELL_SUMMARY) => {
+                    if let Some(s) = decode_cell_summary(&bytes) {
+                        self.link.ingest_summary(s);
                     }
                 }
                 Some(KIND_PUNCH) => {
@@ -473,6 +497,45 @@ impl Bot {
                         let pkt = encode_gossip(&cards);
                         for addr in open {
                             let _ = self.link.socket.send_to(addr, &pkt);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4ter) RÉSUMÉS DE CELLULE (chap. 8.3c) : si je suis l'HÔTE de ma cellule, j'émets son
+        //       résumé ; et je RELAIE un échantillon des résumés que je détiens. Propagation
+        //       ÉPIDÉMIQUE bornée (comme le gossip) → chacun finit par percevoir la foule lointaine
+        //       via UN flux par cellule, à fraîcheur fixe (fin de l'effondrement 1/N de la conscience),
+        //       SANS que l'hôte n'inonde tout le monde (O(fanout), pas O(N) — le piège « hôte qui fond »).
+        self.cell_summary_acc += dt;
+        if self.cell_summary_acc >= CELL_SUMMARY_PERIOD {
+            self.cell_summary_acc = 0.0;
+            if let Some(my_id) = self.link.my_id {
+                let open: Vec<SocketAddr> = self
+                    .link
+                    .peers
+                    .iter()
+                    .filter(|(id, _)| *self.holes.get(id).unwrap_or(&false))
+                    .map(|(_, a)| *a)
+                    .take(CELL_SUMMARY_FANOUT)
+                    .collect();
+                if !open.is_empty() {
+                    // (a) Mon propre résumé si je suis hôte → je l'ingère (il sera compté ET relayé).
+                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id) {
+                        self.link.ingest_summary(s);
+                    }
+                    // (b) Relais borné : un échantillon TOURNANT des résumés détenus (épidémie).
+                    let summaries: Vec<CellSummary> =
+                        self.link.cell_summaries.values().cloned().collect();
+                    if !summaries.is_empty() {
+                        let start = self.summary_cursor % summaries.len();
+                        self.summary_cursor = self.summary_cursor.wrapping_add(1);
+                        for k in 0..summaries.len().min(MAX_RELAY_SUMMARIES) {
+                            let pkt = encode_cell_summary(&summaries[(start + k) % summaries.len()]);
+                            for addr in &open {
+                                let _ = self.link.socket.send_to(*addr, &pkt);
+                            }
                         }
                     }
                 }

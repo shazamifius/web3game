@@ -6,6 +6,7 @@
 
 use super::accuse::encode_accuse;
 use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
+use super::cell::{build_cell_summary, CellSummary};
 use super::crypto::{Identity, PeerId, pow_bits};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -67,6 +68,11 @@ pub struct NetLink {
     /// on NE recompose PAS le top-K à chaque tick (ce qui causait le « churn » mesuré au 8.2b),
     /// on garde les membres tant qu'ils restent pertinents. Le reste de la table = la CONSCIENCE.
     pub(crate) focus: Vec<PeerId>,
+    /// RÉSUMÉS DE CELLULE reçus (chap. 8.3) : le dernier résumé connu par cellule. C'est ce qui
+    /// nous fait PERCEVOIR une foule lointaine via UN flux par cellule au lieu de N états — fin de
+    /// l'effondrement de fraîcheur en 1/N de la conscience. Borné par `MAX_CELLS` (anti-inondation
+    /// de fausses cellules). Consultatif (pas autoritaire) : un résumé en double ne corrompt rien.
+    pub(crate) cell_summaries: HashMap<(i32, i32), CellSummary>,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
@@ -121,6 +127,11 @@ pub(crate) const WITNESS_FLOOR: f32 = 0.34;
 /// MÉMOIRE : au-delà de `MAX_KNOWN` cartes, on cesse d'en ajouter (anti-inondation de
 /// fausses cartes). Très large devant une foule réaliste ; l'éviction fine (TTL) est D16.
 pub(crate) const MAX_KNOWN: usize = 4096;
+
+/// Plafond du nombre de RÉSUMÉS de cellule retenus (chap. 8.3). Comme `MAX_KNOWN` pour les pairs :
+/// borne la mémoire contre un attaquant qui inventerait des milliers de fausses cellules. Très
+/// large devant le nombre de cellules réellement à portée d'un joueur.
+pub(crate) const MAX_CELLS: usize = 4096;
 
 /// NOUVEAUX pairs/s qu'UNE source de gossip peut nous faire apprendre (chap. 8.1b, D23).
 /// Au-delà, ses cartes inconnues sont ignorées : un attaquant ne peut plus nous faire
@@ -225,6 +236,7 @@ impl NetLink {
             accused_broadcast: HashSet::new(),
             gossip_credit: HashMap::new(),
             focus: Vec::new(),
+            cell_summaries: HashMap::new(),
             weak,
         })
     }
@@ -398,9 +410,6 @@ impl NetLink {
     /// Contrairement à l'orbe, l'hôte n'est pas une AUTORITÉ : il ne fait que RÉSUMER sa région
     /// (8.3c). Donc un désaccord transitoire (deux hôtes) ne corrompt rien — juste un résumé
     /// redondant. C'est pourquoi cette élection simple suffit ici (pas besoin du quorum de D11).
-    /// ⏸ 8.3 EN PAUSE (pivot ch.9, cf. `aoi::CELL_SIZE`) : élection posée et testée, pas encore
-    /// utilisée par l'émission de résumés (8.3c) → `#[allow(dead_code)]` assumé jusqu'au câblage.
-    #[allow(dead_code)]
     pub(crate) fn cell_host(&self, cell: (i32, i32), me: (f32, f32), my_id: PeerId) -> Option<PeerId> {
         let mut host: Option<PeerId> = if cell_of(me.0, me.1) == cell { Some(my_id) } else { None };
         for (id, pos) in &self.peer_pos {
@@ -414,10 +423,50 @@ impl NetLink {
         host
     }
 
-    /// Suis-je l'hôte de MA propre cellule (chap. 8.3) ? `me` = ma position. ⏸ 8.3 en pause.
-    #[allow(dead_code)]
+    /// Suis-je l'hôte de MA propre cellule (chap. 8.3) ? `me` = ma position.
     pub(crate) fn am_i_cell_host(&self, me: (f32, f32), my_id: PeerId) -> bool {
         self.cell_host(cell_of(me.0, me.1), me, my_id) == Some(my_id)
+    }
+
+    /// Construit le RÉSUMÉ de MA cellule (chap. 8.3c) — SEULEMENT si j'en suis l'hôte. Occupants =
+    /// les pairs CONNUS (position dans `peer_pos`) qui tombent dans ma cellule, plus MOI. Le `count`
+    /// reflète toute la foule de la cellule ; l'échantillon en donne quelques positions. `None` si
+    /// je ne suis pas l'hôte (un seul nœud résume → pas de cacophonie). *(Trust : le count s'appuie
+    /// sur `peer_pos`, qui inclut du gossip non corroboré → un hôte peut sur/sous-estimer ; résumé
+    /// CONSULTATIF, corroboration = 8.8.)*
+    pub(crate) fn build_my_cell_summary(&self, me: (f32, f32), my_id: PeerId) -> Option<CellSummary> {
+        if !self.am_i_cell_host(me, my_id) {
+            return None;
+        }
+        let my_cell = cell_of(me.0, me.1);
+        let mut occupants: Vec<(f32, f32)> = vec![me]; // moi, l'hôte, je suis dans ma cellule
+        for (id, pos) in &self.peer_pos {
+            if self.peers.contains_key(id) && cell_of(pos.0, pos.1) == my_cell {
+                occupants.push(*pos);
+            }
+        }
+        Some(build_cell_summary(my_cell, &occupants))
+    }
+
+    /// INGÈRE un résumé de cellule reçu (chap. 8.3c) : on retient le DERNIER par cellule (un résumé
+    /// plus frais remplace l'ancien). Borné par `MAX_CELLS` (anti-inondation). Renvoie `true` si
+    /// c'est une cellule NOUVELLE pour nous (utile à l'appelant pour décider de relayer).
+    pub(crate) fn ingest_summary(&mut self, s: CellSummary) -> bool {
+        let known = self.cell_summaries.contains_key(&s.cell);
+        if !known && self.cell_summaries.len() >= MAX_CELLS {
+            return false; // table pleine : on borne la mémoire
+        }
+        self.cell_summaries.insert(s.cell, s);
+        !known
+    }
+
+    /// Métrique (chap. 8.3) : la foule TOTALE qu'on perçoit via les résumés de cellule détenus =
+    /// SOMME des occupants sur toutes les cellules résumées qu'on suit. Une foule dense étalée sur
+    /// plusieurs cellules (ex. à cheval sur un coin de grille) est perçue par la somme de SES
+    /// cellules. Si ≈ la taille de la foule à portée, l'invariant tient : on voit toute la foule via
+    /// QUELQUES flux résumés (O(cellules)), pas N états au compte-gouttes 1/N de la conscience.
+    pub(crate) fn summary_perceived(&self) -> u32 {
+        self.cell_summaries.values().map(|s| s.count).sum()
     }
 
     /// Score de fautes COURANT d'un pair (après décroissance) à l'instant `now` (chap. 9.3).

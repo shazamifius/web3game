@@ -35,6 +35,8 @@ struct NodeStat {
     accepted: u64,
     rejected: u64,
     muted: usize,
+    /// 8.3 : plus grande foule perçue via UN résumé de cellule détenu (≈ taille de la foule ⇒ OK).
+    summary_count: u32,
     orb_stolen: bool,
     /// COÛT RÉEL du nœud (chap. 7.4), mesuré sur la fenêtre `secs` :
     bytes_up: u64,   // octets émis par ce nœud
@@ -86,6 +88,7 @@ pub fn run_sim(n_bots: usize, n_attackers: usize, secs: u64) {
                 accepted: bot.accepted(),
                 rejected: bot.rejected(),
                 muted: bot.muted(),
+                summary_count: bot.summary_perceived(),
                 orb_stolen: bot.orb_master().is_some(),
                 bytes_up: bot.bytes_up().saturating_sub(up0),
                 bytes_down: bot.bytes_down().saturating_sub(down0),
@@ -211,6 +214,13 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
             "COUVERTURE de la foule             : moy {:.0}%, min {:.0}%  (ENTENDUS ÷ à portée)",
             avg_cov * 100.0,
             min_cov * 100.0
+        );
+        // 8.3 : perception de la foule via les RÉSUMÉS de cellule (1 flux par cellule, fraîcheur
+        // fixe) — l'antidote à l'effondrement 1/N de la conscience. ≈ taille de la foule ⇒ OK.
+        let avg_summary = active.iter().map(|s| s.summary_count as f32).sum::<f32>() / n;
+        let max_summary = active.iter().map(|s| s.summary_count).max().unwrap_or(0);
+        println!(
+            "PERCEPTION par RÉSUMÉ de cellule (8.3) : moy {avg_summary:.0}, max {max_summary} occupants via 1 flux (foule à portée {crowd})"
         );
         if avg_blind >= 1.0 {
             println!("D22 : ~{avg_blind:.0} voisins ni entendus au focus ni en conscience (couverture {:.0}%).", avg_cov * 100.0);
