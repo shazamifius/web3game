@@ -28,11 +28,18 @@ pub struct NetLink {
     pub(crate) identity: Identity,
     pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<PeerId, SocketAddr>, // les autres joueurs : identité → adresse
-    /// DERNIÈRE POSITION (x, z) connue de chaque pair (chap. 8.1). Alimentée par les
-    /// états reçus ET par les cartes de gossip. Sert (a) à pondérer l'AoI avant même
-    /// d'avoir reçu un état du pair, et (b) à fabriquer nos propres « cartes de visite »
-    /// quand on présente ce pair à d'autres (gossip).
+    /// DERNIÈRE POSITION (x, z) INDICATIVE de chaque pair (chap. 8.1). Alimentée par les états
+    /// reçus ET par les cartes de gossip — donc une partie est NON CORROBORÉE (un tiers a pu la
+    /// revendiquer). C'est un INDICE de DÉCOUVERTE/AoI (pondérer la pertinence avant d'avoir
+    /// entendu le pair, fabriquer nos cartes), **jamais une base de confiance**. Pour toute
+    /// décision de confiance (co-localisation d'un témoin, 9.2), on utilise `confirmed_pos`.
     pub(crate) peer_pos: HashMap<PeerId, (f32, f32)>,
+    /// POSITION CORROBORÉE (x, z) d'un pair (chap. 9.4) : écrite UNIQUEMENT par `note_pos`, c.-à-d.
+    /// depuis un ÉTAT SIGNÉ du pair lui-même qu'on a accepté. Le gossip n'y touche JAMAIS. C'est la
+    /// seule position digne de confiance : un attaquant ne peut pas faire croire qu'un pair est
+    /// ailleurs (ex. coller un témoin sur une victime pour fabriquer une fausse co-localisation et
+    /// framer, D9). Les jugements de crédibilité (9.2) la lisent ; `peer_pos` reste l'indice ouvert.
+    pub(crate) confirmed_pos: HashMap<PeerId, (f32, f32)>,
     /// ANTI-REJEU (chap. 5.2, durci au 7.3) : une FENÊTRE GLISSANTE par pair (style
     /// IPsec/DTLS). On retient le plus grand `seq` vu + un masque des 64 derniers déjà
     /// acceptés → on tolère le ré-ordonnancement du réseau (un paquet en retard mais
@@ -191,6 +198,7 @@ impl NetLink {
             world_hue: None,
             peers: HashMap::new(),
             peer_pos: HashMap::new(),
+            confirmed_pos: HashMap::new(),
             replay: HashMap::new(),
             strikes: HashMap::new(),
             accusations: HashMap::new(),
@@ -283,10 +291,13 @@ impl NetLink {
         true
     }
 
-    /// Note la dernière position (x, z) d'un pair (chap. 8.1), à chaque état accepté.
-    /// Sert à l'AoI et à fabriquer ses cartes de visite quand on le présente aux autres.
+    /// Note la dernière position (x, z) d'un pair (chap. 8.1), à chaque état accepté. **N'est
+    /// appelé QUE sur un état SIGNÉ du pair lui-même** (cf. receive/bot, après `accept_seq`).
+    /// Écrit donc à la fois `peer_pos` (indice AoI/gossip) ET `confirmed_pos` (position CORROBORÉE,
+    /// chap. 9.4 : la seule base de confiance — le gossip ne l'atteint jamais).
     pub(crate) fn note_pos(&mut self, id: PeerId, xz: (f32, f32)) {
         self.peer_pos.insert(id, xz);
+        self.confirmed_pos.insert(id, xz);
     }
 
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
@@ -426,18 +437,22 @@ impl NetLink {
     ///     (entrée dans `replay`) ? Sinon c'est une identité qui SURGIT juste pour accuser (un Sybil
     ///     conjuré, cf. `attack sybil-frame`) → **poids 0**. C'est LE verrou qui ferme le framing
     ///     bon marché : peser exige d'avoir réellement participé au monde, pas juste miné une clé.
-    ///   - **CO-LOCALISATION** : si je connais les positions de l'accusateur ET de l'accusé et
-    ///     qu'elles sont à portée (`WITNESS_RADIUS`), il a pu VOIR la triche → poids plein (1.0) ;
-    ///     sinon poids plancher (`WITNESS_FLOOR`) — établi, mais témoin non confirmé à portée.
-    /// (Résidu honnête : un attaquant patient qui fait VIVRE ses Sybils gagne du standing → durci
-    /// par 9.2c (standing par durée) et 9.4 (corroboration des positions, D9).)
+    ///   - **CO-LOCALISATION CORROBORÉE (chap. 9.4)** : si je connais les positions CONFIRMÉES
+    ///     (`confirmed_pos`, issues des états SIGNÉS) de l'accusateur ET de l'accusé et qu'elles
+    ///     sont à portée (`WITNESS_RADIUS`), il a pu VOIR la triche → poids plein (1.0) ; sinon
+    ///     poids plancher (`WITNESS_FLOOR`). **On n'utilise PAS `peer_pos`** : sa part « gossip » est
+    ///     revendiquée par un tiers → un attaquant pourrait coller un témoin sur la victime pour
+    ///     fabriquer une fausse co-localisation. La position de confiance vient du pair LUI-MÊME.
+    /// (Résidu honnête : un attaquant patient qui fait VIVRE ses Sybils gagne du standing ET peut
+    /// les déplacer RÉELLEMENT près de la victime → durci par 9.2c (standing par durée) + diversité
+    /// de voisinage 9.4b.)
     fn accusation_weight(&self, accuser: PeerId, offender_pos: Option<(f32, f32)>) -> f32 {
         if !self.replay.contains_key(&accuser) {
             return 0.0; // jamais entendu un état de lui → témoin non crédible (Sybil conjuré)
         }
-        match (self.peer_pos.get(&accuser).copied(), offender_pos) {
+        match (self.confirmed_pos.get(&accuser).copied(), offender_pos) {
             (Some(a), Some(o)) if dist2(a, o) <= WITNESS_RADIUS * WITNESS_RADIUS => 1.0,
-            _ => WITNESS_FLOOR, // établi mais co-localisation inconnue/lointaine → poids réduit
+            _ => WITNESS_FLOOR, // établi mais co-localisation non corroborée/lointaine → poids réduit
         }
     }
 
@@ -455,7 +470,7 @@ impl NetLink {
         if self.is_muted(offender) {
             return false;
         }
-        let off_pos = self.peer_pos.get(&offender).copied();
+        let off_pos = self.confirmed_pos.get(&offender).copied(); // position de confiance (9.4)
         // Snapshot des accusateurs (évite le double emprunt de self pendant le calcul de poids).
         let accusers: Vec<PeerId> = self.accusations[&offender].iter().copied().collect();
         let weight: f32 = accusers.iter().map(|a| self.accusation_weight(*a, off_pos)).sum();
@@ -657,12 +672,12 @@ mod tests {
         assert!(!link.is_muted(pid(10)));
     }
 
-    /// Donne du STANDING à un pair pour les tests (chap. 9.2) : simule qu'on a déjà accepté un
-    /// état signé de lui (entrée `replay`) et qu'on connaît sa position. Sans ça, un accusateur
-    /// pèse 0 (il n'a jamais participé) — c'est exactement ce qui ferme le framing.
+    /// Donne du STANDING à un pair pour les tests (chap. 9.2/9.4) : simule qu'on a déjà accepté un
+    /// état SIGNÉ de lui → entrée `replay` (standing) ET position CORROBORÉE (`note_pos` écrit
+    /// `confirmed_pos`). Sans ça, un accusateur pèse 0 (il n'a jamais participé).
     fn donne_standing(link: &mut NetLink, id: PeerId, pos: (f32, f32)) {
         link.accept_seq(id, 1); // un état accepté → entrée dans `replay` = standing
-        link.peer_pos.insert(id, pos);
+        link.note_pos(id, pos); // état signé → position CORROBORÉE (9.4)
     }
 
     /// RÉPUTATION PARTAGÉE PONDÉRÉE (6.7 + 9.2) : un quorum de TÉMOINS CRÉDIBLES (standing +
@@ -671,7 +686,7 @@ mod tests {
     fn quorum_de_temoins_credibles_met_en_sourdine() {
         let mut link = link_de_test();
         let tricheur = pid(50);
-        link.peer_pos.insert(tricheur, (0.0, 0.0)); // je connais la position de l'accusé
+        link.note_pos(tricheur, (0.0, 0.0)); // position CORROBORÉE de l'accusé (état signé, 9.4)
         for s in 1..=3u8 {
             donne_standing(&mut link, pid(s), (1.0, 1.0)); // 3 témoins établis, à portée
         }
@@ -690,7 +705,7 @@ mod tests {
     fn framing_par_sybils_sans_standing_echoue() {
         let mut link = link_de_test();
         let innocent = pid(50);
-        link.peer_pos.insert(innocent, (0.0, 0.0));
+        link.note_pos(innocent, (0.0, 0.0)); // position corroborée de l'innocent
         // 100 accusateurs conjurés : connus de personne, jamais entendus (pas de `replay`).
         for s in 1..=100u8 {
             assert!(!link.record_accusation(innocent, pid(s)));
@@ -704,6 +719,37 @@ mod tests {
         }
         assert!(link.record_accusation(innocent, pid(1))); // le recalcul franchit le seuil
         assert!(link.is_muted(innocent));
+    }
+
+    /// 9.4a (corroboration des positions) : un attaquant PATIENT donne du standing à ses témoins
+    /// (ils ont vraiment participé), mais leurs vraies positions CORROBORÉES sont LOIN de la
+    /// victime. Il GOSSIPE alors une fausse position « collée » sur la victime (`learn_from_gossip`)
+    /// pour fabriquer une co-localisation. Avant 9.4, la crédibilité lisait `peer_pos` (que le
+    /// gossip pollue) → poids plein → framing. Depuis 9.4, elle lit `confirmed_pos` (états signés
+    /// seulement) → co-localisation NON corroborée → poids plancher → l'innocent N'est PAS banni.
+    #[test]
+    fn gossip_ne_peut_pas_falsifier_la_co_localisation_pour_framer() {
+        let mut link = link_de_test();
+        let innocent = pid(50);
+        link.note_pos(innocent, (0.0, 0.0)); // l'innocent est à l'origine (position corroborée)
+        // 3 témoins avec PoW (sinon le gossip les rejetterait), ÉTABLIS mais réellement LOIN de
+        // l'innocent (position CORROBORÉE (500,500)).
+        let temoins = [pid_pow(1), pid_pow(2), pid_pow(3)];
+        for t in temoins {
+            donne_standing(&mut link, t, (500.0, 500.0));
+            // L'attaquant GOSSIPE « ce témoin est à (0,0) » (collé sur la victime) → pollue VRAIMENT
+            // peer_pos (le témoin n'est pas encore dans peers). Si la crédibilité lisait peer_pos,
+            // le framing marcherait — ce test échouerait. Elle lit confirmed_pos → il échoue.
+            link.learn_from_gossip(addr(9000), t, addr(7001), (0.0, 0.0));
+            assert_eq!(link.peer_pos.get(&t), Some(&(0.0, 0.0))); // peer_pos EST bien pollué…
+            assert_eq!(link.confirmed_pos.get(&t), Some(&(500.0, 500.0))); // …mais pas confirmed_pos
+        }
+        // confirmed_pos (500,500) ≠ (0,0) → chaque témoin pèse le PLANCHER (0.34), pas 1.0.
+        // 3 × 0.34 = 1.02 < 3.0 → pas de sourdine : la fausse co-localisation par gossip est INOPÉRANTE.
+        for t in temoins {
+            link.record_accusation(innocent, t);
+        }
+        assert!(!link.is_muted(innocent));
     }
 }
 

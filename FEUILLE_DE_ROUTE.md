@@ -169,10 +169,15 @@ la CRÉDIBILITÉ, pas par le prix de l'identité) → 4× le jouet suffit. **54 
 taxe surtout les honnêtes/faibles pour un gain marginal post-9.2. La vraie défense de MASSE dynamique = la couche
 (b) ADAPTATIVE (relève la barre LOCALEMENT sous pression), pas un gros nombre fixe.*
 
-**PROCHAINE ACTION CONCRÈTE = 9.1 couche (b) adaptative** (chaque nœud relève la PoW qu'il EXIGE selon la pression
-locale : cadence de nouvelles identités / d'accusations), OU enchaîner sur **9.3** (réhabilitation) / **9.4**
-(anti-éclipse + corroboration des positions, qui durcit aussi le résidu 9.2 patient). Résidus 9.2 notés (**9.2c**
-standing par durée + **9.4**). Voir §D, Chapitre 9 et 🧭 CARREFOUR 9.1.
+**9.4a (corroboration des positions) ✓ FAIT (19 juin) — la fausse co-localisation par gossip est MORTE.**
+Champ séparé `confirmed_pos` (écrit seulement par `note_pos`, donc depuis un état SIGNÉ) ; la crédibilité 9.2
+le lit au lieu de `peer_pos` (que le gossip peut polluer). Un attaquant ne peut plus gossiper « mon témoin est
+collé sur la victime » pour framer. Test dédié + non-régression simu. **55 tests, 0 warning.** *Ferme le levier
+GRATUIT du résidu patient de 9.2 ; reste le coûteux (déplacer pour de vrai ses Sybils près de la victime) → 9.4b.*
+
+**PROCHAINE ACTION CONCRÈTE = 9.4b (diversité forcée du voisinage, anti-éclipse façon Kademlia)** — referme le
+cœur de D9 et le RÉSIDU patient/co-localisé de 9.2 (un attaquant ne peut pas monopoliser un voisinage diversifié).
+OU bifurquer sur **9.1 (b) adaptative** / **9.3** (réhabilitation). Voir §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
@@ -1101,6 +1106,26 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 - [ ] 9.3 — **Réhabilitation** : fenêtre glissante des fautes + appel/quarantaine. Ferme D8.
 - [ ] 9.4 — **Anti-éclipse** : diversité forcée du voisinage (proches + aléatoires
   vérifiés, façon Kademlia) + corroboration des positions. Ferme D9.
+
+> ### ⚙ CONCEPTION 9.4 — corroboration des positions + diversité du voisinage (écrit avant de coder, 19 juin)
+> **9.4a — corroboration des positions ✓ FAIT.** *Le levier (relevé en lisant le code) :* `peer_pos` mêlait
+> des positions SIGNÉES (depuis l'état d'un pair) et des positions de GOSSIP (revendiquées par un TIERS,
+> falsifiables). Or la crédibilité 9.2 lisait `peer_pos` → un attaquant pouvait **gossiper qu'un témoin est
+> "collé" sur la victime** pour fabriquer une fausse co-localisation et regagner du poids (le résidu patient
+> de 9.2). *Le fix :* champ séparé `confirmed_pos`, écrit UNIQUEMENT par `note_pos` (donc depuis un état SIGNÉ
+> du pair lui-même) ; le gossip n'y touche jamais. `accusation_weight` lit `confirmed_pos`, pas `peer_pos`
+> (qui reste l'indice ouvert de découverte/AoI). *Preuve :* nouveau test `gossip_ne_peut_pas_falsifier_la_co_
+> localisation_pour_framer` (témoins établis mais réellement loin ; gossip qui ment « à (0,0) » → pollue bien
+> `peer_pos` mais PAS `confirmed_pos` → poids plancher → innocent intact). 55 tests, 0 warning ; non-régression
+> `sim 40 3 15` → 21 sourdines (vrais tricheurs neutralisés), orbe 0/40, essaim tenu.
+>
+> **9.4b — diversité forcée du voisinage (anti-éclipse) — RESTE.** *La menace :* un attaquant qui ENTOURE une
+> victime de Sybils (occupe tous ses slots de focus/voisins en se déclarant "proches", ou en inondant le gossip)
+> contrôle toute sa vue → il peut la couper du monde réel, ou réunir un vrai quorum de témoins « co-localisés ».
+> *La piste :* réserver une part des liens à des pairs choisis par DISTANCE VÉRIFIABLE façon Kademlia (XOR sur
+> l'id) — un attaquant ne peut pas fabriquer des ids couvrant tous les buckets sans miner une PoW par bucket —
+> + un quota « proches » vs « aléatoires vérifiés ». Ferme le cœur de D9 et le RÉSIDU patient de 9.2 (même
+> co-localisé pour de vrai, l'attaquant ne peut pas monopoliser un voisinage diversifié). *Sous-étape suivante.*
 - [ ] 9.5 — **Rendez-vous résilient** : rate-limit + éviction + fédération (2+ rendez-vous
   qui s'échangent des pairs) ; amorce d'une découverte par gossip. Ferme D10, D21.
 **Ferme :** D6, D7, D8, D9, D10, D20, D21. **Vérif :** scénario d'attaque combinée en simu
