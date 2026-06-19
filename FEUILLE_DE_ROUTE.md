@@ -175,9 +175,17 @@ le lit au lieu de `peer_pos` (que le gossip peut polluer). Un attaquant ne peut 
 collé sur la victime » pour framer. Test dédié + non-régression simu. **55 tests, 0 warning.** *Ferme le levier
 GRATUIT du résidu patient de 9.2 ; reste le coûteux (déplacer pour de vrai ses Sybils près de la victime) → 9.4b.*
 
-**PROCHAINE ACTION CONCRÈTE = 9.4b (diversité forcée du voisinage, anti-éclipse façon Kademlia)** — referme le
-cœur de D9 et le RÉSIDU patient/co-localisé de 9.2 (un attaquant ne peut pas monopoliser un voisinage diversifié).
-OU bifurquer sur **9.1 (b) adaptative** / **9.3** (réhabilitation). Voir §D, Chapitre 9.
+**9.4b (diversité de RÉSEAU, anti-éclipse) ✓ FAIT (19 juin) — ⚠ avec CHALLENGE assumé.** `record_accusation`
+cape la crédibilité par SOUS-RÉSEAU /24 (`subnet_key`) → des Sybils derrière une seule IP = 1 voix, même
+co-localisés pour de vrai. *Challenge :* la « diversité d'id façon Kademlia » du plan était inadaptée à notre
+modèle (ids PoW aléatoires → buckets non discriminants) ; le vrai levier est l'IP (rare), pas l'id (gratuit).
+Loopback distingué par port → simu intacte. Test dédié + non-régression `sim 40 3 15` → 40 sourdines, orbe 0/40.
+**56 tests, 0 warning.** *Le résidu patient/co-localisé de 9.2 est fermé pour un attaquant à IP rares.*
+
+**PROCHAINE ACTION CONCRÈTE = au choix** : **9.3** (réhabilitation : fenêtre glissante de fautes + appel/quarantaine,
+ferme D8) ; **9.5** (rendez-vous résilient : rate-limit + éviction + fédération, ferme D10/D21) ; **9.1 (b)**
+(PoW adaptative) ; ou **9.2c** (standing par DURÉE, dernier cran du résidu patient). Le cœur dur de D9 est tenu.
+Voir §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
@@ -1119,13 +1127,21 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 > `peer_pos` mais PAS `confirmed_pos` → poids plancher → innocent intact). 55 tests, 0 warning ; non-régression
 > `sim 40 3 15` → 21 sourdines (vrais tricheurs neutralisés), orbe 0/40, essaim tenu.
 >
-> **9.4b — diversité forcée du voisinage (anti-éclipse) — RESTE.** *La menace :* un attaquant qui ENTOURE une
-> victime de Sybils (occupe tous ses slots de focus/voisins en se déclarant "proches", ou en inondant le gossip)
-> contrôle toute sa vue → il peut la couper du monde réel, ou réunir un vrai quorum de témoins « co-localisés ».
-> *La piste :* réserver une part des liens à des pairs choisis par DISTANCE VÉRIFIABLE façon Kademlia (XOR sur
-> l'id) — un attaquant ne peut pas fabriquer des ids couvrant tous les buckets sans miner une PoW par bucket —
-> + un quota « proches » vs « aléatoires vérifiés ». Ferme le cœur de D9 et le RÉSIDU patient de 9.2 (même
-> co-localisé pour de vrai, l'attaquant ne peut pas monopoliser un voisinage diversifié). *Sous-étape suivante.*
+> **9.4b — diversité de RÉSEAU (anti-éclipse) ✓ FAIT — ⚠ CHALLENGE de la feuille assumé.** *La menace :* un
+> attaquant qui co-localise pour de vrai des Sybils établis près d'une victime (le résidu COÛTEUX de 9.4a) réunit
+> un quorum de « témoins » et la frame quand même. *Le challenge (important) :* la piste initiale « diversité d'id
+> façon Kademlia (XOR) » est le MAUVAIS outil DANS NOTRE MODÈLE — une identité étant une clé PoW ~aléatoire, les
+> Sybils se répartissent dans les buckets EXACTEMENT comme les honnêtes → la diversité d'id ne distingue pas
+> l'attaquant. *Le bon levier (celui de Bitcoin/Ethereum) = diversité d'IP :* un attaquant mine des ids gratis
+> mais n'a qu'une POIGNÉE d'adresses IP. *Le fix codé :* `record_accusation` CAPE la contribution par
+> SOUS-RÉSEAU /24 (`subnet_key`) à ≤ 1 témoin effectif → le quorum (3.0) exige des témoins de ≥3 RÉSEAUX
+> distincts ; mille Sybils derrière une IP = 1 voix. *Détail loopback :* en simu localhost (tous 127.0.0.1) on
+> distingue par PORT (vrais process séparés) → la réputation légitime n'est pas cassée ; le /24 ne s'applique
+> qu'aux vraies IP. *Preuve :* test `sybils_d_un_meme_sous_reseau_ne_font_pas_quorum` (5 Sybils co-localisés mono-IP
+> → pas de sourdine ; les mêmes sur 5 /24 → sourdine). 56 tests, 0 warning ; non-régression `sim 40 3 15` → 40
+> sourdines, orbe 0/40, couverture 100 %. *Résidus : la simu localhost ne peut pas EXERCER le /24 (→ harnais NAT
+> namespaces, vraies IP) ; un attaquant à IP réellement diverses (botnet) contourne — limite fondamentale, comme
+> tout système P2P. Diversité réseau aussi applicable à la table de pairs / au focus (anti-éclipse général) = suite.*
 - [ ] 9.5 — **Rendez-vous résilient** : rate-limit + éviction + fédération (2+ rendez-vous
   qui s'échangent des pairs) ; amorce d'une découverte par gossip. Ferme D10, D21.
 **Ferme :** D6, D7, D8, D9, D10, D20, D21. **Vérif :** scénario d'attaque combinée en simu

@@ -470,10 +470,33 @@ impl NetLink {
         if self.is_muted(offender) {
             return false;
         }
-        let off_pos = self.confirmed_pos.get(&offender).copied(); // position de confiance (9.4)
+        let off_pos = self.confirmed_pos.get(&offender).copied(); // position de confiance (9.4a)
         // Snapshot des accusateurs (évite le double emprunt de self pendant le calcul de poids).
         let accusers: Vec<PeerId> = self.accusations[&offender].iter().copied().collect();
-        let weight: f32 = accusers.iter().map(|a| self.accusation_weight(*a, off_pos)).sum();
+        // 9.4b (ANTI-ÉCLIPSE) : on CAPE la contribution par SOUS-RÉSEAU. Un attaquant peut miner
+        // mille Sybils, il n'a qu'une poignée d'IP → tous ses témoins co-localisés derrière un même
+        // /24 comptent pour UN seul (≤ 1.0). Le quorum (3.0) exige donc des témoins de ≥3 RÉSEAUX
+        // distincts. (Diversité d'id « façon Kademlia » serait inutile ici : les ids PoW aléatoires
+        // se répartissent comme les honnêtes — c'est l'IP, rare, qui distingue l'attaquant.)
+        let mut by_subnet: HashMap<(u8, u8, u8, u16), f32> = HashMap::new();
+        for a in &accusers {
+            let w = self.accusation_weight(*a, off_pos);
+            if w <= 0.0 {
+                continue;
+            }
+            // Adresse connue → clé /24 (ou loopback distinct par port) ; inconnue → clé propre à
+            // l'id (on ne fusionne pas un témoin dont on ignore le réseau).
+            let key = match self.peers.get(a) {
+                Some(addr) => subnet_key(*addr),
+                None => {
+                    let b = a.bytes();
+                    (b[0], b[5], b[31], 0xFFFF)
+                }
+            };
+            let e = by_subnet.entry(key).or_insert(0.0);
+            *e = (*e + w).min(1.0); // un sous-réseau = au plus 1 témoin effectif
+        }
+        let weight: f32 = by_subnet.values().sum();
         if weight >= ACCUSE_WEIGHT_QUORUM {
             self.strikes.insert(offender, MAX_STRIKES); // force la sourdine
             eprintln!("🛡 Pair {} mis en SOURDINE par QUORUM pondéré (poids {weight:.1} ≥ {ACCUSE_WEIGHT_QUORUM:.0}).", offender.short());
@@ -672,12 +695,22 @@ mod tests {
         assert!(!link.is_muted(pid(10)));
     }
 
+    /// Adresse de test sur un sous-réseau /24 DISTINCT par id (chap. 9.4b) : `10.b0.b5.1`, donc
+    /// `subnet_key` = `(10, b0, b5, 0)`, unique pour des ids distincts. Évite que le cap par
+    /// sous-réseau fusionne par erreur des témoins indépendants dans les tests.
+    fn addr_for(id: PeerId) -> SocketAddr {
+        let b = id.bytes();
+        SocketAddr::from(([10, b[0], b[5], 1], 9000 + b[31] as u16))
+    }
+
     /// Donne du STANDING à un pair pour les tests (chap. 9.2/9.4) : simule qu'on a déjà accepté un
-    /// état SIGNÉ de lui → entrée `replay` (standing) ET position CORROBORÉE (`note_pos` écrit
-    /// `confirmed_pos`). Sans ça, un accusateur pèse 0 (il n'a jamais participé).
+    /// état SIGNÉ de lui → entrée `replay` (standing), position CORROBORÉE (`note_pos`), et une
+    /// adresse sur un /24 distinct (`addr_for`, pour la diversité réseau 9.4b). Sans standing un
+    /// accusateur pèse 0.
     fn donne_standing(link: &mut NetLink, id: PeerId, pos: (f32, f32)) {
         link.accept_seq(id, 1); // un état accepté → entrée dans `replay` = standing
-        link.note_pos(id, pos); // état signé → position CORROBORÉE (9.4)
+        link.note_pos(id, pos); // état signé → position CORROBORÉE (9.4a)
+        link.peers.insert(id, addr_for(id)); // adresse → sous-réseau distinct (9.4b)
     }
 
     /// RÉPUTATION PARTAGÉE PONDÉRÉE (6.7 + 9.2) : un quorum de TÉMOINS CRÉDIBLES (standing +
@@ -750,6 +783,63 @@ mod tests {
             link.record_accusation(innocent, t);
         }
         assert!(!link.is_muted(innocent));
+    }
+
+    /// 9.4b (anti-éclipse) : même avec standing ET co-localisation RÉELLE (le résidu coûteux de
+    /// 9.4a), des Sybils derrière UNE SEULE IP /24 sont capés à 1 témoin effectif → pas de quorum.
+    /// Le contraste (mêmes témoins sur des /24 DISTINCTS) bannit bien → on ne casse pas l'honnête.
+    #[test]
+    fn sybils_d_un_meme_sous_reseau_ne_font_pas_quorum() {
+        let innocent = pid(50);
+        // 5 Sybils crédibles (standing + co-localisés à l'origine, comme l'innocent).
+        let sybils = [pid_pow(10), pid_pow(11), pid_pow(12), pid_pow(13), pid_pow(14)];
+
+        // (a) TOUS derrière le même /24 (203.0.113.x) → capés à 1.0 < 3.0 → l'innocent tient.
+        let mut link = link_de_test();
+        link.note_pos(innocent, (0.0, 0.0));
+        for (k, s) in sybils.iter().enumerate() {
+            link.accept_seq(*s, 1);
+            link.note_pos(*s, (0.0, 0.0)); // RÉELLEMENT co-localisé (position corroborée)
+            link.peers.insert(*s, SocketAddr::from(([203, 0, 113, 1], 6000 + k as u16))); // même /24
+            link.record_accusation(innocent, *s);
+        }
+        assert!(!link.is_muted(innocent)); // 5 Sybils, 1 seule IP → 1 témoin effectif → pas de quorum
+
+        // (b) Les MÊMES 5, mais sur 5 /24 distincts → 5 × 1.0 ≥ 3.0 → sourdine (témoins légitimes).
+        let mut link2 = link_de_test();
+        link2.note_pos(innocent, (0.0, 0.0));
+        for (k, s) in sybils.iter().enumerate() {
+            link2.accept_seq(*s, 1);
+            link2.note_pos(*s, (0.0, 0.0));
+            link2.peers.insert(*s, SocketAddr::from(([10, 20, k as u8, 1], 6000))); // /24 distincts
+            link2.record_accusation(innocent, *s);
+        }
+        assert!(link2.is_muted(innocent)); // diversité réseau réelle → le quorum fonctionne
+    }
+}
+
+/// Clé de DIVERSITÉ RÉSEAU d'une adresse (chap. 9.4b, anti-éclipse). Deux pairs du MÊME
+/// sous-réseau /24 partagent une clé → ils comptent comme UNE source de confiance (un attaquant
+/// derrière une poignée d'IP ne fabrique pas un quorum de Sybils, même en les co-localisant).
+/// **Loopback (simu/dev) :** tous les nœuds ont 127.x mais un PORT distinct (vrais process
+/// séparés) → on inclut le port pour NE PAS les fusionner, sinon la réputation légitime casserait
+/// en simu localhost. Le /24 ne s'applique donc qu'aux vraies IP routables. *(Limite assumée : la
+/// simu localhost ne peut pas exercer la diversité /24 ; le harnais NAT en namespaces, lui, le
+/// pourrait — vraies IP distinctes. IPv6 non traité finement : repli sur adresse ~complète.)*
+fn subnet_key(addr: SocketAddr) -> (u8, u8, u8, u16) {
+    match addr {
+        SocketAddr::V4(a) => {
+            let o = a.ip().octets();
+            if a.ip().is_loopback() {
+                (o[0], o[1], o[2], addr.port()) // loopback : distinct par port (nœuds séparés)
+            } else {
+                (o[0], o[1], o[2], 0) // /24 : un attaquant derrière une IP partage cette clé
+            }
+        }
+        SocketAddr::V6(a) => {
+            let s = a.ip().segments();
+            ((s[0] >> 8) as u8, s[0] as u8, (s[1] >> 8) as u8, addr.port())
+        }
     }
 }
 
