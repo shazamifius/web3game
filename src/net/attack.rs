@@ -17,15 +17,19 @@
 //!   cargo run -- attack orb-creep    # vol d'orbe par incréments +1 (sous le radar)  → 6.4
 //!   cargo run -- attack amplify      # 1 RELAY → la victime rediffuse à tous (réflexion) → 6.5
 //!
+//!   # Chapitre 9 — attaque ROUGE de la confiance dure (trou à fermer) :
+//!   cargo run -- attack sybil-frame  # quorum de Sybils bon marché → faire taire un INNOCENT → 9.1/9.2
+//!
 //! Pour VOIR le résultat, regarde la console des VICTIMES (idéalement des `bot`,
 //! qui impriment un « ledger »). Attaques chap. 5 : ignorées ou « 🛡 Faute… /
 //! SOURDINE / Inondation… ». Attaques chap. 6 : elles PASSENT aujourd'hui — c'est
 //! justement ce qu'on veut rendre visible avant de les fermer.
 
+use super::accuse::{decode_accuse, encode_accuse};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{Identity, PeerId, POW_BITS, PUBKEY_LEN};
 use super::gossip::{encode_gossip, Card};
-use super::link::rendezvous_addr;
+use super::link::{rendezvous_addr, NetLink, ACCUSE_QUORUM};
 use super::message::{encode_signed, mark_as_relay, PlayerState};
 use super::orb::{encode_orb_signed, OrbWire};
 use super::punch::{decode_punch, encode_punch};
@@ -56,6 +60,14 @@ pub fn run_attack(attack: &str) {
         socket.local_addr().ok()
     );
 
+    // SYBIL-FRAMING (chap. 9.1) : preuve AUTONOME — la faille est dans la logique d'accusation
+    // CÔTÉ RÉCEPTEUR (le quorum ne pèse pas le coût des accusateurs), qu'on exerce sur un témoin
+    // honnête contrôlé. Pas besoin d'un essaim externe (mais le hack marche tout autant en vrai).
+    if attack == "sybil-frame" || attack == "frame" {
+        attack_sybil_frame();
+        return;
+    }
+
     // 1) S'inscrire comme un client normal et DÉCOUVRIR les victimes.
     let (my_id, victims) = join_and_discover(&socket, &identity, rv);
     if victims.is_empty() {
@@ -84,10 +96,11 @@ pub fn run_attack(attack: &str) {
         "amplify" | "amp" => attack_amplify(&socket, &identity, my_id, &victims),
         // --- Chapitre 8.1b : la porte DoS du gossip, désormais FERMÉE ---
         "gossip-flood" | "gossip" => attack_gossip_flood(&socket, &victims),
+        // (sybil-frame est traité plus haut, en autonome, avant la découverte de victimes)
         other => println!(
             "[attaquant] attaque inconnue « {other} ». Chap. 5 : forge | replay | flood | \
              orb-steal | orb-freeze. Chap. 6 : teleport | sybil | orb-creep | amplify. \
-             Chap. 8 : gossip-flood."
+             Chap. 8 : gossip-flood. Chap. 9 : sybil-frame."
         ),
     }
 }
@@ -411,5 +424,67 @@ fn attack_gossip_flood(socket: &Socket, victims: &[Victim]) {
         println!("              MÊME en continuant d'inonder. Avant 8.1b : ç'aurait été un flot SANS FIN. Doute #1 fermé.");
     } else {
         println!("            → ⚠ encore {tail} après 14 s : l'abandon ne mord pas comme attendu — À INVESTIGUER.");
+    }
+}
+
+// ============================================================================
+// CHAPITRE 9.1 — la confiance dure : prouver que la réputation partagée est
+// FRAMEABLE à bas coût (D6/D7/D20) AVANT de la durcir.
+// ============================================================================
+
+/// ATTAQUE 10 (ROUGE, chap. 9.1) — SYBIL-FRAMING : faire taire un INNOCENT à bas coût.
+///
+/// La réputation partagée (6.7) bannit un pair dès `ACCUSE_QUORUM` accusateurs DISTINCTS — un
+/// garde-fou anti-framing… tant qu'une identité est CHÈRE. Or elle ne coûte qu'une PoW « jouet »
+/// (16 bits, D6) : un SEUL attaquant peut MINER ce quorum de fausses identités et accuser un
+/// honnête qui n'a RIEN fait. Le quorum compte les accusateurs mais ne PÈSE pas leur coût ni
+/// leur plausibilité de voisinage → il tombe.
+///
+/// On le PROUVE de bout en bout par le VRAI chemin réseau (signer → `encode_accuse` →
+/// `decode_accuse` → garde du récepteur, recopiée de [bot.rs] → `record_accusation`) sur un
+/// témoin honnête contrôlé, et on CONSTATE qu'il met l'innocent en sourdine. L'attaque est sa
+/// PROPRE preuve : aujourd'hui elle imprime « FRAMING RÉUSSI » ; quand 9.1/9.2 auront durci le
+/// quorum, le même binaire imprimera « framing ÉCHOUÉ » — régression impossible sans qu'on le voie.
+fn attack_sybil_frame() {
+    println!("[attaquant] SYBIL-FRAMING (9.1) : faire taire un INNOCENT avec un quorum de Sybils bon marché.");
+
+    // Un TÉMOIN honnête (un nœud quelconque du réseau) et un INNOCENT qu'on veut bannir CHEZ LUI.
+    let mut temoin = NetLink::new((0.5, 0.5, 0.5), false).expect("témoin honnête");
+    let innocent = Identity::generate_pow(POW_BITS).id();
+    println!("[attaquant]   cible : l'innocent {} — il n'a JAMAIS triché.", innocent.short());
+
+    // On MINE le quorum d'identités Sybil et on MESURE le coût (preuve chiffrée que c'est trivial).
+    let t0 = Instant::now();
+    let sybils: Vec<Identity> = (0..ACCUSE_QUORUM).map(|_| Identity::generate_pow(POW_BITS)).collect();
+    let cout = t0.elapsed();
+    println!("[attaquant]   {ACCUSE_QUORUM} identités Sybil MINÉES en {cout:?} (PoW {POW_BITS} bits = un jouet, D6).");
+
+    // Chaque Sybil signe une accusation contre l'innocent ; on la fait transiter par le VRAI
+    // chemin (encode → decode → garde du récepteur), exactement comme un bot honnête la traiterait.
+    let mut muted_at: Option<usize> = None;
+    for (k, sybil) in sybils.iter().enumerate() {
+        let wire = encode_accuse(innocent, sybil);
+        let Some((accuser, offender)) = decode_accuse(&wire) else {
+            continue; // sceau invalide (n'arrive pas ici : on signe vraiment)
+        };
+        // Garde du récepteur, COPIE FIDÈLE de bot.rs : PoW exigée, pas d'auto-accusation, accusateur
+        // non déjà muet. Le point de l'attaque : ces gardes laissent passer des Sybils bon marché.
+        if accuser.has_pow(POW_BITS) && accuser != offender && !temoin.is_muted(accuser) {
+            temoin.record_accusation(offender, accuser);
+        }
+        println!("[attaquant]   accusation #{} signée par la Sybil {} → livrée au témoin.", k + 1, accuser.short());
+        if temoin.is_muted(innocent) && muted_at.is_none() {
+            muted_at = Some(k + 1);
+        }
+    }
+
+    if let Some(n) = muted_at {
+        println!("[attaquant] ❌ FRAMING RÉUSSI : le témoin a mis l'INNOCENT en SOURDINE dès la {n}ᵉ accusation,");
+        println!("            alors qu'il n'a rien fait. Coût TOTAL de l'attaque : {ACCUSE_QUORUM} PoW jouet ({cout:?}).");
+        println!("            → Trou D6/D7/D20 PROUVÉ. À fermer : 9.1 (rendre l'identité chère) + 9.2 (quorum PONDÉRÉ");
+        println!("              par réputation/plausibilité de l'accusateur, pour que K Sybils ne suffisent plus).");
+    } else {
+        println!("[attaquant] ✅ Le framing a ÉCHOUÉ : le témoin n'a PAS banni l'innocent (défense en place).");
+        println!("            → c'est l'état VISÉ après 9.1/9.2.");
     }
 }

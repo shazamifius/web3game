@@ -139,8 +139,17 @@ taire n'importe quel honnête** (D6/D7/D20). Le ch.9 (9.1 anti-Sybil dur/réglab
 anti-éclipse + corroboration des positions, 9.5 rendez-vous résilient) referme ça AVANT qu'on s'appuie dessus.
 **Reprise de 8.3** (câblage `KIND_CELL_SUMMARY` + Phase B inclusivité) : APRÈS le ch.9, sur une confiance solide.
 
-**PROCHAINE ACTION CONCRÈTE = 9.1** (refonte anti-Sybil : difficulté PoW réglable + adaptative — décision G#2
-déjà prise). Voir §D, Chapitre 9.
+**9.1 EN COURS — le trou est PROUVÉ (19 juin), harnais de régression en place.** Nouvelle attaque rouge
+`cargo run -- attack sybil-frame` (autonome, auto-mesurée comme `gossip-flood`) : un SEUL attaquant mine
+`ACCUSE_QUORUM = 3` identités Sybil (**~2,1 s ici, ≈0,7 s/identité** — PoW 16 bits = jouet, D6), signe 3
+accusations contre un INNOCENT, les livre par le VRAI chemin (signer → `encode_accuse` → `decode_accuse` →
+garde du récepteur recopiée de [bot.rs] → `record_accusation`) à un témoin honnête → **le témoin met
+l'innocent en SOURDINE** (« FRAMING RÉUSSI »). Trou **D6/D7/D20 prouvé bout-en-bout**. L'attaque est sa
+PROPRE preuve : après le correctif, le même binaire devra imprimer « framing ÉCHOUÉ ». **53 tests, 0 warning.**
+
+**PROCHAINE ACTION CONCRÈTE = poser la couche de correctif 9.1** : (a) socle plancher = rendre `POW_BITS`
+réglable et le monter ; puis décider (b) adaptatif. Cf. le 🧭 CARREFOUR 9.1 (§D). Re-jouer `attack sybil-frame`
+à la fin → doit basculer en « framing ÉCHOUÉ ». Voir §D, Chapitre 9.
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
@@ -1036,9 +1045,10 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 > choisit **dans quel ORDRE** on pose les couches. *Décision concrète (combien de bits, quel signal de
 > pression pour (b)) prise APRÈS l'étape de preuve ci-dessous — la mesure tranchera, pas ce document.*
 >
-> **Premier pas (avant tout codage de correctif) :** PROUVER le trou — une attaque rouge « Sybil-framing »
-> (3 identités minées qui accusent un bot honnête → il passe en sourdine à tort), comme `gossip-flood` a
-> prouvé D23. On saura alors exactement la forme de la menace avant de poser la couche (a)/(b).
+> **Premier pas (avant tout codage de correctif) — ✓ FAIT (19 juin) :** PROUVER le trou — attaque rouge
+> `attack sybil-frame` (3 identités Sybil minées en ~2,1 s qui accusent un innocent → témoin honnête le met
+> en sourdine), comme `gossip-flood` a prouvé D23. **Résultat : « FRAMING RÉUSSI ».** La menace est nette ;
+> l'attaque sert maintenant de harnais de régression (elle imprimera « framing ÉCHOUÉ » une fois (a)/(b) posées).
 - [ ] 9.2 — **Quorum d'accusation pondéré** : par réputation de l'accusateur + plausibilité
   de voisinage ; K attaquants ne peuvent pas framer un honnête. Ferme D7, D20.
 - [ ] 9.3 — **Réhabilitation** : fenêtre glissante des fautes + appel/quarantaine. Ferme D8.
