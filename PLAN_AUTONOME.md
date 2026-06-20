@@ -5,6 +5,22 @@
 > (avec l'ancre §0 de `FEUILLE_DE_ROUTE.md`), (c) le **journal** de ce qui a réellement été fait.
 > L'utilisateur le lit/corrige à son retour. Décidé avec lui le 20 juin 2026.
 
+## 🔬 INVESTIGATION SUPERVISÉE (20 juin, au retour de l'utilisateur) — règles + pré-enregistrement
+> Suite à ma sur-affirmation (« banc validé » sur le seul N=1000, réfuté à 5000), l'utilisateur a
+> recadré : **priorité = la MÉTHODE, pas le deadlock.** On ne touche **NI le protocole NI le tuning** ;
+> on INSTRUMENTE pour COMPRENDRE avant de décider. Deux règles dures (aussi en mémoire `methode-de-travail`) :
+> - **RÈGLE 1 — jamais validé sur un seul N** : petit (~100) / moyen (~1000) / grand (~5000+), tendance cohérente.
+> - **RÈGLE 2 — critère de succès écrit AVANT la modif** : le résultat décide, jamais l'inverse (sinon on
+>   « tune le banc jusqu'à ce que ça plaise »). Un banc = INSTRUMENT de diagnostic, PAS une preuve.
+>
+> **Question scientifique (pas « atteint-on 50k ? » mais) : POURQUOI la connectivité s'effondre-t-elle à 5000 ?**
+> → mesurer la STRUCTURE DU GRAPHE (composantes connexes, nœuds isolés, taille de la plus grande grappe,
+> taux d'ouverture des trous), à N=100/1000/5000 (Règle 1). **Pré-enregistrement (Règle 2) : je rapporte
+> les chiffres BRUTS quoi qu'il arrive.** Hypothèse à FALSIFIER : « à 5000 le graphe se fragmente en
+> grappes qui ne se rencontrent jamais (transition de phase de percolation) ». Si la plus grande grappe
+> chute brutalement entre 1000 et 5000 → vrai mur d'archi (trouvaille). Sinon → ailleurs. **AUCUN fix tant
+> que la cause n'est pas identifiée ; le PUNCH-retour (protocole) reste INTERDIT pour l'instant.**
+
 ## ⚖️ Le cadre (décidé avec l'utilisateur)
 - **Périmètre = Tier 0 + Tier 1 SEULEMENT** : simulateur léger + durcissements ADDITIFS. **Jamais**
   le cœur du vrai jeu, jamais le wire/chiffrement, jamais le rendu.
@@ -73,6 +89,24 @@
 ---
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
+
+- **DIAG STRUCTURE (20 juin, supervisé) — hypothèse « fragmentation » FALSIFIÉE (Règle 3).** Instrumenté
+  le graphe de communication (arête = trou ouvert) à N=100/1000/5000 (Règle 1). Résultats BRUTS :
+  | N | pairs connus | trous/nœud | isolés | composantes | + grande grappe | perception |
+  |---|---|---|---|---|---|---|
+  | 100 | 97,7 | 97,5 | 0 | 1 | 100 (100%) | 90/100 |
+  | 1000 | 545 | 499 | 0 | 1 | 1000 (100%) | 391 |
+  | 5000 | **51** | **51** | **0** | **1** | **5000 (100%)** | **0** |
+  → À 5000 le graphe **PERCOLE à 100 %** (un bloc, 0 isolé). **Donc PAS de fragmentation/transition de
+  phase de connectivité** — mon hypothèse pré-enregistrée est RÉFUTÉE. Le seul effondrement est la
+  **DENSITÉ DE DÉCOUVERTE** (51 pairs connus à 5000 vs 545 à 1000) + **perception 0 MALGRÉ la connectivité**.
+  **Nouvelle piste (À TESTER, pas conclue)** : ça pointe vers la **dette connue de D26 couche 1** — le
+  contrôle `émetteur == cell_host` à l'ingestion : à découverte SPARSE (~51 connus), chaque nœud a une vue
+  LOCALE différente de « qui est l'hôte » → les résumés sont rejetés (faux négatif déjà inscrit au registre).
+  À 1000, vue dense (545 connus) → les vues convergent → résumés acceptés. **Prochaine mesure (à décider
+  ensemble) : compter POURQUOI les résumés sont rejetés (émetteur≠hôte vs seq vs sceau), et pourquoi la
+  découverte plafonne à 51.** AUCUN fix tant que ce n'est pas mesuré.
+
 
 - **B1 ✅ infra / B2 ⚠ harnais (20 juin, périmètre ÉLARGI par l'utilisateur : bus mémoire autorisé).**
   *Fait, SÛR* : backend **bus mémoire** sur `transport::Socket` (enum `Udp`/`Bus`, routeur partagé

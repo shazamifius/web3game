@@ -157,6 +157,17 @@ impl Bot {
     pub(crate) fn neighbors(&self) -> usize {
         self.link.peers.len()
     }
+
+    /// Mon identité (clé), si déjà connue (après le 1er WELCOME). Pour instrumenter le graphe (D25).
+    pub(crate) fn id(&self) -> Option<PeerId> {
+        self.link.my_id
+    }
+
+    /// Les pairs vers qui mon trou est OUVERT (= j'ai reçu leur PUNCH → je peux leur relayer états/
+    /// résumés). C'est l'ARÊTE du graphe de communication réel : sert au diagnostic de percolation (D25).
+    pub(crate) fn open_holes(&self) -> Vec<PeerId> {
+        self.holes.iter().filter(|&(_, &open)| open).map(|(id, _)| *id).collect()
+    }
     pub(crate) fn accepted(&self) -> u64 {
         self.accepted
     }

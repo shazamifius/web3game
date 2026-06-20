@@ -221,4 +221,79 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     println!("Perception par RÉSUMÉ : moy {avg_summary:.0}, max {max_summary} occupants via 1 flux (foule {})", bots.len());
     println!("Débit par nœud        : ↑{:.1} / ↓{:.1} Ko/s", up / 1000.0 / n / secs as f32, down / 1000.0 / n / secs as f32);
     println!("=> T0.2-bis : compare à `crowd {}`. Si proche → banc bus FIDÈLE → extrapolation 5k-50k permise.", bots.len());
+    report_graph_structure(&bots);
+}
+
+// --- Union-find (composantes connexes du graphe de communication) ---
+fn uf_find(p: &mut [usize], mut x: usize) -> usize {
+    while p[x] != x {
+        p[x] = p[p[x]]; // compression de chemin
+        x = p[x];
+    }
+    x
+}
+fn uf_union(p: &mut [usize], a: usize, b: usize) {
+    let (ra, rb) = (uf_find(p, a), uf_find(p, b));
+    if ra != rb {
+        p[ra] = rb;
+    }
+}
+
+/// DIAGNOSTIC DE PERCOLATION (D25, demandé par l'utilisateur le 20 juin) : la perception se propage
+/// le long des TROUS OUVERTS (un résumé ne relaie qu'aux pairs au trou ouvert). On reconstruit donc
+/// le GRAPHE de communication (arête A-B si l'un a le trou de l'autre ouvert) et on mesure sa
+/// STRUCTURE — pas un chiffre de perf, mais la RAISON d'un éventuel effondrement : si le réseau se
+/// fragmente en grappes qui ne se rencontrent jamais, aucune perception globale n'est possible.
+/// Lecture SEULE : ne change rien au comportement.
+fn report_graph_structure(bots: &[Bot]) {
+    let n = bots.len();
+    // Index par identité (les bots sans id — jamais arrivés au WELCOME — comptent comme isolés).
+    let mut idx: HashMap<PeerId, usize> = HashMap::new();
+    for (i, b) in bots.iter().enumerate() {
+        if let Some(id) = b.id() {
+            idx.insert(id, i);
+        }
+    }
+    let sans_id = n - idx.len();
+
+    let mut parent: Vec<usize> = (0..n).collect();
+    let mut total_holes = 0usize;
+    let mut isoles = 0usize; // 0 trou ouvert vers un bot connu de ce banc
+    for (i, b) in bots.iter().enumerate() {
+        let mut deg = 0usize;
+        for h in b.open_holes() {
+            if let Some(&j) = idx.get(&h) {
+                uf_union(&mut parent, i, j);
+                deg += 1;
+            }
+        }
+        total_holes += deg;
+        if deg == 0 {
+            isoles += 1;
+        }
+    }
+    // Tailles des composantes.
+    let mut sizes: HashMap<usize, usize> = HashMap::new();
+    for i in 0..n {
+        let r = uf_find(&mut parent, i);
+        *sizes.entry(r).or_insert(0) += 1;
+    }
+    let n_comp = sizes.len();
+    let mut tailles: Vec<usize> = sizes.into_values().collect();
+    tailles.sort_unstable_by(|a, b| b.cmp(a)); // décroissant
+    let plus_grande = tailles.first().copied().unwrap_or(0);
+    let frac = if n > 0 { plus_grande as f32 / n as f32 * 100.0 } else { 0.0 };
+    let avg_deg = if n > 0 { total_holes as f32 / n as f32 } else { 0.0 };
+
+    println!("-------- STRUCTURE DU GRAPHE DE COMMUNICATION (trous ouverts) --------");
+    println!("Trous ouverts moyen   : {avg_deg:.1}/nœud  (l'arête = je peux relayer à ce pair)");
+    println!("Nœuds ISOLÉS          : {isoles}/{n} (aucun trou ouvert{}).", if sans_id > 0 { format!(", dont {sans_id} jamais arrivés au WELCOME") } else { String::new() });
+    println!("Composantes connexes  : {n_comp}  |  PLUS GRANDE = {plus_grande} nœuds ({frac:.0}% du total)");
+    let apercu: Vec<usize> = tailles.iter().take(8).copied().collect();
+    println!("Tailles (8 premières) : {apercu:?}");
+    if frac >= 90.0 {
+        println!("=> Un seul grand bloc : le réseau PERCOLE (pas de fragmentation).");
+    } else {
+        println!("=> ⚠ FRAGMENTÉ : la plus grande grappe ne couvre que {frac:.0}% → percolation INCOMPLÈTE (piste du mur).");
+    }
 }
