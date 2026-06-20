@@ -212,9 +212,9 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 
 > ### 🧭 CAP REPRIS (19 juin, soir) — décidé avec l'utilisateur
 > Le **chapitre 9 est tenu** (cœur dur Sybil/éclipse/framing/réputation) ; les durcissements avancés sont
-> **rangés en ANNEXE H** (optionnels). **Audit des doutes FAIT** → tableau d'état D1→D24 en tête de §C : **7
-> fermés, 7 bornés, 10 ouverts**, et les 10 ouverts se regroupent en 4 chantiers (inclusivité / vie privée /
-> autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
+> **rangés en ANNEXE H** (optionnels). **Audit des doutes FAIT** → tableau d'état D1→D26 en tête de §C (maj 20 juin) :
+> **8 fermés, 7 bornés, 11 ouverts** (sur 26 ; D22 fermé au 8.3d, + D25 banc d'essai et D26 agrégateur menteur
+> nommés le 20 juin), regroupés en chantiers (inclusivité / vie privée / autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
 > chapitre 10 (vie privée + identité) — ça ferme à soi seul 6 des 10 doutes ouverts, les plus proches de la
 > vision.** Le portage moteur (Unreal/VRChat, ch.14) reste APRÈS : on contrôle tout, moteur compris, jusque-là.
 >
@@ -391,8 +391,8 @@ indiqué entre crochets `[ch. X]`.
 
 > ### 📊 AUDIT DES DOUTES — état honnête au 20 juin (ce tableau fait FOI ; l'analyse détaillée suit)
 > *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **8 fermés** (D22
-> fermé au 8.3d), **6 bornés**, 10 ouverts — et les 10 ouverts se regroupent PROPREMENT en 4 chantiers, ce qui
-> confirme le plan (voir sous le tableau).*
+> fermé au 8.3d), **7 bornés** (+ D25 banc d'essai), **11 ouverts** (+ D26 agrégateur menteur) — sur 26 doutes.
+> Les ouverts se regroupent PROPREMENT en chantiers, ce qui confirme le plan (voir sous le tableau).*
 >
 > | # | Statut | Où en est-on / qui le ferme |
 > |---|---|---|
@@ -420,15 +420,25 @@ indiqué entre crochets `[ch. X]`.
 > | **D22** foule dense (aveugle > 32) | ✅ | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) + **8.3d (résumés frais, invariant prouvé jusqu'au banc ~1500 ; 5000 littéral = dette de HARNAIS, pas du protocole)** |
 > | **D23** gossip = ampli DDoS | ✅ | 8.1b : prouvé par `attack gossip-flood` |
 > | **D24** foule visible plafonnée 64 | ✅ | 8.2c : rendu deux tiers, confirmé à l'écran |
+> | **D25** banc d'essai plafonné (~1500) ; « 55k » non mesuré DIRECTEMENT | 🟡 | invariant prouvé à 1000 + argument d'archi (budget capé) ; 5000+ = simulateur léger à bâtir (dette harnais) |
+> | **D26** agrégateur/parent MENTEUR (hôte de cellule qui ment sur sa région) | 🔴 | nouvelle surface ouverte par 8.3 ; corroboration multi-informateurs **à fermer AVANT Phase B** (ex-« 8.8 ») |
 >
-> **Les 10 doutes 🔴 ouverts se rangent en 4 chantiers — ça VALIDE le plan :**
-> - **Inclusivité** (D3, D4, D5) → **fin du ch.8, Phase B** *(prochain gros cap)*
+> **Les doutes 🔴 ouverts se rangent en chantiers — ça VALIDE le plan :**
+> - **Inclusivité** (D3, **D4**, D5 + **D26**) → **fin du ch.8, Phase B** *(prochain gros cap)*
 > - **Vie privée & identité** (D14, D15) → **ch.10**
 > - **Autorité & ordre** (D11, D12, D13) → **ch.11**
 > - **Longévité** (D16, D17) → **ch.12**
-> Plus le résidu D22 (échelle 5000) = **8.3**, juste avant la Phase B. **Donc : finir le ch.8 (8.3 + Phase B) puis
-> le ch.10 ferme à lui seul 6 des 10 doutes ouverts — les plus proches de la vision.** Le reste (ch.11/12) est du
-> durcissement « confort », pas un bloqueur de la promesse P2P.
+> - **Méta / banc** (D25) → dette de harnais (simulateur léger pour 5000+)
+> Plus D22 fermé au 8.3d. **Donc : finir le ch.8 (Phase B) puis le ch.10 ferme à lui seul 6 doutes — les plus
+> proches de la vision.** Le reste (ch.11/12) est du durcissement « confort », pas un bloqueur de la promesse P2P.
+>
+> **⭐ LES DEUX DOUTES LES PLUS DURS QUI RESTENT (nommés le 20 juin — à ne PAS laisser se noyer dans la liste) :**
+> - **D4 — l'INCITATION (« pourquoi relayer pour les faibles ? »).** Pas du code : du *mécanisme*. Le pilier
+>   « les forts aident les faibles » est aspirationnel tant que rien ne récompense le relais. Conditionne D3 + D17.
+>   C'est le vrai mur intellectuel du projet. À traiter en TÊTE de Phase B, pas à la fin.
+> - **D10 — le rendez-vous reste la DERNIÈRE centralisation.** Le « sans serveur » garde un astérisque : l'amorçage
+>   passe par un rendez-vous (le gossip réduit la dépendance, la fédération/DHT est en annexe H). Pour un « VRAIMENT
+>   sans serveur », c'est le dernier nœud de confiance à décentraliser. Borné aujourd'hui, pas supprimé.
 
 ### Catégorie 1 — Le réalisme de nos tests
 
@@ -664,6 +674,19 @@ grossit sans borne ; il n'a pas la machinerie anti-DoS des clients. *Piste :* lu
 rate-limit + éviction + PoW à l'entrée (déjà le `has_pow`, mais pas le débit). *Vérif :*
 inonder le rendez-vous ne le met pas à genoux.
 
+**D25 — Le banc d'essai PLAFONNE (~1500 nœuds) ; « 55 000 » n'est pas mesuré DIRECTEMENT.** 🟡 `[dette de harnais]`
+*Constat (nommé le 20 juin, au 8.3d) :* `sim`/`crowd` lance **un OS-thread par bot**. La mesure dit ~**1 %
+d'un cœur par nœud** ; sur cette machine (**12 cœurs**, `nproc`), au-delà de ~1200-1500 nœuds on sur-souscrit
+les cœurs → les threads s'affament → la SIMU étouffe (débit et couverture chutent) — **artefact du banc, pas du
+protocole** (confirmé par l'arithmétique : 2000 × 1 % = ~20 cœurs demandés sur 12). *Pourquoi ça compte :* la
+promesse « 55k sans serveur » repose donc sur **l'argument d'architecture** (budget d'émission capé → réception
+bornée, indépendante de N — prouvé jusqu'à 1000) **+ une extrapolation**, PAS sur une mesure directe à 55k. C'est
+honnête, mais c'est un *trou de preuve*, pas un trou de défense. *Piste :* un **simulateur léger** à ordonnancement
+coopératif (N bots par thread, une seule boucle d'événements, pas de `thread::sleep` par bot) → 5000-50000 nœuds
+tiendraient sur un PC. *Vérif :* à 5000+ nœuds simulés léger, le débit ↓ reste plat et la perception suit N.
+*(Jugé NON urgent : le protocole est déjà démontré ; on bâtira ce simulateur si on DOUTE du résultat ou avant un
+vrai déploiement de masse.)*
+
 ### Catégorie 9 — Doutes nés du chapitre 8 (la rançon honnête du gossip)
 
 **D23 — Le gossip est un amplificateur de DDoS et un vecteur de pollution de table.** ✅ `[8.1b FAIT]`
@@ -699,6 +722,21 @@ foule dense, on VOIT bien plus que 64 (proches nets + lointains en imposteurs), 
 > *Mesure à corriger (dette, pas un doute durable) :* la couverture de perception compte
 > aujourd'hui les pairs **connus** (dans `link.peers`), pas ceux dont on reçoit **vraiment** un
 > état récent. À resserrer au 8.2 (compter « entendus récemment ») pour ne pas se mentir.
+
+**D26 — L'AGRÉGATEUR (hôte de cellule / parent) peut MENTIR sur sa région.** 🔴 `[ch.8 Phase B — corroboration]`
+*Constat (nommé le 20 juin, ouvert par 8.3) :* depuis 8.3, un **hôte de cellule** produit le RÉSUMÉ de la foule de
+sa zone (combien, où) ; en Phase B, un **parent** agrégera et dégradera la foule pour ses protégés faibles. Or rien
+ne l'empêche de **CACHER des gens** (te rendre aveugle à une partie de la foule = éclipse douce) ou d'en **INVENTER**
+(fantômes). La signature prouve l'AUTHENTICITÉ d'un état individuel, pas l'HONNÊTETÉ d'un *résumé* (qui agrège des
+tiers). C'est **D5/D9 vus depuis la couche d'agrégation** — une surface NOUVELLE que la feuille renvoyait vaguement à
+« 8.8 ». *Pourquoi ça compte :* toute la Phase B (inclusivité) s'appuie sur des agrégateurs ; si on peut mentir
+dessus, on bâtit l'inclusivité sur du sable. *Atténué aujourd'hui :* un résumé est **CONSULTATIF, pas autoritaire**
+(deux hôtes en désaccord = deux flux, aucune corruption d'état) ; le coût Sybil/éclipse est déjà durci (ch.9). *Piste :*
+**corroboration multi-informateurs** — ne croire un résumé que s'il est recoupé par plusieurs sources indépendantes
+(diversité IP, comme 9.4b) ; détecter le « trou noir » (mes voisins ne confirment jamais ce que le parent prétend
+relayer → je change de parent, D5). *Vérif :* un hôte/parent qui cache ou invente >X % de sa cellule est détecté et
+contourné en N secondes ; un protégé derrière un parent menteur garde une perception corroborée. **À fermer EN TÊTE
+de Phase B, avant de s'appuyer sur les parents.**
 
 ---
 
