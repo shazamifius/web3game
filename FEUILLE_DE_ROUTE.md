@@ -45,6 +45,34 @@
 >   relais = problème de mécanisme) et **D26** (agrégateur/parent menteur). Si l'un est un vrai mur, le voir gratuit.
 > - **🟠 H3 — `Phase B inclusivité`** (D3/D4/D5) une fois H2 défriché. Puis NAT (D17) → voix → chiffrement → Unreal.
 
+> ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (≤30 lignes — L'ANCRE anti-dérive ; maj 20 juin 2026)
+> *Lire CE bloc + le 🎯 ci-dessus suffit pour reprendre au bon niveau. Tout ce qui suit dans §0
+> est un JOURNAL d'archive — ne le relire qu'au besoin, via `grep`. Anti-collapse : on s'ancre ici,
+> on ne se rejoue pas tout l'historique à chaque session.*
+>
+> **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense »
+> Phase A BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule frais), **10.1 identité
+> PERSISTANTE FAIT** (D14 fermé). **68 tests, 0 warning.** Audit : **9 fermés · 7 bornés · 10 ouverts**
+> (sur 26).
+>
+> **3 MESURES « TROP GENTILLES » à ne pas se mentir (détail au 🧾 registre) :** (a) « couverture » =
+> pairs CONNUS, pas ENTENDUS (optimiste) ; (b) la FRAÎCHEUR (âge de perception d'un lointain) jamais
+> mesurée en direct → « 1/N tué » prouvé seulement *indirectement* ; (c) banc plafonné ~1500 nœuds →
+> « perception ∝ N » mesuré à 1000-2000, *argumenté* au-delà → **ne JAMAIS dire « 55K prouvé »**.
+>
+> **⚠ DOUTE VIVANT repéré le 20 juin (à traiter en H2) :** les résumés de cellule (8.3) sont **NON
+> authentifiés** — `ingest_summary` ne vérifie que `ts` + borne mémoire (aucune signature, aucune
+> PoW, aucun contrôle d'émetteur). Donc **D26 est plus large que « l'hôte ment »** : n'importe qui
+> forge un résumé pour n'importe quelle cellule, et un `ts = u64::MAX` ÉPINGLE le mensonge à vie (la
+> vraie info ne peut plus l'écraser — c'est le « verrou v65535 » de l'orbe, mais SANS le garde de 5.3).
+>
+> **PROCHAINE ACTION = H2 (défricher SUR LE PAPIER, règle 5)** les 2 murs probables avant de coder
+> Phase B : **D4** (incitation au relais = problème de MÉCANISME, le vrai mur intellectuel → EN
+> PREMIER) puis **D26** (résumé menteur, cf. doute ci-dessus). *Ne PAS construire d'outillage avant
+> d'avoir pensé le mécanisme.*
+>
+> ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
+
 **Où on en est :** le **chapitre 6 (refonte BÉTON) est TERMINÉ** — les 10 trous de
 l'audit fermés/bornés (0.0→6.8), **35 tests, 0 warning**, et **le jeu 3D réel
 fonctionne** (avatars + pseudos `0000…` + badge OWN BALLE visibles à l'écran). Tout
@@ -299,6 +327,18 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
 > les limites se font oublier : ici elles ont le droit de pousser contre le plan. À vider au fil
 > de l'eau. La réalité a toujours raison contre ce document.*
+> - **⚖️ LES 3 MESURES « TROP GENTILLES » (honnêteté de méthode, inscrites le 20 juin — à ne pas
+>   laisser se noyer ; aussi résumées dans l'⏱️ ÉTAT COURANT en tête de §0) :**
+>   **(a) « Couverture » compte les pairs CONNUS, pas ENTENDUS.** On sait qu'un nœud existe, pas
+>   qu'on reçoit ses paquets frais → optimiste. La vraie inclusivité (D3) = « est-ce que je reçois
+>   À TEMPS ? ». *Parade : une variante « entendus » de la métrique.*
+>   **(b) La FRAÎCHEUR n'est jamais mesurée en direct.** « perception ∝ N à débit plat » prouve
+>   seulement *indirectement* que les résumés sont assez frais ; on n'a pas l'ÂGE moyen de perception
+>   d'un lointain (avec vs sans résumés). Tant qu'on ne le chiffre pas, le « 1/N tué » reste un argument.
+>   **(c) Le banc plafonne à ~1500 nœuds** (un thread OS/bot, cf. D25). « Perception ∝ N » est MESURÉ
+>   à ~1000-2000, ARGUMENTÉ au-delà. Honnête tant qu'on n'écrit JAMAIS « 55K prouvé ». Le piège =
+>   oublier l'astérisque.
+>   *Aucune n'invalide un résultat ; ce sont les 3 endroits où, si on se ment un jour, ça commencera là.*
 > - **D23 (ch.8.1b) — gossip-DoS : FERMÉ et prouvé**, MAIS ⚠️ **PANNEAU ATTENTION — NE PAS OUBLIER EN
 >   PARTANT :** la réflexion n'est pas *impossible*, elle est *bornée*. Un attaquant qui **mine sans
 >   cesse de NOUVELLES identités PoW** peut relancer une rafale de ~10 s à chaque fois → coût attaquant

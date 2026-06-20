@@ -12,6 +12,33 @@ centaines de joueurs **sans aucun serveur de jeu central**, en pur pair-à-pair
 
 ---
 
+## La nature de ce projet (à lire en premier)
+
+Ce dépôt est **un projet d'exploration et de R&D**, pas (encore) un produit. La
+question qu'on se pose vraiment est : **le « web3 » — au sens décentralisé /
+pair-à-pair, identité possédée, sans serveur de jeu central — peut-il *réellement*
+fonctionner, ou n'est-ce qu'une utopie ?** On ne le prouve pas par des slogans : on
+l'écrit en Rust octet par octet, on l'attaque nous-mêmes, et on garde un inventaire
+honnête de ce qui tient et de ce qui ne tient pas (voir
+[`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)).
+
+**L'objectif à terme (la boussole, pas une échéance) :** monter **un énorme événement
+en P2P sans serveur réunissant ~55 000 personnes** — soit sur **Unreal Engine**, soit
+sur le moteur actuel (la *logique* réseau reste la même, voir l'avertissement ci-dessus).
+**55 000 = la jauge de la plus grande salle de concert au monde**, un nombre jamais réuni
+dans un seul espace de jeu (les MMO « shardent », Fortnite met ~100 joueurs par instance).
+
+On n'a pas besoin que les 55 000 interagissent directement entre eux. La **version
+réalisable, et déjà un exploit**, c'est la *présence par niveau de détail (LOD)* :
+- pouvoir **se voir** les uns les autres à grande échelle ;
+- avoir des **mouvements de foule cohérents** (la marée lointaine en avatars agrégés) ;
+- pouvoir **discuter avec au moins ~30 personnes autour de soi** (le voisinage net, à
+  débit plein).
+
+Si on tient ça, on aura montré que le P2P à cette échelle n'est pas *que* utopique.
+
+---
+
 ## Comment lancer le jeu
 
 Le projet se construit dans un environnement reproductible (`nix-shell`).
