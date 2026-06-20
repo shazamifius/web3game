@@ -280,11 +280,14 @@ impl Bot {
                         }
                     }
                 }
-                // 8.3c : RÉSUMÉ DE CELLULE. On le retient (dernier par cellule) → on perçoit la foule
-                // de cette région via UN flux, à fraîcheur fixe, au lieu du compte-gouttes 1/N.
+                // 8.3c : RÉSUMÉ DE CELLULE (AUTHENTIFIÉ, D26-couche-1). On le retient (dernier frais
+                // par cellule) → on perçoit la foule via UN flux. `ingest_summary` vérifie d'abord
+                // (pas cher) que l'émetteur est l'hôte attendu, PUIS (cher) le sceau → un faux d'un
+                // non-hôte est jeté SANS vérif de signature ; la menace CPU de forge est donc bornée
+                // sans seau dédié, le seau général `buckets` ci-dessus gatant déjà chaque paquet/source.
                 Some(KIND_CELL_SUMMARY) => {
-                    if let Some(s) = decode_cell_summary(&bytes) {
-                        self.link.ingest_summary(s);
+                    if let (Some(s), Some(my_id)) = (decode_cell_summary(&bytes), self.link.my_id) {
+                        self.link.ingest_summary(s, (pos.x, pos.z), my_id);
                     }
                 }
                 Some(KIND_PUNCH) => {
@@ -524,12 +527,12 @@ impl Bot {
                     .take(CELL_SUMMARY_FANOUT)
                     .collect();
                 if !open.is_empty() {
-                    // (a) Mon propre résumé si je suis hôte → je l'ingère (il sera compté ET relayé).
-                    //     `ts` = horloge en ms : l'estampille de FRAÎCHEUR que les relais portent verbatim
-                    //     (8.3d) → ma copie fraîche bat les vieilles encore en vol.
-                    let ts = (now * 1000.0) as u64;
-                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id, ts) {
-                        self.link.ingest_summary(s);
+                    // (a) Mon propre résumé si je suis hôte → SIGNÉ (D26-couche-1) et ingéré (compté
+                    //     ET relayé). La FRAÎCHEUR n'est plus l'horloge `ts` (forgeable) mais mon `seq`
+                    //     monotone interne, porté verbatim par les relais (8.3d) → ma copie fraîche bat
+                    //     les vieilles encore en vol, et un non-hôte ne peut pas forger ce seq.
+                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id) {
+                        self.link.ingest_summary(s, (pos.x, pos.z), my_id);
                     }
                     // (b) Relais borné : un échantillon TOURNANT des résumés détenus (épidémie).
                     let summaries: Vec<CellSummary> =

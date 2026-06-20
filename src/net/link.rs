@@ -6,7 +6,7 @@
 
 use super::accuse::encode_accuse;
 use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
-use super::cell::{build_cell_summary, CellSummary};
+use super::cell::{build_cell_summary, sign_summary, summary_sig_ok, CellSummary};
 use super::crypto::{load_or_create_identity, Identity, PeerId, pow_bits};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
@@ -73,6 +73,10 @@ pub struct NetLink {
     /// l'effondrement de fraîcheur en 1/N de la conscience. Borné par `MAX_CELLS` (anti-inondation
     /// de fausses cellules). Consultatif (pas autoritaire) : un résumé en double ne corrompt rien.
     pub(crate) cell_summaries: HashMap<(i32, i32), CellSummary>,
+    /// Compteur monotone de FRAÎCHEUR de MES résumés (chap. D26-couche-1) : incrémenté à chaque
+    /// résumé que J'émets en tant qu'hôte. Joue pour le résumé le rôle que `seq` joue pour mes états
+    /// — un anti-rejeu/anti-épinglage robuste, là où l'ancienne horloge murale `ts` était forgeable.
+    pub(crate) summary_seq: u64,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
@@ -258,6 +262,7 @@ impl NetLink {
             gossip_credit: HashMap::new(),
             focus: Vec::new(),
             cell_summaries: HashMap::new(),
+            summary_seq: 0,
             weak,
         })
     }
@@ -455,7 +460,7 @@ impl NetLink {
     /// je ne suis pas l'hôte (un seul nœud résume → pas de cacophonie). *(Trust : le count s'appuie
     /// sur `peer_pos`, qui inclut du gossip non corroboré → un hôte peut sur/sous-estimer ; résumé
     /// CONSULTATIF, corroboration = 8.8.)*
-    pub(crate) fn build_my_cell_summary(&self, me: (f32, f32), my_id: PeerId, ts: u64) -> Option<CellSummary> {
+    pub(crate) fn build_my_cell_summary(&mut self, me: (f32, f32), my_id: PeerId) -> Option<CellSummary> {
         if !self.am_i_cell_host(me, my_id) {
             return None;
         }
@@ -466,33 +471,51 @@ impl NetLink {
                 occupants.push(*pos);
             }
         }
-        Some(build_cell_summary(my_cell, &occupants, ts))
+        // FRAÎCHEUR = mon compteur monotone (jamais l'horloge murale, forgeable) ; puis je SIGNE
+        // sous ma clé → le résumé est auto-certifiant, exactement comme un état joueur.
+        self.summary_seq += 1;
+        let mut s = build_cell_summary(my_cell, my_id, &occupants, self.summary_seq);
+        sign_summary(&mut s, &self.identity);
+        Some(s)
     }
 
-    /// INGÈRE un résumé de cellule reçu (chap. 8.3c, durci 8.3d) : on ne retient que le PLUS FRAIS
-    /// par cellule (`ts` strictement plus grand). C'est l'anti-rejeu des résumés, jumeau de
-    /// `accept_seq` pour les états : une VIEILLE copie partielle qui circule encore via les relais
-    /// (count faible, d'avant que l'hôte connaisse toute la foule) ne peut PLUS écraser la fraîche et
-    /// complète — le bug de 8.3c (la perception EMPIRAIT à fenêtre longue). Borné par `MAX_CELLS`
-    /// (anti-inondation). Renvoie `true` si on a ACCEPTÉ (cellule nouvelle OU plus fraîche) → vaut la
-    /// peine d'être relayé ; `false` si rejeté (périmé, ou table pleine).
-    pub(crate) fn ingest_summary(&mut self, s: CellSummary) -> bool {
+    /// INGÈRE un résumé de cellule reçu (chap. 8.3c, durci 8.3d, AUTHENTIFIÉ D26-couche-1). Trois
+    /// verrous, du moins cher au plus cher (borne le coût CPU d'un flot de faux) :
+    /// 1. **émetteur LÉGITIME** : `s.host` doit être l'hôte attendu de `s.cell` selon MA connaissance
+    ///    (`cell_host`) → un non-hôte ne peut RIEN forger (tue la forge anonyme et le `count=0` qui
+    ///    effaçait une région d'autrui) ;
+    /// 2. **sceau VALIDE** : le corps doit être signé par cette clé `host` (anti-falsification) ;
+    /// 3. **fraîcheur PAR HÔTE** : du MÊME hôte on n'accepte qu'un `seq` strictement plus grand
+    ///    (anti-rejeu/anti-épinglage — un `seq` figé ne peut plus être surenchéri par un non-hôte,
+    ///    et un non-hôte est déjà refusé en 1) ; un hôte DIFFÉRENT mais légitime (migration) repart
+    ///    à neuf. Borné par `MAX_CELLS` (anti-inondation). Renvoie `true` si ACCEPTÉ → vaut le relais.
+    /// `me`/`my_id` servent à recalculer LOCALEMENT l'hôte attendu (dette : si je ne connais pas
+    /// encore l'occupant au plus petit id, je peux rejeter un résumé pourtant légitime — sûr car
+    /// consultatif, cf. registre).
+    pub(crate) fn ingest_summary(&mut self, s: CellSummary, me: (f32, f32), my_id: PeerId) -> bool {
+        // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
+        if self.cell_host(s.cell, me, my_id) != Some(s.host) {
+            return false; // forge anonyme / cellule qu'il n'héberge pas
+        }
+        if !summary_sig_ok(&s) {
+            return false; // sceau invalide : contenu falsifié ou clé usurpée
+        }
+        // 3) fraîcheur par hôte.
         match self.cell_summaries.get(&s.cell) {
-            Some(existing) => {
-                if s.ts <= existing.ts {
-                    return false; // pas plus frais → la vieille copie ne peut plus écraser
+            Some(existing) if existing.host == s.host => {
+                if s.seq <= existing.seq {
+                    return false; // pas plus frais que le MÊME hôte → pas d'écrasement (anti-épinglage)
                 }
-                self.cell_summaries.insert(s.cell, s);
-                true
             }
+            Some(_) => {} // hôte différent mais légitime (migration) → on repart sur le neuf
             None => {
                 if self.cell_summaries.len() >= MAX_CELLS {
                     return false; // table pleine : on borne la mémoire
                 }
-                self.cell_summaries.insert(s.cell, s);
-                true
             }
         }
+        self.cell_summaries.insert(s.cell, s);
+        true
     }
 
     /// Métrique (chap. 8.3) : la foule TOTALE qu'on perçoit via les résumés de cellule détenus =
@@ -704,25 +727,85 @@ mod tests {
         assert_eq!(link.cell_host((50, 50), me_pos, me), None);
     }
 
-    /// 8.3d — l'ingestion ne garde que le PLUS FRAIS par cellule : une vieille copie partielle
-    /// (count faible, ts ancien) qui circule encore via les relais ne peut PLUS écraser la fraîche
-    /// et complète (count élevé, ts récent). C'est le bug de 8.3c (la perception EMPIRAIT à fenêtre
-    /// longue) refermé. Jumeau de l'anti-rejeu `accept_seq`.
-    #[test]
-    fn ingest_garde_le_plus_frais_pas_le_dernier_arrive() {
+    /// Forge un résumé SIGNÉ par `host` pour `cell` (count/seq donnés), comme le ferait l'hôte.
+    fn signe(host: &Identity, cell: (i32, i32), count: u32, seq: u64) -> CellSummary {
+        let mut s = build_cell_summary(cell, host.id(), &[(0.0, 0.0)], seq);
+        s.count = count;
+        sign_summary(&mut s, host);
+        s
+    }
+
+    /// Inscrit `host` comme occupant (donc hôte attendu) de la cellule (0,0) ; renvoie un point de
+    /// vue `(me, my_id)` situé LOIN de (0,0) pour que l'observateur ne soit pas lui-même candidat hôte.
+    fn link_avec_hote_en_0_0(host: &Identity) -> (NetLink, (f32, f32), PeerId) {
         let mut link = link_de_test();
-        let fraiche = CellSummary { cell: (0, 0), count: 190, ts: 1000, samples: vec![] };
-        let vieille = CellSummary { cell: (0, 0), count: 50, ts: 200, samples: vec![] };
-        // J'ingère d'abord la FRAÎCHE (complète).
-        assert!(link.ingest_summary(fraiche.clone())); // nouvelle cellule → acceptée
+        link.peers.insert(host.id(), addr(8000));
+        link.peer_pos.insert(host.id(), (2.0, 2.0)); // cellule (0,0)
+        (link, (200.0, 200.0), pid(9)) // moi LOIN de (0,0)
+    }
+
+    /// 8.3d + D26-couche-1 — l'ingestion d'un résumé AUTHENTIFIÉ ne garde que le PLUS FRAIS du MÊME
+    /// hôte (`seq` strictement plus grand). Une vieille copie (relais en retard) ne peut PLUS écraser
+    /// la fraîche. Jumeau de l'anti-rejeu `accept_seq`, mais désormais signé et attribué à un hôte.
+    #[test]
+    fn ingest_garde_le_plus_frais_du_meme_hote() {
+        let host = Identity::generate();
+        let (mut link, me, my_id) = link_avec_hote_en_0_0(&host);
+        assert!(link.ingest_summary(signe(&host, (0, 0), 190, 1), me, my_id)); // neuve → acceptée
         assert_eq!(link.summary_perceived(), 190);
-        // Une VIEILLE copie arrive ENSUITE (relais en retard) : refusée, ne corrompt pas.
-        assert!(!link.ingest_summary(vieille)); // périmée → rejetée
-        assert_eq!(link.summary_perceived(), 190); // la fraîche tient
-        // Une copie ENCORE plus fraîche (l'hôte a appris plus de monde) : acceptée, remplace.
-        let plus_fraiche = CellSummary { cell: (0, 0), count: 198, ts: 1500, samples: vec![] };
-        assert!(link.ingest_summary(plus_fraiche));
+        // Vieille copie (même seq) qui arrive ensuite : refusée, ne corrompt pas.
+        assert!(!link.ingest_summary(signe(&host, (0, 0), 50, 1), me, my_id));
+        assert_eq!(link.summary_perceived(), 190);
+        // L'hôte a appris plus de monde (seq plus grand) : acceptée, remplace.
+        assert!(link.ingest_summary(signe(&host, (0, 0), 198, 2), me, my_id));
         assert_eq!(link.summary_perceived(), 198);
+    }
+
+    /// RED-TEAM « forge un faux résumé » (D26-couche-1) : un attaquant qui N'EST PAS l'hôte de la
+    /// cellule produit un résumé PARFAITEMENT signé (par SA clé) avec `count=0` (efface la région)
+    /// et `seq=u64::MAX` (tentative d'épinglage à vie). Il est REJETÉ d'office : `host != cell_host`.
+    /// → forge anonyme, effacement de région ET épinglage `ts=MAX` tués d'un coup.
+    #[test]
+    fn ingest_rejette_le_resume_forge_par_un_non_hote() {
+        let host = Identity::generate();
+        let (mut link, me, my_id) = link_avec_hote_en_0_0(&host);
+        assert!(link.ingest_summary(signe(&host, (0, 0), 200, 1), me, my_id)); // l'hôte légitime
+        assert_eq!(link.summary_perceived(), 200);
+        // L'attaquant n'est PAS occupant connu de (0,0) → il n'en est pas l'hôte attendu.
+        let attaquant = Identity::generate();
+        let faux = signe(&attaquant, (0, 0), 0, u64::MAX); // bien signé, mais par le mauvais
+        assert!(!link.ingest_summary(faux, me, my_id)); // rejet : host != cell_host
+        assert_eq!(link.summary_perceived(), 200); // la vraie info TIENT, pas d'effacement ni d'épinglage
+    }
+
+    /// RED-TEAM usurpation d'hôte : l'attaquant embarque la clé du VRAI hôte dans `host` (pour
+    /// passer le contrôle d'émetteur) mais signe avec SA clé. Le sceau ne colle pas → rejet.
+    #[test]
+    fn ingest_rejette_le_sceau_usurpe() {
+        let host = Identity::generate();
+        let (mut link, me, my_id) = link_avec_hote_en_0_0(&host);
+        let attaquant = Identity::generate();
+        let mut usurpe = build_cell_summary((0, 0), host.id(), &[(0.0, 0.0)], 7); // host = la victime…
+        sign_summary(&mut usurpe, &attaquant); // … mais signé par l'attaquant
+        assert!(!link.ingest_summary(usurpe, me, my_id)); // émetteur OK, sceau FAUX → rejet
+    }
+
+    /// MIGRATION légitime : l'hôte A part, B (nouvel occupant) devient l'hôte attendu. Son résumé est
+    /// accepté MÊME avec un `seq` plus petit (compteur d'un autre hôte → on repart à neuf, pas de
+    /// blocage). Le `seq`-par-hôte n'enferme donc pas une cellule sur un hôte disparu.
+    #[test]
+    fn ingest_accepte_le_nouvel_hote_apres_migration() {
+        let a = Identity::generate();
+        let (mut link, me, my_id) = link_avec_hote_en_0_0(&a);
+        assert!(link.ingest_summary(signe(&a, (0, 0), 100, 9), me, my_id)); // A, seq élevé
+        // A quitte la cellule ; B y arrive et devient le seul occupant connu → hôte attendu.
+        link.peers.remove(&a.id());
+        link.peer_pos.remove(&a.id());
+        let b = Identity::generate();
+        link.peers.insert(b.id(), addr(8001));
+        link.peer_pos.insert(b.id(), (2.0, 2.0));
+        assert!(link.ingest_summary(signe(&b, (0, 0), 80, 1), me, my_id)); // seq plus PETIT, hôte neuf → OK
+        assert_eq!(link.summary_perceived(), 80);
     }
 
     /// 8.2a-bis — le focus est COLLANT : il prend les plus proches, NE bouge PAS sous un petit
