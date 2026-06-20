@@ -229,15 +229,26 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > `crowd 200` (30 s) : perception par résumé moy 112 / max 154 occupants (sur 199) via O(cellules) flux, débit ↓
 > ~46 Ko/s borné (+6 vs pré-8.3 = coût des résumés), orbe 0/200, essaim tenu. 65 tests, 0 warning.** *(Les `#[allow(dead_code)]`
 > de 8.3a/8.3b sont levés : cell_of/cell_host/CellSummary sont désormais utilisés.)*
-> **PROCHAINE ACTION = 8.3d (preuve à l'échelle). Doutes à lever (écrits noir sur blanc) :**
-> 1. **112/199, pas ~199.** La foule-test est sur un cercle À CHEVAL sur l'origine (un coin de grille) → elle se
->    répartit sur ~4 cellules + convergence gossip non finie en 30 s. *À faire :* tester aussi une foule CENTRÉE
->    dans une cellule (cas dense pur → un hôte → count ≈ N), et laisser converger.
-> 2. **Le vrai trophée = la FRAÎCHEUR, pas la couverture.** La conscience atteignait déjà ~94 % de couverture, mais
->    au compte-gouttes 1/N. Le résumé donne la foule à fraîcheur FIXE — mais je ne l'ai pas encore MESURÉE. *À faire :*
->    chiffrer la fraîcheur (âge moyen de la perception d'un lointain) AVEC vs SANS résumés → prouver qu'on tue le 1/N.
-> 3. **L'INVARIANT.** À `crowd 500→2000`, la perception-par-résumé doit SUIVRE N à débit ↓ PLAT. C'est LA preuve
->    que « 55k sans serveur » tient. La confiance de l'agrégateur (hôte menteur = D5/D9) est durcie (ch.9).
+> ✅ **8.3d (20 juin) — UN VRAI BUG DE CONCEPTION TROUVÉ ET FERMÉ : les résumés n'avaient pas d'ordre de
+> FRAÎCHEUR.** Le diagnostic (foule centrée dans une cellule + fenêtre longue) a révélé que la perception
+> EMPIRAIT avec le temps (`crowd 200` : 112→77 ; `crowd 500` : 18→11 entre 30 s et 60 s). Cause : `ingest_summary`
+> faisait « dernier arrivé gagne » → une VIEILLE copie partielle (count faible, d'avant que l'hôte connaisse toute
+> la foule) qui circule encore via les relais ÉCRASAIT la fraîche et complète. Plus la fenêtre est longue, plus il
+> y a de vieilles copies en vol → pire. **Fix (pas une rustine) :** chaque résumé porte un `ts` (horodatage), les
+> relais le portent VERBATIM, et `ingest_summary` ne garde que le PLUS FRAIS par cellule (`ts` strictement
+> supérieur) — c'est l'anti-rejeu `accept_seq` des états, appliqué aux résumés. **PROUVÉ par le même diagnostic
+> rejoué :** la perception ne s'effondre plus, elle CONVERGE vers N — `crowd 200` 160→**191/200**, `crowd 500`
+> 88→**477/500** (30 s→60 s) ; et l'INVARIANT tient : N×2,5 (200→500) garde le débit ↓ **PLAT (~45 Ko/s)**. Orbe
+> 0, essaim tenu. **66 tests, 0 warning.** *(Doute #1 levé : foule centrée → un hôte → count ≈ N.)*
+> **⚠ DOUTES RESTANTS (écrits noir sur blanc) :**
+> 1. **Convergence non instantanée à l'échelle.** À 30 s / 500 nœuds, la moyenne n'est qu'à 88 (max 328) ; il faut
+>    ~60 s pour atteindre 477. Pas un bug — temps de propagation épidémique en log(N), constante non négligeable.
+>    À surveiller en poussant vers 2000+ (la fenêtre de preuve doit grandir avec N).
+> 2. **FRAÎCHEUR pas encore CHIFFRÉE en propre.** La perception ≈ N à débit plat le démontre INDIRECTEMENT (les
+>    résumés sont assez frais pour couvrir la foule), mais l'âge moyen de perception d'un lointain AVEC vs SANS
+>    résumés n'est pas encore une métrique dédiée. *À faire si on veut la preuve directe du « 1/N tué ».*
+> 3. **INVARIANT à 1000→2000 pas encore couru.** 500 est prouvé ; le cap « 55k sans serveur » demande de voir la
+>    perception SUIVRE N à débit ↓ plat à 1000 puis 2000. **PROCHAINE ACTION.**
 >
 > ### 🔬 APRÈS le ch.8/9 — PASSE DE VALIDATION par simulation (proposée par l'utilisateur, avant le ch.10)
 > *Finir au PROPRE les chapitres 8 et 9, puis — AVANT d'attaquer le ch.10 — une passe dédiée qui POSE DE VRAIS

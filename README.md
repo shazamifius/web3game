@@ -172,6 +172,14 @@ anti-triche).
 
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
+> - **▶ ÉTAT COURANT (20 juin) — chapitre 8.3d : la foule dense passe à l'échelle.** Chapitres 0→7 faits,
+>   chapitre 9 (confiance dure : Sybil/éclipse/framing) tenu, chapitre 8 presque bouclé. **Dernière étape
+>   8.3d :** un VRAI bug de conception trouvé et fermé — les résumés de cellule n'avaient pas d'ordre de
+>   FRAÎCHEUR, donc de vieilles copies partielles écrasaient les fraîches (la perception EMPIRAIT avec le
+>   temps). Fix : un horodatage `ts` par résumé, l'ingestion ne garde que le plus frais (anti-rejeu jumeau de
+>   celui des états). **Prouvé :** la perception CONVERGE vers N (`crowd 500` → 477/500 occupants via O(cellules)
+>   flux) à débit ↓ **PLAT (~45 Ko/s)** quand N grandit. **66 tests, 0 warning.** Détail + doutes restants
+>   (convergence à 2000, fraîcheur à chiffrer) dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md) §0.
 > - **Fait :** chapitres 0→5 ; **6.0** (bot headless + 4 attaques) ; **6.1** (identité
 >   = clé) ; **6.2** (anti-Sybil PoW) ; **6.3** (anti-téléport) ; **6.4** (contact orbe) ;
 >   **6.5** (DoS borné) ; **6.6** (voisinage borné, O(N·K)) ; **6.7** (réputation

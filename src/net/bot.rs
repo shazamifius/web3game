@@ -12,7 +12,7 @@
 
 use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
-use super::aoi::{allocate_tiers, dist2, relevance_weight, SEND_BUDGET_HZ};
+use super::aoi::{allocate_tiers, dist2, relevance_weight, CELL_SIZE, SEND_BUDGET_HZ};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
@@ -199,10 +199,13 @@ impl Bot {
     /// confiance que le jeu), émission de notre état, perçage NAT.
     pub(crate) fn step(&mut self, dt: f32, now: f32) {
         self.wander += dt * 0.6;
+        // Foule centrée au CENTRE d'une cellule (chap. 8.3d) : le cercle de rayon `WANDER_RADIUS`
+        // (≪ CELL_SIZE) tient alors dans UNE seule cellule (0,0) → un hôte unique la résume (count ≈ N),
+        // au lieu de déborder sur 4 cellules autour d'un coin de grille (l'origine). Headless only.
         let pos = Vec3::new(
-            WANDER_RADIUS * self.wander.cos(),
+            CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.cos(),
             0.7,
-            WANDER_RADIUS * self.wander.sin(),
+            CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.sin(),
         );
 
         // 1) HELLO vers le rendez-vous (porte notre identité = notre clé).
@@ -522,7 +525,10 @@ impl Bot {
                     .collect();
                 if !open.is_empty() {
                     // (a) Mon propre résumé si je suis hôte → je l'ingère (il sera compté ET relayé).
-                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id) {
+                    //     `ts` = horloge en ms : l'estampille de FRAÎCHEUR que les relais portent verbatim
+                    //     (8.3d) → ma copie fraîche bat les vieilles encore en vol.
+                    let ts = (now * 1000.0) as u64;
+                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id, ts) {
                         self.link.ingest_summary(s);
                     }
                     // (b) Relais borné : un échantillon TOURNANT des résumés détenus (épidémie).

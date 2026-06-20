@@ -30,8 +30,8 @@ use super::wire::{KIND_CELL_SUMMARY, PROTO_VERSION};
 /// bien sous un datagramme. Borne le coût d'un résumé quelle que soit la taille de la foule.
 pub(crate) const MAX_CELL_SAMPLES: usize = 16;
 
-/// En-tête : KIND + VERSION + cell.0 (i32) + cell.1 (i32) + count (u32) + n_samples (u8) = 15 o.
-const HEADER: usize = 2 + 4 + 4 + 4 + 1;
+/// En-tête : KIND + VERSION + cell.0 (i32) + cell.1 (i32) + count (u32) + ts (u64) + n_samples (u8) = 23 o.
+const HEADER: usize = 2 + 4 + 4 + 4 + 8 + 1;
 /// Taille d'un échantillon : x (4) + z (4) = 8 octets.
 const SAMPLE_SIZE: usize = 8;
 
@@ -43,14 +43,20 @@ pub(crate) struct CellSummary {
     pub(crate) cell: (i32, i32),
     /// Occupants ESTIMÉS de la cellule (≥ le nombre d'échantillons : la foule peut dépasser 16).
     pub(crate) count: u32,
+    /// HORODATAGE d'émission (ms, chap. 8.3d) : sert à l'ingestion à ne garder que le résumé le
+    /// PLUS FRAIS par cellule. Les relais le portent VERBATIM (ils ne le restampent pas) → une
+    /// vieille copie partielle qui circule encore ne peut plus écraser la fraîche (le bug du 8.3c).
+    /// *(Horloge murale partagée sur une machine ; en réseau réel, biais borné = D13, consultatif.)*
+    pub(crate) ts: u64,
     /// Positions REPRÉSENTATIVES (≤ `MAX_CELL_SAMPLES`) — un échantillon réparti de la foule.
     pub(crate) samples: Vec<(f32, f32)>,
 }
 
 /// Construit le résumé d'une cellule à partir des positions de ses occupants connus (chap. 8.3).
 /// `count` = nombre réel d'occupants ; `samples` = un échantillon RÉPARTI (pas les 16 premiers : on
-/// prend un pas régulier dans la liste → représentatif de toute la foule, pas d'un coin).
-pub(crate) fn build_cell_summary(cell: (i32, i32), occupants: &[(f32, f32)]) -> CellSummary {
+/// prend un pas régulier dans la liste → représentatif de toute la foule) ; `ts` = horodatage
+/// d'émission (fourni par l'appelant → fonction PURE/testable, l'horloge reste hors d'ici).
+pub(crate) fn build_cell_summary(cell: (i32, i32), occupants: &[(f32, f32)], ts: u64) -> CellSummary {
     let count = occupants.len() as u32;
     let samples: Vec<(f32, f32)> = if occupants.len() <= MAX_CELL_SAMPLES {
         occupants.to_vec()
@@ -59,7 +65,7 @@ pub(crate) fn build_cell_summary(cell: (i32, i32), occupants: &[(f32, f32)]) -> 
         let stride = occupants.len() / MAX_CELL_SAMPLES;
         (0..MAX_CELL_SAMPLES).map(|k| occupants[k * stride]).collect()
     };
-    CellSummary { cell, count, samples }
+    CellSummary { cell, count, ts, samples }
 }
 
 /// Sérialise un résumé : en-tête + positions. Tronque à `MAX_CELL_SAMPLES` (borne de coût).
@@ -71,6 +77,7 @@ pub(crate) fn encode_cell_summary(s: &CellSummary) -> Vec<u8> {
     buf.extend_from_slice(&s.cell.0.to_le_bytes());
     buf.extend_from_slice(&s.cell.1.to_le_bytes());
     buf.extend_from_slice(&s.count.to_le_bytes());
+    buf.extend_from_slice(&s.ts.to_le_bytes());
     buf.push(n as u8);
     for &(x, z) in s.samples.iter().take(n) {
         buf.extend_from_slice(&x.to_le_bytes());
@@ -89,7 +96,10 @@ pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
     let cx = i32::from_le_bytes([buf[2], buf[3], buf[4], buf[5]]);
     let cz = i32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]);
     let count = u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]);
-    let n = buf[14] as usize;
+    let ts = u64::from_le_bytes([
+        buf[14], buf[15], buf[16], buf[17], buf[18], buf[19], buf[20], buf[21],
+    ]);
+    let n = buf[22] as usize;
     let mut samples = Vec::with_capacity(n.min(MAX_CELL_SAMPLES));
     let mut o = HEADER;
     for _ in 0..n {
@@ -103,7 +113,7 @@ pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
             samples.push((x, z));
         }
     }
-    Some(CellSummary { cell: (cx, cz), count, samples })
+    Some(CellSummary { cell: (cx, cz), count, ts, samples })
 }
 
 #[cfg(test)]
@@ -113,7 +123,7 @@ mod tests {
     /// Aller-retour : un résumé encodé puis décodé revient identique.
     #[test]
     fn resume_survit_a_l_aller_retour() {
-        let s = CellSummary { cell: (-3, 7), count: 42, samples: vec![(1.0, -2.0), (3.5, 4.0)] };
+        let s = CellSummary { cell: (-3, 7), count: 42, ts: 123_456, samples: vec![(1.0, -2.0), (3.5, 4.0)] };
         assert_eq!(decode_cell_summary(&encode_cell_summary(&s)), Some(s));
     }
 
@@ -123,7 +133,7 @@ mod tests {
     fn build_compte_tout_mais_echantillonne_reparti() {
         // 100 occupants alignés en x = 0,1,2,…99. Le résumé dit count=100 et n'en porte que 16.
         let occ: Vec<(f32, f32)> = (0..100).map(|i| (i as f32, 0.0)).collect();
-        let s = build_cell_summary((0, 0), &occ);
+        let s = build_cell_summary((0, 0), &occ, 0);
         assert_eq!(s.count, 100);
         assert_eq!(s.samples.len(), MAX_CELL_SAMPLES);
         // Réparti : le 1er échantillon est au début, le dernier loin dans la foule (pas tous au début).
@@ -135,7 +145,7 @@ mod tests {
     #[test]
     fn build_petite_cellule_prend_tout() {
         let occ = vec![(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)];
-        let s = build_cell_summary((5, 5), &occ);
+        let s = build_cell_summary((5, 5), &occ, 0);
         assert_eq!(s.count, 3);
         assert_eq!(s.samples, occ);
     }
@@ -143,7 +153,7 @@ mod tests {
     /// Un paquet tronqué en plein milieu ne plante pas : on garde les échantillons complets.
     #[test]
     fn decode_tronque_ne_plante_pas() {
-        let s = CellSummary { cell: (1, 1), count: 2, samples: vec![(1.0, 2.0), (3.0, 4.0)] };
+        let s = CellSummary { cell: (1, 1), count: 2, ts: 0, samples: vec![(1.0, 2.0), (3.0, 4.0)] };
         let mut bytes = encode_cell_summary(&s);
         bytes.truncate(bytes.len() - 3); // coupe le 2e échantillon
         let d = decode_cell_summary(&bytes).expect("doit se décoder");
@@ -155,7 +165,7 @@ mod tests {
     /// Un échantillon NaN/Inf est ignoré (jamais de flottant non fini dans l'AoI).
     #[test]
     fn decode_rejette_position_non_finie() {
-        let s = CellSummary { cell: (0, 0), count: 2, samples: vec![(f32::NAN, 0.0), (1.0, 2.0)] };
+        let s = CellSummary { cell: (0, 0), count: 2, ts: 0, samples: vec![(f32::NAN, 0.0), (1.0, 2.0)] };
         let d = decode_cell_summary(&encode_cell_summary(&s)).expect("doit se décoder");
         assert_eq!(d.samples, vec![(1.0, 2.0)]); // la NaN sautée, la saine gardée
     }
@@ -163,7 +173,7 @@ mod tests {
     /// Mauvais type/version → rejeté proprement.
     #[test]
     fn decode_rejette_mauvais_entete() {
-        let s = CellSummary { cell: (0, 0), count: 0, samples: vec![] };
+        let s = CellSummary { cell: (0, 0), count: 0, ts: 0, samples: vec![] };
         let mut bytes = encode_cell_summary(&s);
         bytes[0] = 0xFF; // mauvais KIND
         assert_eq!(decode_cell_summary(&bytes), None);

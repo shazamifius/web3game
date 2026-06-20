@@ -434,7 +434,7 @@ impl NetLink {
     /// je ne suis pas l'hôte (un seul nœud résume → pas de cacophonie). *(Trust : le count s'appuie
     /// sur `peer_pos`, qui inclut du gossip non corroboré → un hôte peut sur/sous-estimer ; résumé
     /// CONSULTATIF, corroboration = 8.8.)*
-    pub(crate) fn build_my_cell_summary(&self, me: (f32, f32), my_id: PeerId) -> Option<CellSummary> {
+    pub(crate) fn build_my_cell_summary(&self, me: (f32, f32), my_id: PeerId, ts: u64) -> Option<CellSummary> {
         if !self.am_i_cell_host(me, my_id) {
             return None;
         }
@@ -445,19 +445,33 @@ impl NetLink {
                 occupants.push(*pos);
             }
         }
-        Some(build_cell_summary(my_cell, &occupants))
+        Some(build_cell_summary(my_cell, &occupants, ts))
     }
 
-    /// INGÈRE un résumé de cellule reçu (chap. 8.3c) : on retient le DERNIER par cellule (un résumé
-    /// plus frais remplace l'ancien). Borné par `MAX_CELLS` (anti-inondation). Renvoie `true` si
-    /// c'est une cellule NOUVELLE pour nous (utile à l'appelant pour décider de relayer).
+    /// INGÈRE un résumé de cellule reçu (chap. 8.3c, durci 8.3d) : on ne retient que le PLUS FRAIS
+    /// par cellule (`ts` strictement plus grand). C'est l'anti-rejeu des résumés, jumeau de
+    /// `accept_seq` pour les états : une VIEILLE copie partielle qui circule encore via les relais
+    /// (count faible, d'avant que l'hôte connaisse toute la foule) ne peut PLUS écraser la fraîche et
+    /// complète — le bug de 8.3c (la perception EMPIRAIT à fenêtre longue). Borné par `MAX_CELLS`
+    /// (anti-inondation). Renvoie `true` si on a ACCEPTÉ (cellule nouvelle OU plus fraîche) → vaut la
+    /// peine d'être relayé ; `false` si rejeté (périmé, ou table pleine).
     pub(crate) fn ingest_summary(&mut self, s: CellSummary) -> bool {
-        let known = self.cell_summaries.contains_key(&s.cell);
-        if !known && self.cell_summaries.len() >= MAX_CELLS {
-            return false; // table pleine : on borne la mémoire
+        match self.cell_summaries.get(&s.cell) {
+            Some(existing) => {
+                if s.ts <= existing.ts {
+                    return false; // pas plus frais → la vieille copie ne peut plus écraser
+                }
+                self.cell_summaries.insert(s.cell, s);
+                true
+            }
+            None => {
+                if self.cell_summaries.len() >= MAX_CELLS {
+                    return false; // table pleine : on borne la mémoire
+                }
+                self.cell_summaries.insert(s.cell, s);
+                true
+            }
         }
-        self.cell_summaries.insert(s.cell, s);
-        !known
     }
 
     /// Métrique (chap. 8.3) : la foule TOTALE qu'on perçoit via les résumés de cellule détenus =
@@ -667,6 +681,27 @@ mod tests {
         assert_eq!(link.cell_host(loin, me_pos, me), Some(pid(1)));
         // Une cellule vide n'a pas d'hôte.
         assert_eq!(link.cell_host((50, 50), me_pos, me), None);
+    }
+
+    /// 8.3d — l'ingestion ne garde que le PLUS FRAIS par cellule : une vieille copie partielle
+    /// (count faible, ts ancien) qui circule encore via les relais ne peut PLUS écraser la fraîche
+    /// et complète (count élevé, ts récent). C'est le bug de 8.3c (la perception EMPIRAIT à fenêtre
+    /// longue) refermé. Jumeau de l'anti-rejeu `accept_seq`.
+    #[test]
+    fn ingest_garde_le_plus_frais_pas_le_dernier_arrive() {
+        let mut link = link_de_test();
+        let fraiche = CellSummary { cell: (0, 0), count: 190, ts: 1000, samples: vec![] };
+        let vieille = CellSummary { cell: (0, 0), count: 50, ts: 200, samples: vec![] };
+        // J'ingère d'abord la FRAÎCHE (complète).
+        assert!(link.ingest_summary(fraiche.clone())); // nouvelle cellule → acceptée
+        assert_eq!(link.summary_perceived(), 190);
+        // Une VIEILLE copie arrive ENSUITE (relais en retard) : refusée, ne corrompt pas.
+        assert!(!link.ingest_summary(vieille)); // périmée → rejetée
+        assert_eq!(link.summary_perceived(), 190); // la fraîche tient
+        // Une copie ENCORE plus fraîche (l'hôte a appris plus de monde) : acceptée, remplace.
+        let plus_fraiche = CellSummary { cell: (0, 0), count: 198, ts: 1500, samples: vec![] };
+        assert!(link.ingest_summary(plus_fraiche));
+        assert_eq!(link.summary_perceived(), 198);
     }
 
     /// 8.2a-bis — le focus est COLLANT : il prend les plus proches, NE bouge PAS sous un petit
