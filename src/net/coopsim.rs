@@ -193,10 +193,17 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     let down0: u64 = bots.iter().map(|b| b.bytes_down()).sum();
     let wall = Instant::now();
     let mut now = 0.0_f32;
-    for _ in 0..ticks {
+    // ⚠ BUS_DOUTE — on DÉCALE le démarrage des bots (le bot i ne step qu'à partir du tick i%20, soit
+    //   un étalement des arrivées sur ~1 s) pour BRISER le lockstep : sinon tous les timers sont en
+    //   phase (vs les threads naturellement décalés du vrai `crowd`), ce qui empêchait le bootstrap
+    //   mutuel du perçage à grand N (deadlock N≥700). Décalage harnais-only, plus fidèle au réel.
+    const JOIN_SPREAD: u64 = 20;
+    for tick in 0..ticks {
         rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
-        for bot in bots.iter_mut() {
-            bot.step(dt, now);
+        for (idx, bot) in bots.iter_mut().enumerate() {
+            if tick >= idx as u64 % JOIN_SPREAD {
+                bot.step(dt, now);
+            }
         }
         now += dt;
     }

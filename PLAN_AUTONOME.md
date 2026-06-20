@@ -92,10 +92,12 @@
   donne que les **32 plus proches** (rosters ASYMÉTRIQUES à grand N) et, le banc bus steppant tous les bots
   en **LOCKSTEP** (timers identiques, à l'inverse des threads décalés du vrai `crowd`), le gossip n'a pas le
   temps de rendre la connaissance mutuelle avant `PUNCH_GIVEUP=40` essais → **deadlock de bootstrap**.
-  *Pistes (à valider AVEC l'utilisateur — fix à l'aveugle = risque rustine) :* (a) DÉCALER les timers des
-  bots du banc (briser le lockstep, imiter le vrai `crowd`) ; (b) au reçu d'un PUNCH d'un INCONNU,
-  apprendre l'émetteur + percer en retour (rendrait le bootstrap symétrique — mais touche `bot.rs`/protocole
-  → supervisé). **Banc bus à reprendre ICI.** Tout le reste (backend bus, UDP, 77 tests) est SÛR et acquis.
+  **✅ RÉSOLU (20 juin) — c'était bien le LOCKSTEP.** Fix harnais-only (piste a) : décaler le démarrage
+  des bots (`tick >= idx%20`) pour briser la synchro des timers (plus FIDÈLE au réel, pas une rustine).
+  Résultat à N=1000 : pairs connus 44→**550**, perception **max 851** (≈ `crowd` 857 ✅), **débit ↑43,6
+  Ko/s plat** (= `crowd` ✅), moy 389 vs 454 (~85 %, côté CONSERVATEUR = sous-estime). **T0.2-bis PASSE :
+  le banc bus reproduit `crowd 1000` sur les invariants (max-perception + débit plat).** Banc bus VALIDÉ
+  → extrapolation 5k-50k désormais légitime (T0.3 dégelé).
 
 - **T1.3 ✋ (20 juin) — D18 speed-hack : STOP au PAPIER (risque rustine), escaladé. FILE SÛRE ÉPUISÉE.**
   `move_plausible` est un contrôle PAR PAS (`dist ≤ MAX_SPEED·dt + SLACK`). Le « speed-hack grossier »
