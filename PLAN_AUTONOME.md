@@ -90,6 +90,42 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **DIAG INGESTION + TRAJECTOIRE (20 juin, supervisé) — le « deadlock à 5000 » était un ARTEFACT DE
+  FENÊTRE TROP COURTE (Règle 3 appliquée 2×).** *Mesure choisie avec l'utilisateur : instrumenter les
+  rejets de résumé + rejouer 5000 PLUS LONGTEMPS (120 s SIM vs 25 s avant).* Instrumentation ADDITIVE,
+  lecture seule : compteurs de rejet dans `ingest_summary` (`émetteur≠hôte`/`sceau`/`pas-frais`/`pleine`,
+  champ `SummaryStats` dans link.rs) + instantané de trajectoire toutes les 10 s SIM dans le banc bus.
+  **77 tests, 0 warning, chemin UDP intact.**
+  - **Contrôle N=1000** (cas connu-bon) : le banc reproduit `crowd` (perception moy 759 / max 1000,
+    percole 100 %, débit ↑45/↓46 Ko/s). Décomposition des rejets : **20 % acceptés, 26 % émetteur≠hôte
+    (la taxe D26 couche 1), 0 % sceau, 54 % pas-plus-frais** (redondance épidémique normale).
+  - **N=5000, 120 s SIM — TRAJECTOIRE (le résultat clé) :** la découverte/perception ne sont PAS
+    bloquées, elles **bootstrappent LENTEMENT avec une transition de phase nette vers t≈45-50 s** :
+
+    | t (s) | pairs connus | trous ouverts | perception moy (max) |
+    |---|---|---|---|
+    | 10-40 | ~49 → 54 | ~49 → 54 | **0** (plateau) |
+    | 50 | 94,6 | 90,4 | 4 (256) |
+    | 60 | 266,9 | 250,4 | 57 (553) |
+    | 70 | 469,6 | 439,9 | 160 (886) |
+    | 90 | 867,2 | 810,8 | 398 (1741) |
+    | 110 | 1236,5 | 1154,8 | 656 (2409) |
+
+    → montée **monotone**, toujours en hausse à t=110. **Le journal mesurait à ~25 s = en plein plateau,
+    AVANT la cascade** → la conclusion « 5000 deadlocke » est RÉFUTÉE : c'est une **convergence lente**,
+    pas un deadlock. *(Ma prédiction « le temps n'y changera rien, c'est un deadlock » était FAUSSE ; la
+    proposition « rejouer plus longtemps » de l'utilisateur était la bonne — la mesure corrige.)*
+  - **NOUVELLE question ouverte (à décider ensemble, AUCUN fix) :** pourquoi le plateau de ~49 pairs
+    pendant ~40 s puis cascade ? = **percolation de bootstrap DANS LE TEMPS** (masse critique de
+    connaissance mutuelle avant explosion du gossip). Reste à trancher : est-ce une **propriété réelle du
+    protocole de bootstrap à l'échelle** (alors le « temps de mise en route » croît avec N — vrai sujet),
+    ou un **résidu du lockstep** du banc (JOIN_SPREAD désync au démarrage puis re-phase) ? Le test
+    discriminant = jitter CONTINU des timers (fidélité, pas tuning).
+  - **NE conclut PAS :** à t=120 la perception (max ~2400/5000) **n'a pas fini de converger** → « 55K »
+    toujours pas prouvé directement ; la décomposition de rejet AGRÉGÉE est dominée par la phase
+    convergée (limite : compteurs non fenêtrés → ne séparent pas proprement la cause du plateau). Coût :
+    120 s SIM à 5000 = très long en mural (le trafic convergé charge le bus).
+
 - **DIAG STRUCTURE (20 juin, supervisé) — hypothèse « fragmentation » FALSIFIÉE (Règle 3).** Instrumenté
   le graphe de communication (arête = trou ouvert) à N=100/1000/5000 (Règle 1). Résultats BRUTS :
   | N | pairs connus | trous/nœud | isolés | composantes | + grande grappe | perception |

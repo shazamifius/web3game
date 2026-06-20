@@ -198,6 +198,10 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     //   phase (vs les threads naturellement décalés du vrai `crowd`), ce qui empêchait le bootstrap
     //   mutuel du perçage à grand N (deadlock N≥700). Décalage harnais-only, plus fidèle au réel.
     const JOIN_SPREAD: u64 = 20;
+    // INSTANTANÉ PÉRIODIQUE (D25, instrumentation) : toutes les ~10 s SIM, on imprime la TRAJECTOIRE
+    // (pairs connus, trous ouverts, perception). Tranche « convergence LENTE » (ça monte) de
+    // « DEADLOCK » (plat) en UN seul run — lecture seule, ne change rien au protocole.
+    let snap_every = (10.0_f32 / dt) as u64;
     for tick in 0..ticks {
         rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
         for (idx, bot) in bots.iter_mut().enumerate() {
@@ -206,6 +210,14 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
             }
         }
         now += dt;
+        if snap_every > 0 && (tick + 1) % snap_every == 0 {
+            let nn = bots.len() as f32;
+            let kn = bots.iter().map(|b| b.neighbors() as f32).sum::<f32>() / nn;
+            let ho = bots.iter().map(|b| b.open_holes().len() as f32).sum::<f32>() / nn;
+            let pe = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / nn;
+            let pmax = bots.iter().map(|b| b.summary_perceived()).max().unwrap_or(0);
+            println!("  [t={:>4.0}s] pairs connus {kn:>6.1} | trous ouverts {ho:>6.1} | perception moy {pe:>6.0} max {pmax}", now);
+        }
     }
     let wall_s = wall.elapsed().as_secs_f32();
 
@@ -222,6 +234,40 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     println!("Débit par nœud        : ↑{:.1} / ↓{:.1} Ko/s", up / 1000.0 / n / secs as f32, down / 1000.0 / n / secs as f32);
     println!("=> T0.2-bis : compare à `crowd {}`. Si proche → banc bus FIDÈLE → extrapolation 5k-50k permise.", bots.len());
     report_graph_structure(&bots);
+    report_summary_rejections(&bots);
+}
+
+/// DIAGNOSTIC D'INGESTION DES RÉSUMÉS (D25, demandé le 20 juin) : POURQUOI les résumés sont
+/// acceptés/rejetés, agrégé sur tous les nœuds. Tranche deux hypothèses du mur à 5000 :
+///   - `reçus ≈ 0` → ce n'est PAS D26 : la DÉCOUVERTE/PERÇÉE ne livre pas les résumés.
+///   - `reçus ≫ 0` mais rejet dominé par `émetteur≠hôte` → suspect D26 couche 1 CONFIRMÉ (à
+///     découverte sparse, chaque nœud calcule un hôte attendu différent → rejette du légitime).
+/// Lecture SEULE : ne change rien au comportement.
+fn report_summary_rejections(bots: &[Bot]) {
+    let mut recus = 0u64;
+    let (mut acc, mut host, mut sig, mut stale, mut full) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    for b in bots {
+        let s = b.summary_stats();
+        recus += s.received();
+        acc += s.accepted;
+        host += s.rej_host;
+        sig += s.rej_sig;
+        stale += s.rej_stale;
+        full += s.rej_full;
+    }
+    let pct = |x: u64| if recus > 0 { x as f32 / recus as f32 * 100.0 } else { 0.0 };
+    println!("-------- INGESTION DES RÉSUMÉS (pourquoi accepté/rejeté, tous nœuds) --------");
+    println!("Résumés REÇUS (total) : {recus}");
+    println!("  ✅ acceptés         : {acc} ({:.0}%)", pct(acc));
+    println!("  ❌ émetteur≠hôte    : {host} ({:.0}%)   ← la dette D26 couche 1 (vue locale de l'hôte)", pct(host));
+    println!("  ❌ sceau invalide   : {sig} ({:.0}%)", pct(sig));
+    println!("  ❌ pas plus frais   : {stale} ({:.0}%)   (même hôte, seq ≤ existant)", pct(stale));
+    println!("  ❌ table pleine     : {full} ({:.0}%)   (MAX_CELLS)", pct(full));
+    if recus == 0 {
+        println!("=> 0 résumé reçu : le mur est la DÉCOUVERTE/PERÇÉE, PAS l'ingestion (D26 hors de cause ici).");
+    } else if host >= acc && host >= sig && host >= stale {
+        println!("=> Rejet dominé par émetteur≠hôte : suspect D26 couche 1 (vues locales divergentes) PLAUSIBLE.");
+    }
 }
 
 // --- Union-find (composantes connexes du graphe de communication) ---

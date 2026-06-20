@@ -84,7 +84,31 @@ pub struct NetLink {
     /// résumé que J'émets en tant qu'hôte. Joue pour le résumé le rôle que `seq` joue pour mes états
     /// — un anti-rejeu/anti-épinglage robuste, là où l'ancienne horloge murale `ts` était forgeable.
     pub(crate) summary_seq: u64,
+    /// INSTRUMENTATION (D25, banc — lecture seule, ne change AUCUNE décision). Compte POURQUOI les
+    /// résumés de cellule sont acceptés/rejetés à l'ingestion, pour disambiguer « la découverte ne
+    /// livre pas les résumés » (reçus ≈ 0) de « les résumés arrivent mais sont rejetés » (D26 couche 1
+    /// : `émetteur≠hôte` à découverte sparse). Demandé le 20 juin pour trancher le mur à 5000.
+    pub(crate) summary_stats: SummaryStats,
     pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
+}
+
+/// Compteurs d'INGESTION DE RÉSUMÉ (D25, instrumentation pure). Chaque appel à `ingest_summary`
+/// incrémente exactement un champ : soit `accepted`, soit l'un des motifs de rejet. La somme des
+/// rejets + `accepted` = nombre de résumés REÇUS (= occasions d'ingérer). N'altère pas le protocole.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct SummaryStats {
+    pub accepted: u64,          // résumé valide et plus frais → retenu
+    pub rej_host: u64,          // émetteur ≠ hôte attendu localement (la dette D26 couche 1)
+    pub rej_sig: u64,           // sceau invalide (contenu falsifié / clé usurpée)
+    pub rej_stale: u64,         // même hôte, seq ≤ existant (pas plus frais / anti-épinglage)
+    pub rej_full: u64,          // table pleine (MAX_CELLS) sur une cellule neuve
+}
+
+impl SummaryStats {
+    /// Total de résumés REÇUS (toutes occasions d'ingérer confondues).
+    pub fn received(&self) -> u64 {
+        self.accepted + self.rej_host + self.rej_sig + self.rej_stale + self.rej_full
+    }
 }
 
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
@@ -297,6 +321,7 @@ impl NetLink {
             focus: Vec::new(),
             cell_summaries: HashMap::new(),
             summary_seq: 0,
+            summary_stats: SummaryStats::default(),
             weak,
         }
     }
@@ -563,25 +588,30 @@ impl NetLink {
     pub(crate) fn ingest_summary(&mut self, s: CellSummary, me: (f32, f32), my_id: PeerId) -> bool {
         // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
         if self.cell_host(s.cell, me, my_id) != Some(s.host) {
+            self.summary_stats.rej_host += 1; // instrumentation D25 (lecture seule)
             return false; // forge anonyme / cellule qu'il n'héberge pas
         }
         if !summary_sig_ok(&s) {
+            self.summary_stats.rej_sig += 1;
             return false; // sceau invalide : contenu falsifié ou clé usurpée
         }
         // 3) fraîcheur par hôte.
         match self.cell_summaries.get(&s.cell) {
             Some(existing) if existing.host == s.host => {
                 if s.seq <= existing.seq {
+                    self.summary_stats.rej_stale += 1;
                     return false; // pas plus frais que le MÊME hôte → pas d'écrasement (anti-épinglage)
                 }
             }
             Some(_) => {} // hôte différent mais légitime (migration) → on repart sur le neuf
             None => {
                 if self.cell_summaries.len() >= MAX_CELLS {
+                    self.summary_stats.rej_full += 1;
                     return false; // table pleine : on borne la mémoire
                 }
             }
         }
+        self.summary_stats.accepted += 1;
         self.cell_summaries.insert(s.cell, s);
         true
     }

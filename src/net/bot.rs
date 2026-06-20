@@ -199,6 +199,12 @@ impl Bot {
         self.link.summary_perceived()
     }
 
+    /// Compteurs d'ingestion de résumé (D25, instrumentation) : pourquoi les résumés sont
+    /// acceptés/rejetés — pour trancher « la découverte ne livre pas » vs « D26 couche 1 rejette ».
+    pub(crate) fn summary_stats(&self) -> super::link::SummaryStats {
+        self.link.summary_stats
+    }
+
     /// Remet à zéro le compteur d'écoute (chap. 8.2b) : appelé au DÉBUT de la fenêtre de
     /// mesure, pour que les tiers focus/conscience ne reflètent QUE la fenêtre.
     pub(crate) fn reset_heard(&mut self) {
