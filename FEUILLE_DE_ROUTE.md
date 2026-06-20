@@ -66,14 +66,19 @@
 > forge un résumé pour n'importe quelle cellule, et un `ts = u64::MAX` ÉPINGLE le mensonge à vie (la
 > vraie info ne peut plus l'écraser — c'est le « verrou v65535 » de l'orbe, mais SANS le garde de 5.3).
 >
-> **H2 EN COURS (défrichage sur papier, règle 5) :** ✅ **D4+D5 DÉFRICHÉS (20 juin)** — retournés en
-> problème de MESURE, pas d'économie : « **parent par mesure du réel** » (capacité observée infalsifiable
-> + affectation locale + dégradation équitable ; réputation seulement vs tricheurs). A dégagé le **principe
-> directeur n°7** (« composer avec le réel : fait vs devinette → dériver ») + révélé 2 inélégances dans le
-> code (`weak` auto-déclaré `main.rs:126` ; parent = plus petit id `send.rs:123`). **PROCHAINE ACTION =
-> défricher D26** (résumé de cellule menteur/non authentifié, cf. doute ci-dessus — partage la même
-> « mesure vs confiance » que D4). Puis écrire/coder la **Phase B**. *Ne PAS construire d'outillage avant
-> d'avoir pensé le mécanisme.*
+> **✅ H2 DÉFRICHÉ (20 juin) — les 2 murs vus gratuitement sur le papier :**
+> - **D4+D5** retournés en problème de MESURE, pas d'économie : « **parent par mesure du réel** » (capacité
+>   observée infalsifiable + affectation locale + dégradation équitable ; réputation seulement vs tricheurs).
+> - **D26** (résumé menteur) en 2 couches : **(1)** authentifier le résumé (signer + `seq`/hôte + vérifier
+>   `émetteur==cell_host`) — quasi mécanique ; **(2)** corroborer (le vrai mur, même principe que D4).
+> - A dégagé le **principe directeur n°7** (« composer avec le réel : fait vs devinette → dériver ») et, via
+>   3 sous-agents, confirmé que **D26 est le SEUL paquet vraiment ouvert** (WELCOME/PUNCH/GOSSIP bornés) et que
+>   le vrai lot de « devinettes » à dériver ≈ **6** (focus/budget/relais) = **le même fix que D4**.
+> - Inélégances code notées : `weak` auto-déclaré [main.rs:126], parent = plus petit id [send.rs:123].
+>
+> **PROCHAINE ACTION = écrire/coder la PHASE B** (inclusivité), en commençant par le quasi-mécanique :
+> **couche 1 de D26** (authentifier le résumé) + **« parent par mesure du réel »** (qui dérive AUSSI le focus/
+> budget). *Petit pas, preuve d'abord : compile→test→sim→commit→push.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
@@ -422,6 +427,12 @@ modes `rendezvous | a | b | bot <nom> | attack <type> | sim <bots> <attaquants> 
    technique), pas « ça tient ». *Discriminateur :* « ce nombre est-il un fait, ou une devinette qui
    tient lieu de mesure ? ». Unifie D3 (lien faible), D4 (relais) et le plafond de focus (`MAX_NEIGHBORS`).
    → **Passe d'élégance** : à chaque chapitre, repasser les constantes au crible « fait vs devinette ».
+   ⚠ **Piège inverse (leçon de l'audit du 20 juin) :** ne PAS « mesurer » les constantes de RESSENTI
+   (`INTERP_DELAY`, `SMOOTH_TIME`, `MAX_WARP`…) — elles encodent la perception humaine / le standard netcode,
+   pas une mesure réseau ; les rendre dynamiques = sur-ingénierie. Un sous-agent a classé 83/124 constantes en
+   « devinettes » : FAUX. Le vrai lot à dériver du réel ≈ **6** — `SEND_BUDGET_HZ`, `MAX_NEIGHBORS`, `K_FOCUS`,
+   `MAX_FOCUS_DETAIL`/`MAX_AWARE`, `RELAY_RATE`/`MAX_RELAY_FANOUT` — tous des tailles de **focus/budget/relais**,
+   donc **le même fix que D4** (dériver de la capacité mesurée).
 
 ---
 
@@ -497,7 +508,7 @@ indiqué entre crochets `[ch. X]`.
 > | **D23** gossip = ampli DDoS | ✅ | 8.1b : prouvé par `attack gossip-flood` |
 > | **D24** foule visible plafonnée 64 | ✅ | 8.2c : rendu deux tiers, confirmé à l'écran |
 > | **D25** banc d'essai plafonné (~1500) ; « 55k » non mesuré DIRECTEMENT | 🟡 | invariant prouvé à 1000 + argument d'archi (budget capé) ; 5000+ = simulateur léger à bâtir (dette harnais) |
-> | **D26** agrégateur/parent MENTEUR (hôte de cellule qui ment sur sa région) | 🔴 | nouvelle surface ouverte par 8.3 ; corroboration multi-informateurs **à fermer AVANT Phase B** (ex-« 8.8 ») |
+> | **D26** agrégateur/résumé MENTEUR | 🟡 | DÉFRICHÉ en H2 : **couche 1** authentifier le résumé (signer + `seq`/hôte + émetteur==cell_host) ; **couche 2** corroboration (couplée D4). À CODER en tête de Phase B |
 >
 > **Les doutes 🔴 ouverts se rangent en chantiers — ça VALIDE le plan :**
 > - **Inclusivité** (D3, **D4**, D5 + **D26**) → **fin du ch.8, Phase B** *(prochain gros cap)*
@@ -811,20 +822,30 @@ foule dense, on VOIT bien plus que 64 (proches nets + lointains en imposteurs), 
 > aujourd'hui les pairs **connus** (dans `link.peers`), pas ceux dont on reçoit **vraiment** un
 > état récent. À resserrer au 8.2 (compter « entendus récemment ») pour ne pas se mentir.
 
-**D26 — L'AGRÉGATEUR (hôte de cellule / parent) peut MENTIR sur sa région.** 🔴 `[ch.8 Phase B — corroboration]`
+**D26 — L'AGRÉGATEUR (hôte de cellule / parent) peut MENTIR sur sa région.** 🟡 `[Phase B — DÉFRICHÉ 20 juin]`
 *Constat (nommé le 20 juin, ouvert par 8.3) :* depuis 8.3, un **hôte de cellule** produit le RÉSUMÉ de la foule de
 sa zone (combien, où) ; en Phase B, un **parent** agrégera et dégradera la foule pour ses protégés faibles. Or rien
-ne l'empêche de **CACHER des gens** (te rendre aveugle à une partie de la foule = éclipse douce) ou d'en **INVENTER**
-(fantômes). La signature prouve l'AUTHENTICITÉ d'un état individuel, pas l'HONNÊTETÉ d'un *résumé* (qui agrège des
-tiers). C'est **D5/D9 vus depuis la couche d'agrégation** — une surface NOUVELLE que la feuille renvoyait vaguement à
-« 8.8 ». *Pourquoi ça compte :* toute la Phase B (inclusivité) s'appuie sur des agrégateurs ; si on peut mentir
-dessus, on bâtit l'inclusivité sur du sable. *Atténué aujourd'hui :* un résumé est **CONSULTATIF, pas autoritaire**
-(deux hôtes en désaccord = deux flux, aucune corruption d'état) ; le coût Sybil/éclipse est déjà durci (ch.9). *Piste :*
-**corroboration multi-informateurs** — ne croire un résumé que s'il est recoupé par plusieurs sources indépendantes
-(diversité IP, comme 9.4b) ; détecter le « trou noir » (mes voisins ne confirment jamais ce que le parent prétend
-relayer → je change de parent, D5). *Vérif :* un hôte/parent qui cache ou invente >X % de sa cellule est détecté et
-contourné en N secondes ; un protégé derrière un parent menteur garde une perception corroborée. **À fermer EN TÊTE
-de Phase B, avant de s'appuyer sur les parents.**
+ne l'empêche de **CACHER des gens** (éclipse douce) ou d'en **INVENTER** (fantômes). La signature prouve l'AUTHENTICITÉ
+d'un état individuel, pas l'HONNÊTETÉ d'un *résumé* (qui agrège des tiers). *Atténué :* un résumé est CONSULTATIF, pas
+autoritaire (deux hôtes en désaccord = deux flux, aucune corruption d'état).
+*DÉFRICHÉ en H2 (20 juin, sous-agents + lecture du code) — DEUX couches :*
+- **Couche 1 — AUTHENTIFIER le résumé (mécanique, gros gain).** Aujourd'hui le résumé est le SEUL paquet
+  TOTALEMENT anonyme (`ingest_summary` [link.rs:479] ne vérifie que `ts` + `MAX_CELLS` — ni clé, ni sceau, ni
+  « est-ce l'hôte ? »). Fix = copier le modèle des états : l'hôte **embarque sa clé + SIGNE** ; la fraîcheur
+  devient un **`seq` par hôte** (l'anti-rejeu des états, qu'on a DÉJÀ) et NON l'horloge murale `ts` — attaquable,
+  et D13 = pas d'horloge commune → ⚠ le patron `MAX_ORB_VERSION_JUMP` de l'orbe NE se transplante PAS (il borne un
+  compteur monotone, pas une horloge). À l'ingestion : vérifier le sceau ET `émetteur == cell_host(cellule)`. Tue
+  la forge anonyme, le `count=0` qui efface, et l'épinglage `ts=MAX` (seul le vrai hôte produit un `seq` plus haut).
+  *Manque aussi : aucun rate-limit par source sur le résumé (le gossip en a un — à aligner).*
+- **Couche 2 — CORROBORER (le vrai mur, couplé à D4).** Un mensonge SIGNÉ reste un mensonge : l'hôte légitime peut
+  gonfler/cacher. Défense = ne croire un résumé que **recoupé** par ce qu'on perçoit en direct et/ou par K
+  observateurs indépendants (diversité IP, comme 9.4b) ; « trou noir » détecté → je change de parent (D5). C'est
+  « mesurer le réel plutôt que croire une déclaration » — le MÊME principe que D4 (n°7).
+*Audit de surface (sous-agents, 20 juin) :* parmi les paquets non signés (WELCOME, PUNCH, GOSSIP, CELL_SUMMARY),
+**seul le résumé est OUVERT** ; WELCOME (rendez-vous non fiable par conception, 6.1/D10), PUNCH et GOSSIP (déjà bornés
+8.1b/D23, PoW exigée sur les cartes) sont non-signés *à dessein* mais maîtrisés. *Vérif :* un hôte qui cache/invente
+>X % de sa cellule est détecté et contourné en N s. **Couche 1 = quasi mécanique (à coder en TÊTE de Phase B) ;
+couche 2 = le design à prouver.**
 
 ---
 
