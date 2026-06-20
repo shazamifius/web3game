@@ -90,6 +90,22 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE B (8.3★, 20 juin, supervisé) — l'union d'individus NE récupère PAS la perception ; la mesure
+  révèle que « perception » conflait DEUX notions.** *Fait :* échantillons porteurs d'**ID** (cell.rs ;
+  wire `KIND_CELL_SUMMARY` 8→40 o/échantillon — bot/bench uniquement, `PROTO_VERSION` inchangé → un
+  vieux résumé est rejeté PROPREMENT par taille non canonique, pas mal lu) ; mode `UNION=1` (accumule
+  les individus distincts vus, perception = |union| ; implique hôte relâché). **77 tests, 0 warning,
+  défaut intact.** *Résultat N=2000 :* taxe émetteur≠hôte **0 %** ✓, MAIS perception moy **139** (max
+  571) → **ne bat même pas la baseline (192)**. *Cause :* échantillon déterministe strié (≤16/cellule)
+  → l'union plafonne à ~`cellules×16` ; et « individus distincts » est **intrinsèquement O(N)** / borné
+  par l'échantillonnage. *Leçon (raffine 8.3★, important) :* « perception » = **(1) DENSITÉ** (combien,
+  doit ≈ N — c'est CE qui s'effondrait via la taxe ; un NOMBRE) **+ (2) ÉCHANTILLON** (quels visages —
+  borné LOD, à faire tourner). L'union ne mesure que (2) ; le mur n°1 d'origine était la (1). **PROCHAIN
+  (à décider ensemble) :** restaurer la DENSITÉ sous hôte relâché via un count/cellule NON-thrashant (ex.
+  garder le MAX count vu = proxy honnête de la densité corroborée) → mesurer si Σ counts ≈ N revient sans
+  la taxe ; la sécurité du count (anti-inflation) = soft + corroboration (étape C). L'échantillon tournant
+  (diversité) = un raffinement séparé pour le rendu LOD.
+
 - **ÉTAPE A (diagnostic 8.3★, 20 juin, supervisé) — la taxe hôte est RÉELLE et retirable, MAIS la
   relaxation naïve NE suffit PAS : l'UNION est le mécanisme porteur.** Drapeau `RELAX_HOST=1` (banc
   HONNÊTE, non sécurisé ; défaut absent → comportement prouvé intact, 77 tests, 0 warning). *Critère

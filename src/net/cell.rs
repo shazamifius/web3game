@@ -35,16 +35,16 @@
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
 use super::wire::{KIND_CELL_SUMMARY, PROTO_VERSION};
 
-/// Nombre MAX de positions représentatives dans un résumé. 16 × 8 o = 128 o de samples, +
-/// l'en-tête + la signature reste bien sous un datagramme. Borne le coût d'un résumé quelle que
-/// soit la taille de la foule.
+/// Nombre MAX de positions représentatives dans un résumé. 16 × 40 o (id+pos) = 640 o de samples,
+/// + l'en-tête + la signature reste sous un datagramme. Borne le coût d'un résumé quelle que soit
+/// la taille de la foule.
 pub(crate) const MAX_CELL_SAMPLES: usize = 16;
 
 // Décalages des champs dans le CORPS signé (avant la signature), calculés à la main pour bien
 // comprendre — même esprit que `message.rs`. La clé `host` est EMBARQUÉE (auto-certification) :
 // c'est elle qui sert à vérifier le sceau.
 //   [0] type | [1] version | [2..34] host (clé, 32 o) | [34..38] cell.0 | [38..42] cell.1
-//   | [42..46] count (u32) | [46..54] seq (u64) | [54] n_samples (u8) | [55..] samples (n×8 o)
+//   | [42..46] count (u32) | [46..54] seq (u64) | [54] n_samples (u8) | [55..] samples (n×40 o : id+x+z)
 //   puis | [..] signature (64 o) APRÈS le corps.
 const OFF_HOST: usize = 2;
 const OFF_CELL: usize = OFF_HOST + PUBKEY_LEN; // 34
@@ -53,8 +53,10 @@ const OFF_SEQ: usize = OFF_COUNT + 4; // 46
 const OFF_NSAMP: usize = OFF_SEQ + 8; // 54
 /// Longueur de l'en-tête du corps (tout sauf les échantillons et la signature) = 55 octets.
 const HEADER: usize = OFF_NSAMP + 1;
-/// Taille d'un échantillon : x (4) + z (4) = 8 octets.
-const SAMPLE_SIZE: usize = 8;
+/// Taille d'un échantillon : id (32) + x (4) + z (4) = 40 octets (chap. 8.3★ : l'ID rend
+/// l'échantillon auto-identifiant → l'ingestion peut UNIONNER des personnes distinctes au lieu
+/// d'écraser un résumé par cellule, ce qui « thrashait » sous découverte sparse).
+const SAMPLE_SIZE: usize = PUBKEY_LEN + 8;
 
 /// Le RÉSUMÉ d'une cellule, produit et SIGNÉ par son hôte (chap. 8.3 / D26-couche-1) : QUI EST LÀ
 /// (combien) et OÙ (quelques positions représentatives), à bas débit. Inonde un observateur d'UNE
@@ -72,8 +74,11 @@ pub(crate) struct CellSummary {
     /// VERBATIM. Ce n'est PLUS l'horloge murale `ts` (un `u64::MAX` épinglait le mensonge à vie) :
     /// un non-hôte ne peut pas forger ce `seq`, et un changement d'hôte légitime le remet à zéro.
     pub(crate) seq: u64,
-    /// Positions REPRÉSENTATIVES (≤ `MAX_CELL_SAMPLES`) — un échantillon réparti de la foule.
-    pub(crate) samples: Vec<(f32, f32)>,
+    /// Échantillon REPRÉSENTATIF (≤ `MAX_CELL_SAMPLES`) — `(id, x, z)` de quelques occupants. L'ID
+    /// (chap. 8.3★) rend chaque échantillon AUTO-IDENTIFIANT : l'ingestion peut alors UNIONNER les
+    /// personnes distinctes vues à travers tous les résumés reçus (perception = |union|), au lieu de
+    /// ne garder qu'un résumé par cellule (qui « thrashait » dès qu'on retirait l'élection d'hôte).
+    pub(crate) samples: Vec<(PeerId, f32, f32)>,
     /// SCEAU Ed25519 (64 o) du corps, apposé par l'hôte. Porté verbatim par les relais (jamais
     /// re-signé) → la copie fraîche de l'hôte bat les vieilles encore en vol sans qu'un relais
     /// puisse altérer le contenu. Zéros tant que le résumé n'est pas scellé (`sign_summary`).
@@ -88,11 +93,11 @@ pub(crate) struct CellSummary {
 pub(crate) fn build_cell_summary(
     cell: (i32, i32),
     host: PeerId,
-    occupants: &[(f32, f32)],
+    occupants: &[(PeerId, f32, f32)],
     seq: u64,
 ) -> CellSummary {
     let count = occupants.len() as u32;
-    let samples: Vec<(f32, f32)> = if occupants.len() <= MAX_CELL_SAMPLES {
+    let samples: Vec<(PeerId, f32, f32)> = if occupants.len() <= MAX_CELL_SAMPLES {
         occupants.to_vec()
     } else {
         // Pas régulier : on couvre toute la liste (échantillon réparti, pas les premiers).
@@ -116,7 +121,8 @@ fn encode_cell_summary_body(s: &CellSummary) -> Vec<u8> {
     buf.extend_from_slice(&s.count.to_le_bytes());
     buf.extend_from_slice(&s.seq.to_le_bytes());
     buf.push(n as u8);
-    for &(x, z) in s.samples.iter().take(n) {
+    for &(id, x, z) in s.samples.iter().take(n) {
+        buf.extend_from_slice(id.bytes());
         buf.extend_from_slice(&x.to_le_bytes());
         buf.extend_from_slice(&z.to_le_bytes());
     }
@@ -176,13 +182,17 @@ pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
     let mut samples = Vec::with_capacity(n);
     let mut o = HEADER;
     for _ in 0..n {
-        let x = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
-        let z = f32::from_le_bytes([buf[o + 4], buf[o + 5], buf[o + 6], buf[o + 7]]);
+        let mut idb = [0u8; PUBKEY_LEN];
+        idb.copy_from_slice(&buf[o..o + PUBKEY_LEN]);
+        let id = PeerId::from_bytes(idb);
+        let p = o + PUBKEY_LEN;
+        let x = f32::from_le_bytes([buf[p], buf[p + 1], buf[p + 2], buf[p + 3]]);
+        let z = f32::from_le_bytes([buf[p + 4], buf[p + 5], buf[p + 6], buf[p + 7]]);
         o += SAMPLE_SIZE;
         if !x.is_finite() || !z.is_finite() {
             return None; // un seul flottant non fini → rejet du résumé entier (forme préservée)
         }
-        samples.push((x, z));
+        samples.push((id, x, z));
     }
     let mut sig = [0u8; SIG_LEN];
     sig.copy_from_slice(&buf[body_len..body_len + SIG_LEN]);
@@ -201,7 +211,7 @@ mod tests {
     #[test]
     fn resume_signe_survit_a_l_aller_retour() {
         let identity = Identity::generate();
-        let mut s = build_cell_summary((-3, 7), identity.id(), &[(1.0, -2.0), (3.5, 4.0)], 12);
+        let mut s = build_cell_summary((-3, 7), identity.id(), &[(pid(1), 1.0, -2.0), (pid(2), 3.5, 4.0)], 12);
         s.count = 42;
         sign_summary(&mut s, &identity);
         let bytes = encode_cell_summary(&s);
@@ -215,19 +225,19 @@ mod tests {
     #[test]
     fn build_compte_tout_mais_echantillonne_reparti() {
         // 100 occupants alignés en x = 0,1,2,…99. Le résumé dit count=100 et n'en porte que 16.
-        let occ: Vec<(f32, f32)> = (0..100).map(|i| (i as f32, 0.0)).collect();
+        let occ: Vec<(PeerId, f32, f32)> = (0..100).map(|i| (pid(1), i as f32, 0.0)).collect();
         let s = build_cell_summary((0, 0), pid(1), &occ, 0);
         assert_eq!(s.count, 100);
         assert_eq!(s.samples.len(), MAX_CELL_SAMPLES);
         // Réparti : le 1er échantillon est au début, le dernier loin dans la foule (pas tous au début).
-        assert_eq!(s.samples[0], (0.0, 0.0));
-        assert!(s.samples.last().unwrap().0 >= 80.0); // couvre le fond de la foule
+        assert_eq!(s.samples[0], (pid(1), 0.0, 0.0));
+        assert!(s.samples.last().unwrap().1 >= 80.0); // x du dernier échantillon → couvre le fond de la foule
     }
 
     /// Petite cellule (≤ 16) : tout le monde est dans l'échantillon, count = taille.
     #[test]
     fn build_petite_cellule_prend_tout() {
-        let occ = vec![(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)];
+        let occ = vec![(pid(1), 1.0, 1.0), (pid(2), 2.0, 2.0), (pid(3), 3.0, 3.0)];
         let s = build_cell_summary((5, 5), pid(2), &occ, 0);
         assert_eq!(s.count, 3);
         assert_eq!(s.samples, occ);
@@ -238,7 +248,7 @@ mod tests {
     #[test]
     fn corps_altere_casse_le_sceau() {
         let identity = Identity::generate();
-        let mut s = build_cell_summary((1, 1), identity.id(), &[(1.0, 2.0)], 1);
+        let mut s = build_cell_summary((1, 1), identity.id(), &[(pid(1), 1.0, 2.0)], 1);
         s.count = 500;
         sign_summary(&mut s, &identity);
         let mut bytes = encode_cell_summary(&s);
@@ -253,7 +263,7 @@ mod tests {
     fn usurpation_d_hote_est_rejetee() {
         let victime = Identity::generate();
         let attaquant = Identity::generate();
-        let mut s = build_cell_summary((0, 0), victime.id(), &[(0.0, 0.0)], 1); // je PRÉTENDS être la victime…
+        let mut s = build_cell_summary((0, 0), victime.id(), &[(pid(1), 0.0, 0.0)], 1); // je PRÉTENDS être la victime…
         sign_summary(&mut s, &attaquant); // … mais je signe avec MA clé
         let recu = decode_cell_summary(&encode_cell_summary(&s)).expect("se décode");
         assert!(!summary_sig_ok(&recu)); // sceau vérifié contre la clé victime → ne colle pas
@@ -264,7 +274,7 @@ mod tests {
     #[test]
     fn taille_non_canonique_est_rejetee() {
         let identity = Identity::generate();
-        let mut s = build_cell_summary((1, 1), identity.id(), &[(1.0, 2.0), (3.0, 4.0)], 0);
+        let mut s = build_cell_summary((1, 1), identity.id(), &[(pid(1), 1.0, 2.0), (pid(2), 3.0, 4.0)], 0);
         sign_summary(&mut s, &identity);
         let mut bytes = encode_cell_summary(&s);
         bytes.truncate(bytes.len() - 3); // coupe la fin → taille non canonique
@@ -275,7 +285,7 @@ mod tests {
     #[test]
     fn decode_rejette_position_non_finie() {
         let identity = Identity::generate();
-        let mut s = build_cell_summary((0, 0), identity.id(), &[(f32::NAN, 0.0), (1.0, 2.0)], 0);
+        let mut s = build_cell_summary((0, 0), identity.id(), &[(pid(1), f32::NAN, 0.0), (pid(2), 1.0, 2.0)], 0);
         sign_summary(&mut s, &identity);
         assert_eq!(decode_cell_summary(&encode_cell_summary(&s)), None);
     }

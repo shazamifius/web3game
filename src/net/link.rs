@@ -84,6 +84,11 @@ pub struct NetLink {
     /// résumé que J'émets en tant qu'hôte. Joue pour le résumé le rôle que `seq` joue pour mes états
     /// — un anti-rejeu/anti-épinglage robuste, là où l'ancienne horloge murale `ts` était forgeable.
     pub(crate) summary_seq: u64,
+    /// UNION DE PERCEPTION (chap. 8.3★, étape B — actif sous `union_mode()`). Ensemble des personnes
+    /// DISTINCTES vues dans les échantillons de TOUS les résumés acceptés → perception = `|perceived|`.
+    /// Remplace le « 1 résumé/cellule (dernier) » qui thrashait sans élection d'hôte (mesuré étape A).
+    /// (Banc statique : pas de TTL ici ; l'éviction des partis = étape ultérieure, liée à D16.)
+    pub(crate) perceived: HashSet<PeerId>,
     /// INSTRUMENTATION (D25, banc — lecture seule, ne change AUCUNE décision). Compte POURQUOI les
     /// résumés de cellule sont acceptés/rejetés à l'ingestion, pour disambiguer « la découverte ne
     /// livre pas les résumés » (reçus ≈ 0) de « les résumés arrivent mais sont rejetés » (D26 couche 1
@@ -120,6 +125,17 @@ impl SummaryStats {
 pub(crate) fn relax_host_check() -> bool {
     static R: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *R.get_or_init(|| matches!(std::env::var("RELAX_HOST").as_deref(), Ok("1") | Ok("true")))
+}
+
+/// MODE UNION (étape B du redesign 8.3★, env `UNION=1`). Au lieu de garder UN résumé par cellule
+/// (dernier arrivé → « thrash » quand on retire l'élection d'hôte, mesuré à l'étape A), l'ingestion
+/// ACCUMULE les personnes DISTINCTES vues dans les échantillons (set `perceived`) → perception =
+/// |union|. Implique la relaxation de l'hôte (l'union se nourrit de TOUS les émetteurs). Sans
+/// signature par échantillon ici (étape C) : on ISOLE d'abord la récupération de perception sur le
+/// banc honnête. Le défaut (absent) laisse le comportement prouvé INTACT. Résolu une fois par processus.
+pub(crate) fn union_mode() -> bool {
+    static U: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *U.get_or_init(|| matches!(std::env::var("UNION").as_deref(), Ok("1") | Ok("true")))
 }
 
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
@@ -332,6 +348,7 @@ impl NetLink {
             focus: Vec::new(),
             cell_summaries: HashMap::new(),
             summary_seq: 0,
+            perceived: HashSet::new(),
             summary_stats: SummaryStats::default(),
             weak,
         }
@@ -569,10 +586,12 @@ impl NetLink {
             return None;
         }
         let my_cell = cell_of(me.0, me.1);
-        let mut occupants: Vec<(f32, f32)> = vec![me]; // moi, l'hôte, je suis dans ma cellule
+        // Occupants = (id, x, z). L'ID (chap. 8.3★) rend l'échantillon auto-identifiant → l'ingestion
+        // pourra UNIONNER les personnes distinctes au lieu d'écraser un résumé par cellule.
+        let mut occupants: Vec<(PeerId, f32, f32)> = vec![(my_id, me.0, me.1)]; // moi, l'hôte
         for (id, pos) in &self.peer_pos {
             if self.peers.contains_key(id) && cell_of(pos.0, pos.1) == my_cell {
-                occupants.push(*pos);
+                occupants.push((*id, pos.0, pos.1));
             }
         }
         // FRAÎCHEUR = mon compteur monotone (jamais l'horloge murale, forgeable) ; puis je SIGNE
@@ -598,15 +617,22 @@ impl NetLink {
     /// consultatif, cf. registre).
     pub(crate) fn ingest_summary(&mut self, s: CellSummary, me: (f32, f32), my_id: PeerId) -> bool {
         // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
-        // ÉTAPE A (diagnostic 8.3★) : `relax_host_check()` PEUT retirer ce contrôle pour MESURER si
-        // l'élection d'hôte est le mur de perception. ⚠ NON SÉCURISÉ (banc honnête) ; vrai fix = étape B.
-        if !relax_host_check() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
+        // ÉTAPE A/B (8.3★) : on retire ce contrôle sous `relax_host_check()` OU `union_mode()` (l'union se
+        // nourrit de TOUS les émetteurs). ⚠ NON SÉCURISÉ (banc honnête) ; la sécurité par échantillon = étape C.
+        if !relax_host_check() && !union_mode() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
             self.summary_stats.rej_host += 1; // instrumentation D25 (lecture seule)
             return false; // forge anonyme / cellule qu'il n'héberge pas
         }
         if !summary_sig_ok(&s) {
             self.summary_stats.rej_sig += 1;
             return false; // sceau invalide : contenu falsifié ou clé usurpée
+        }
+        // ÉTAPE B (8.3★) : sous UNION, on ACCUMULE les personnes distinctes vues (par id d'échantillon)
+        // → perception = |union|, robuste au « thrash » du dernier-arrivé. Idempotent (insertion de set).
+        if union_mode() {
+            for &(id, _x, _z) in &s.samples {
+                self.perceived.insert(id);
+            }
         }
         // 3) fraîcheur par hôte.
         match self.cell_summaries.get(&s.cell) {
@@ -635,7 +661,12 @@ impl NetLink {
     /// cellules. Si ≈ la taille de la foule à portée, l'invariant tient : on voit toute la foule via
     /// QUELQUES flux résumés (O(cellules)), pas N états au compte-gouttes 1/N de la conscience.
     pub(crate) fn summary_perceived(&self) -> u32 {
-        self.cell_summaries.values().map(|s| s.count).sum()
+        if union_mode() {
+            // Étape B (8.3★) : perception = nombre de personnes DISTINCTES vues dans les échantillons.
+            self.perceived.len() as u32
+        } else {
+            self.cell_summaries.values().map(|s| s.count).sum()
+        }
     }
 
     /// Score de fautes COURANT d'un pair (après décroissance) à l'instant `now` (chap. 9.3).
@@ -840,7 +871,7 @@ mod tests {
 
     /// Forge un résumé SIGNÉ par `host` pour `cell` (count/seq donnés), comme le ferait l'hôte.
     fn signe(host: &Identity, cell: (i32, i32), count: u32, seq: u64) -> CellSummary {
-        let mut s = build_cell_summary(cell, host.id(), &[(0.0, 0.0)], seq);
+        let mut s = build_cell_summary(cell, host.id(), &[(host.id(), 0.0, 0.0)], seq);
         s.count = count;
         sign_summary(&mut s, host);
         s
@@ -896,7 +927,7 @@ mod tests {
         let host = Identity::generate();
         let (mut link, me, my_id) = link_avec_hote_en_0_0(&host);
         let attaquant = Identity::generate();
-        let mut usurpe = build_cell_summary((0, 0), host.id(), &[(0.0, 0.0)], 7); // host = la victime…
+        let mut usurpe = build_cell_summary((0, 0), host.id(), &[(host.id(), 0.0, 0.0)], 7); // host = la victime…
         sign_summary(&mut usurpe, &attaquant); // … mais signé par l'attaquant
         assert!(!link.ingest_summary(usurpe, me, my_id)); // émetteur OK, sceau FAUX → rejet
     }
