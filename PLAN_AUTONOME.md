@@ -90,6 +90,25 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **TEST JITTER → (i) PROPRIÉTÉ DU PROTOCOLE + la taxe D26 CROÎT à l'échelle (20 juin, supervisé).**
+  *Test discriminant pré-enregistré (Règle 2) : jitter continu des horloges, opt-in `JITTER=1` (déphasage
+  CONSTANT par bot = horloges indépendantes, plus fidèle au réel = D13 ; défaut inchangé → harnais de
+  régression).* Critère écrit AVANT : si le plateau de bootstrap FOND avec jitter → (ii) artefact de
+  lockstep ; s'il PERSISTE → (i) propriété réelle.
+  - **Résultat N=5000 : trajectoire QUASI IDENTIQUE à la baseline** (t=10-40 plateau ~49→54 identique au
+    chiffre près ; décollage toujours t≈50 ; 262 à t=60, 477 à t=70). → **le plateau N'EST PAS un artefact
+    d'alignement de timers = (i) penche fort.** Le bootstrap met intrinsèquement ~45 s à atteindre la masse
+    critique de connaissance mutuelle à N=5000.
+  - **Caveat honnête :** le bus reste à livraison INSTANTANÉE/ORDONNÉE ; le jitter teste la PHASE des
+    horloges, pas l'asynchronisme de LIVRAISON → exonère le lockstep-timer, PAS la totalité du banc.
+  - **Bonus (décomposition des rejets à 5000) : 68 % émetteur≠hôte** (contre **26 % à N=1000**) → la taxe
+    **D26 couche 1 CROÎT avec l'échelle** (à découverte sparse, vues locales de l'hôte divergentes) = le
+    suspect initial de l'utilisateur CONFIRMÉ comme drag réel SECONDAIRE (le mur PRIMAIRE = lenteur du
+    bootstrap). *Limite : agrégat non fenêtré → le 68 % d'un run coupé à t=70 reflète surtout la phase
+    sparse ; le 26 % d'un run à 60 s reflète la phase convergée. Directionnel, pas strictement comparable.*
+  - **PROCHAINE : cascade-vs-N** (t de décollage à N=500/1000/2000/5000) — croît-il modérément (archi OK,
+    juste lent) ou explose-t-il (vrai mur d'échelle) ?
+
 - **DIAG INGESTION + TRAJECTOIRE (20 juin, supervisé) — le « deadlock à 5000 » était un ARTEFACT DE
   FENÊTRE TROP COURTE (Règle 3 appliquée 2×).** *Mesure choisie avec l'utilisateur : instrumenter les
   rejets de résumé + rejouer 5000 PLUS LONGTEMPS (120 s SIM vs 25 s avant).* Instrumentation ADDITIVE,

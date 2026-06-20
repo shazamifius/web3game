@@ -198,6 +198,18 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     //   phase (vs les threads naturellement décalés du vrai `crowd`), ce qui empêchait le bootstrap
     //   mutuel du perçage à grand N (deadlock N≥700). Décalage harnais-only, plus fidèle au réel.
     const JOIN_SPREAD: u64 = 20;
+    // JITTER CONTINU OPT-IN (D25, test (i) protocole vs (ii) lockstep — env `JITTER=1`). Donne à chaque
+    // bot un DÉPHASAGE D'HORLOGE CONSTANT propre (réparti ~[0,1s) par un hash déterministe de l'index)
+    // ajouté au `now` qu'il voit. Ses timers périodiques (gossip/émission) ne se ré-alignent JAMAIS,
+    // contrairement au lockstep du banc — c'est plus FIDÈLE au réel (horloges indépendantes = D13),
+    // PAS un tuning : on ne change pas dt (l'échelle de temps), seulement la PHASE. Défaut = 0 (binaire
+    // identique → harnais de régression). Si le plateau de bootstrap fond avec jitter → il était un
+    // artefact de lockstep ; s'il persiste → propriété réelle du protocole à l'échelle.
+    let jitter = matches!(std::env::var("JITTER").as_deref(), Ok("1") | Ok("true"));
+    let phase_off = |idx: usize| -> f32 {
+        if jitter { (idx.wrapping_mul(2_654_435_761) % 1000) as f32 / 1000.0 } else { 0.0 }
+    };
+    println!("  (jitter continu des horloges : {})", if jitter { "ON (test (i)/(ii))" } else { "OFF (baseline)" });
     // INSTANTANÉ PÉRIODIQUE (D25, instrumentation) : toutes les ~10 s SIM, on imprime la TRAJECTOIRE
     // (pairs connus, trous ouverts, perception). Tranche « convergence LENTE » (ça monte) de
     // « DEADLOCK » (plat) en UN seul run — lecture seule, ne change rien au protocole.
@@ -206,7 +218,7 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
         rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
         for (idx, bot) in bots.iter_mut().enumerate() {
             if tick >= idx as u64 % JOIN_SPREAD {
-                bot.step(dt, now);
+                bot.step(dt, now + phase_off(idx));
             }
         }
         now += dt;
