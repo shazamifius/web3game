@@ -22,8 +22,15 @@
 //!
 //! Lancement :  cargo run -- coopsim [nb_bots] [secondes]
 
+use super::aoi::{dist2, keep_nearest, within_radius, MAX_NEIGHBORS};
 use super::bot::Bot;
+use super::control::{decode_hello, encode_welcome};
+use super::crypto::{pow_bits, PeerId};
 use super::rendezvous::run_rendezvous;
+use super::transport::{new_bus, Socket};
+use super::wire::RENDEZVOUS_PORT;
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -106,4 +113,103 @@ pub fn run_coopsim(n_bots: usize, secs: u64) {
     } else {
         println!("⚠ Pas de convergence : rallonge `secondes`, ou le rendez-vous n'a pas amorcé.");
     }
+}
+
+/// Un RENDEZ-VOUS minimal sur BUS mémoire (dette D25) : il RÉUTILISE les vraies fonctions de décision
+/// du rendez-vous UDP (`decode_hello`, PoW, AoI `keep_nearest`, `encode_welcome`) ; seule
+/// l'ORCHESTRATION est locale.
+/// ⚠ BUS_DOUTE — cette orchestration DUPLIQUE celle de `rendezvous.rs` (risque de divergence D2 connu).
+/// Les DÉCISIONS sont partagées, mais si on durcit le vrai rendez-vous (ex. rate-limit T1.2 / éviction),
+/// ce banc ne le reflète PAS (il n'a ni attaquant ni client mort). À terme : extraire un cœur commun.
+struct BusRendezvous {
+    socket: Socket,
+    clients: HashMap<SocketAddr, (PeerId, (f32, f32))>,
+    hue: u16,
+}
+
+impl BusRendezvous {
+    /// Traite les HELLO reçus ce tick et renvoie à chacun son WELCOME (roster des plus proches).
+    fn step(&mut self) {
+        for (from, bytes) in self.socket.poll() {
+            let Some((px, pz, id)) = decode_hello(&bytes) else {
+                continue;
+            };
+            if !id.has_pow(pow_bits()) {
+                continue; // même garde PoW que le vrai rendez-vous
+            }
+            let pos = (px, pz);
+            self.clients.insert(from, (id, pos));
+            // Voisinage borné : les MAX_NEIGHBORS plus proches dans le rayon (mêmes helpers AoI).
+            let cands: Vec<((PeerId, SocketAddr), f32)> = self
+                .clients
+                .iter()
+                .filter(|(a, (_, p))| **a != from && within_radius(*p, pos))
+                .map(|(a, (i, p))| ((*i, *a), dist2(*p, pos)))
+                .collect();
+            let roster = keep_nearest(cands, MAX_NEIGHBORS);
+            let _ = self.socket.send_to(from, &encode_welcome(self.hue, &roster));
+        }
+    }
+}
+
+/// Le BANC BUS MÉMOIRE (dette D25, T0.2-bis) : N nœuds dans UN thread, reliés par le BUS synchrone
+/// (`transport::Socket::bus`) au lieu de l'UDP. Comme la livraison est instantanée et déterministe,
+/// on avance le temps de simulation par un **dt FIXE sans `sleep`** → `secs` SIM-secondes valent
+/// `secs/dt` ticks QUEL QUE SOIT le temps mural. C'est ce qui corrige l'infidélité de `coopsim` (T0.2,
+/// où un thread sérialisant N nœuds dilatait le temps réel). But : mesurer DIRECTEMENT l'échelle 5k-50k.
+///
+/// ⚠ BUS_DOUTE — réseau PARFAIT (0 latence, 0 perte, ordre strict) : ce banc mesure l'ÉCHELLE
+/// (perception/débit ∝ N), PAS le réalisme réseau (= rôle de `sim` + `netem`). À VALIDER d'abord par
+/// `coopsim-bus N` ≈ `crowd N` aux mêmes N « threadables » (~1000) AVANT toute extrapolation (T0.2-bis).
+pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
+    println!("=== BANC BUS MÉMOIRE (D25) : {n_bots} bots, {secs}s SIM, dt FIXE, 0 réseau OS ===");
+    println!("(livraison synchrone en mémoire → temps-sim découplé du temps mural ; le chemin UDP réel");
+    println!(" reste intact — c'est `sim`/`crowd` qui le mesure. ⚠ réseau PARFAIT : mesure l'ÉCHELLE, pas le réseau)");
+
+    let bus = new_bus();
+    let rv_addr: SocketAddr = SocketAddr::from(([127, 0, 0, 1], RENDEZVOUS_PORT));
+    let mut rv = BusRendezvous { socket: Socket::bus(rv_addr, bus.clone()), clients: HashMap::new(), hue: 200 };
+
+    let t_build = Instant::now();
+    let mut bots: Vec<Bot> = Vec::with_capacity(n_bots);
+    for i in 0..n_bots {
+        let phase = i as f32 * 0.37; // étale la « foule », comme `run_sim`
+        // ⚠ BUS_DOUTE — adresse SYNTHÉTIQUE unique (clé d'aiguillage du bus, pas une vraie route) ;
+        //   `10_000 + i` en u16 → plafonne vers ~55k bots avant collision/débordement (à élargir si besoin).
+        let addr = SocketAddr::from(([127, 0, 0, 1], 10_000u16.wrapping_add(i as u16)));
+        let socket = Socket::bus(addr, bus.clone());
+        bots.push(Bot::new_on(format!("b{i}"), false, phase, socket, rv_addr));
+    }
+    println!("  {} nœuds prêts (minage + endpoints bus) en {:.1}s.", bots.len(), t_build.elapsed().as_secs_f32());
+    if bots.is_empty() {
+        println!("⚠ Aucun nœud créé.");
+        return;
+    }
+
+    // BOUCLE À dt FIXE, SANS `sleep` : c'est ICI que le temps-sim se découple du temps mural.
+    let dt = 0.05_f32;
+    let ticks = (secs as f32 / dt) as u64;
+    let up0: u64 = bots.iter().map(|b| b.bytes_up()).sum();
+    let down0: u64 = bots.iter().map(|b| b.bytes_down()).sum();
+    let wall = Instant::now();
+    let mut now = 0.0_f32;
+    for _ in 0..ticks {
+        rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
+        for bot in bots.iter_mut() {
+            bot.step(dt, now);
+        }
+        now += dt;
+    }
+    let wall_s = wall.elapsed().as_secs_f32();
+
+    // Bilan — MÊMES métriques que `crowd` (perception par résumé, débit/nœud) → comparable (T0.2-bis).
+    let n = bots.len() as f32;
+    let avg_summary = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / n;
+    let max_summary = bots.iter().map(|b| b.summary_perceived()).max().unwrap_or(0);
+    let up = bots.iter().map(|b| b.bytes_up()).sum::<u64>().saturating_sub(up0) as f32;
+    let down = bots.iter().map(|b| b.bytes_down()).sum::<u64>().saturating_sub(down0) as f32;
+    println!("-------- BANC BUS : {ticks} ticks = {secs}s SIM joués en {wall_s:.1}s mural --------");
+    println!("Perception par RÉSUMÉ : moy {avg_summary:.0}, max {max_summary} occupants via 1 flux (foule {})", bots.len());
+    println!("Débit par nœud        : ↑{:.1} / ↓{:.1} Ko/s", up / 1000.0 / n / secs as f32, down / 1000.0 / n / secs as f32);
+    println!("=> T0.2-bis : compare à `crowd {}`. Si proche → banc bus FIDÈLE → extrapolation 5k-50k permise.", bots.len());
 }

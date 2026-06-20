@@ -106,7 +106,26 @@ impl Bot {
     /// `phase` décale la position de départ de chaque nœud (pour étaler la « foule »).
     pub(crate) fn new(label: impl Into<String>, verbose: bool, phase: f32) -> Option<Bot> {
         let link = NetLink::new(random_color(), false).ok()?;
-        Some(Bot {
+        Some(Bot::from_link(label, verbose, phase, link))
+    }
+
+    /// Crée un bot sur un `NetLink` DÉJÀ construit (banc bus mémoire, dette D25) : même bot que `new`,
+    /// mais la prise/le rendez-vous viennent du bus. Réservé à `coopsim` sur bus.
+    pub(crate) fn new_on(
+        label: impl Into<String>,
+        verbose: bool,
+        phase: f32,
+        socket: super::transport::Socket,
+        rendezvous: std::net::SocketAddr,
+    ) -> Bot {
+        let link = NetLink::new_on(socket, rendezvous, random_color(), false);
+        Bot::from_link(label, verbose, phase, link)
+    }
+
+    /// Assemble un `Bot` autour d'un `NetLink` (anti-divergence D2 : UNE construction, partagée par
+    /// `new` (UDP) et `new_on` (bus)). C'est le bot HONNÊTE complet — il ne dépend en rien du backend.
+    fn from_link(label: impl Into<String>, verbose: bool, phase: f32, link: NetLink) -> Bot {
+        Bot {
             label: label.into(),
             verbose,
             link,
@@ -132,7 +151,7 @@ impl Bot {
             accepted: 0,
             rejected: 0,
             relayed: 0,
-        })
+        }
     }
 
     pub(crate) fn neighbors(&self) -> usize {

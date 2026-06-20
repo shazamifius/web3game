@@ -82,6 +82,15 @@ fn main() {
         return;
     }
 
+    // `cargo run -- coopsim-bus <N> [secondes]`  banc BUS MÉMOIRE (dette D25) : N nœuds reliés
+    // par un bus synchrone, dt fixe sans sleep → temps-sim découplé du mural, pour viser 5k-50k.
+    if mode == Some("coopsim-bus") {
+        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+        net::run_coopsim_bus(n, secs);
+        return;
+    }
+
     // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
     // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
     if mode == Some("nat-test") {

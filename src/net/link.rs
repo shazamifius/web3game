@@ -258,7 +258,27 @@ impl NetLink {
             rendezvous,
             if weak { " (faible upload : via un parent)" } else { "" }
         );
-        Ok(NetLink {
+        Ok(Self::assemble(socket, rendezvous, color, weak, identity))
+    }
+
+    /// Construit un `NetLink` sur une PRISE et un RENDEZ-VOUS donnés (banc bus mémoire, dette D25).
+    /// Identité ÉPHÉMÈRE comme `new` (jamais de fichier). Réservé au banc léger `coopsim` sur bus :
+    /// le jeu/`sim` passent toujours par `new`/`new_persistent` (UDP réel). Aucun affichage.
+    /// ⚠ BUS_DOUTE — on réutilise `assemble` (même état que le vrai client) → la SEULE différence
+    /// avec un nœud UDP est la prise sous-jacente ; à confirmer qu'aucun comportement ne dépend
+    /// d'une vraie adresse routable (jusqu'ici tout passe par `peers`/`rendezvous`, pas l'OS).
+    pub(crate) fn new_on(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), weak: bool) -> NetLink {
+        #[cfg(test)]
+        let identity = Identity::generate();
+        #[cfg(not(test))]
+        let identity = Identity::generate_pow(pow_bits());
+        Self::assemble(socket, rendezvous, color, weak, identity)
+    }
+
+    /// Assemble l'état d'un `NetLink` à partir de ses briques (anti-divergence D2 : UNE seule
+    /// construction, partagée par `with_identity` (UDP) et `new_on` (bus)).
+    fn assemble(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), weak: bool, identity: Identity) -> NetLink {
+        NetLink {
             socket,
             rendezvous,
             my_id: None,
@@ -278,7 +298,7 @@ impl NetLink {
             cell_summaries: HashMap::new(),
             summary_seq: 0,
             weak,
-        })
+        }
     }
 
     /// APPREND un pair depuis une source CORROBORÉE (chap. 8.1) : le WELCOME (amorçage par

@@ -74,6 +74,18 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **B1 ✅ infra / B2 ⚠ harnais (20 juin, périmètre ÉLARGI par l'utilisateur : bus mémoire autorisé).**
+  *Fait, SÛR* : backend **bus mémoire** sur `transport::Socket` (enum `Udp`/`Bus`, routeur partagé
+  `Arc<Mutex>`), **strictement additif** — chemin UDP byte-pour-byte intact ; constructeurs `NetLink::new_on`
+  / `Bot::new_on` (via `assemble`/`from_link`, anti-divergence D2) ; banc `coopsim-bus` à **dt FIXE sans
+  sleep** (rendez-vous bus réutilisant les vraies fonctions de décision). **77 tests, 0 warning, UDP intact.**
+  Toutes les incertitudes balisées `BUS_DOUTE` dans le code (`grep -rn BUS_DOUTE src/`).
+  *MAIS — T0.2-bis ÉCHOUE (à corriger)* : `coopsim-bus 30` = 29/30 (✅, 10 s SIM en 1,8 s mural → le
+  découplage temps marche !), mais `coopsim-bus 1000` = **perception 0** (réf `crowd 1000` = 454) + débit
+  effondré (2,5 vs ~37 Ko/s). perception 0 ⟺ **aucun trou ouvert** ⟺ la DÉCOUVERTE/le PERÇAGE ne
+  convergent pas à l'échelle dans le HARNAIS bus (le protocole est identique → bug d'orchestration, pas de
+  protocole). **→ banc bus PAS encore validé : NE PAS extrapoler.** Prochain pas = localiser/corriger ce bug.
+
 - **T1.3 ✋ (20 juin) — D18 speed-hack : STOP au PAPIER (risque rustine), escaladé. FILE SÛRE ÉPUISÉE.**
   `move_plausible` est un contrôle PAR PAS (`dist ≤ MAX_SPEED·dt + SLACK`). Le « speed-hack grossier »
   est le cas SOUTENU : rester sous la borne à chaque pas mais la tenir en continu (~30 m/s = 3× un
