@@ -84,7 +84,18 @@
   découplage temps marche !), mais `coopsim-bus 1000` = **perception 0** (réf `crowd 1000` = 454) + débit
   effondré (2,5 vs ~37 Ko/s). perception 0 ⟺ **aucun trou ouvert** ⟺ la DÉCOUVERTE/le PERÇAGE ne
   convergent pas à l'échelle dans le HARNAIS bus (le protocole est identique → bug d'orchestration, pas de
-  protocole). **→ banc bus PAS encore validé : NE PAS extrapoler.** Prochain pas = localiser/corriger ce bug.
+  protocole). **→ banc bus PAS encore validé : NE PAS extrapoler.**
+  **DIAGNOSTIC PRÉCIS (localisé, 20 juin) — falaise nette entre N=600 (✅ perception ∝ N, débit plat ~44)
+  et N≥700 (perception 0, chiffres IDENTIQUES à 800 et 1000 = DEADLOCK, pas convergence lente) :**
+  à N≥700 la découverte marche (≈44 pairs connus) MAIS aucun trou ne s'ouvre. Mécanisme : un trou ne
+  s'ouvre que si le pair **perce EN RETOUR** → il faut une connaissance **MUTUELLE** ; or le rendez-vous ne
+  donne que les **32 plus proches** (rosters ASYMÉTRIQUES à grand N) et, le banc bus steppant tous les bots
+  en **LOCKSTEP** (timers identiques, à l'inverse des threads décalés du vrai `crowd`), le gossip n'a pas le
+  temps de rendre la connaissance mutuelle avant `PUNCH_GIVEUP=40` essais → **deadlock de bootstrap**.
+  *Pistes (à valider AVEC l'utilisateur — fix à l'aveugle = risque rustine) :* (a) DÉCALER les timers des
+  bots du banc (briser le lockstep, imiter le vrai `crowd`) ; (b) au reçu d'un PUNCH d'un INCONNU,
+  apprendre l'émetteur + percer en retour (rendrait le bootstrap symétrique — mais touche `bot.rs`/protocole
+  → supervisé). **Banc bus à reprendre ICI.** Tout le reste (backend bus, UDP, 77 tests) est SÛR et acquis.
 
 - **T1.3 ✋ (20 juin) — D18 speed-hack : STOP au PAPIER (risque rustine), escaladé. FILE SÛRE ÉPUISÉE.**
   `move_plausible` est un contrôle PAR PAS (`dist ≤ MAX_SPEED·dt + SLACK`). Le « speed-hack grossier »

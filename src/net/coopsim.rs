@@ -204,11 +204,13 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
 
     // Bilan — MÊMES métriques que `crowd` (perception par résumé, débit/nœud) → comparable (T0.2-bis).
     let n = bots.len() as f32;
+    let avg_neighbors = bots.iter().map(|b| b.neighbors() as f32).sum::<f32>() / n;
     let avg_summary = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / n;
     let max_summary = bots.iter().map(|b| b.summary_perceived()).max().unwrap_or(0);
     let up = bots.iter().map(|b| b.bytes_up()).sum::<u64>().saturating_sub(up0) as f32;
     let down = bots.iter().map(|b| b.bytes_down()).sum::<u64>().saturating_sub(down0) as f32;
     println!("-------- BANC BUS : {ticks} ticks = {secs}s SIM joués en {wall_s:.1}s mural --------");
+    println!("Pairs CONNUS moyen    : {avg_neighbors:.1}/nœud (si ~0 à grand N → la DÉCOUVERTE échoue, pas les résumés)");
     println!("Perception par RÉSUMÉ : moy {avg_summary:.0}, max {max_summary} occupants via 1 flux (foule {})", bots.len());
     println!("Débit par nœud        : ↑{:.1} / ↓{:.1} Ko/s", up / 1000.0 / n / secs as f32, down / 1000.0 / n / secs as f32);
     println!("=> T0.2-bis : compare à `crowd {}`. Si proche → banc bus FIDÈLE → extrapolation 5k-50k permise.", bots.len());
