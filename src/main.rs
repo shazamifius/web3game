@@ -73,6 +73,15 @@ fn main() {
         return;
     }
 
+    // `cargo run -- coopsim <N> [secondes]`  lance N nœuds dans UN thread coopératif
+    // (banc léger D25 : pas d'OS-thread/bot) pour mesurer la foule au-delà de ~1500.
+    if mode == Some("coopsim") {
+        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+        net::run_coopsim(n, secs);
+        return;
+    }
+
     // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
     // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
     if mode == Some("nat-test") {

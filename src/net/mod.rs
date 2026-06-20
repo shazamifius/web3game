@@ -35,6 +35,7 @@ mod attack;
 mod bot;
 mod cell;
 mod control;
+mod coopsim;
 mod crypto;
 mod demo;
 mod gossip;
@@ -54,6 +55,7 @@ mod wire;
 // L'API publique du module réseau, utilisée par le reste du jeu (main, player).
 pub use attack::run_attack;
 pub use bot::run_bot;
+pub use coopsim::run_coopsim;
 pub use demo::run_demo;
 pub use link::NetLink;
 pub use natdemo::run_nat_test;

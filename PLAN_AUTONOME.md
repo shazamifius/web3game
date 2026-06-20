@@ -74,9 +74,17 @@
 ---
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
-*(vide pour l'instant — se remplit dès le premier réveil autonome)*
 
-- _(rien encore)_
+- **T0.1 ✅ (20 juin) — squelette du banc coopératif.** *Menace* : `sim`/`crowd` = un OS-thread +
+  un `thread::sleep` PAR bot → plafond ~1500 (sur-souscription des cœurs), « 55K » jamais mesuré.
+  *Fix* : nouveau `src/net/coopsim.rs` + sous-commande `coopsim` — N bots steppés dans UNE boucle,
+  UN seul thread, UN sleep/tick (sockets UDP réelles sur `lo` conservées → pas de triche protocole).
+  Strictement ADDITIF (cœur intouché : transport/link/bot lus seulement ; main.rs/mod.rs = wiring).
+  *Preuve* : `POW_BITS=8 coopsim 30 12` → voisinage 29/32, **54 374 états acceptés** (échange
+  bout-en-bout), perception max 30/30 via 1 flux. 73 tests, 0 warning.
+  *NE fait PAS* : (1) pas de bus mémoire → reste sur UDP/lo ; si le mur est l'UDP avant 50k, le bus
+  (qui toucherait le cœur) ira en FILE UTILISATEUR. (2) **Fidélité pas prouvée** → bloquant T0.2
+  AVANT toute extrapolation.
 
 ---
 
