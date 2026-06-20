@@ -106,7 +106,26 @@ impl Bot {
     /// `phase` décale la position de départ de chaque nœud (pour étaler la « foule »).
     pub(crate) fn new(label: impl Into<String>, verbose: bool, phase: f32) -> Option<Bot> {
         let link = NetLink::new(random_color(), false).ok()?;
-        Some(Bot {
+        Some(Bot::from_link(label, verbose, phase, link))
+    }
+
+    /// Crée un bot sur un `NetLink` DÉJÀ construit (banc bus mémoire, dette D25) : même bot que `new`,
+    /// mais la prise/le rendez-vous viennent du bus. Réservé à `coopsim` sur bus.
+    pub(crate) fn new_on(
+        label: impl Into<String>,
+        verbose: bool,
+        phase: f32,
+        socket: super::transport::Socket,
+        rendezvous: std::net::SocketAddr,
+    ) -> Bot {
+        let link = NetLink::new_on(socket, rendezvous, random_color(), false);
+        Bot::from_link(label, verbose, phase, link)
+    }
+
+    /// Assemble un `Bot` autour d'un `NetLink` (anti-divergence D2 : UNE construction, partagée par
+    /// `new` (UDP) et `new_on` (bus)). C'est le bot HONNÊTE complet — il ne dépend en rien du backend.
+    fn from_link(label: impl Into<String>, verbose: bool, phase: f32, link: NetLink) -> Bot {
+        Bot {
             label: label.into(),
             verbose,
             link,
@@ -132,11 +151,22 @@ impl Bot {
             accepted: 0,
             rejected: 0,
             relayed: 0,
-        })
+        }
     }
 
     pub(crate) fn neighbors(&self) -> usize {
         self.link.peers.len()
+    }
+
+    /// Mon identité (clé), si déjà connue (après le 1er WELCOME). Pour instrumenter le graphe (D25).
+    pub(crate) fn id(&self) -> Option<PeerId> {
+        self.link.my_id
+    }
+
+    /// Les pairs vers qui mon trou est OUVERT (= j'ai reçu leur PUNCH → je peux leur relayer états/
+    /// résumés). C'est l'ARÊTE du graphe de communication réel : sert au diagnostic de percolation (D25).
+    pub(crate) fn open_holes(&self) -> Vec<PeerId> {
+        self.holes.iter().filter(|&(_, &open)| open).map(|(id, _)| *id).collect()
     }
     pub(crate) fn accepted(&self) -> u64 {
         self.accepted
@@ -167,6 +197,12 @@ impl Bot {
     /// ≈ taille de la foule ⇒ l'invariant tient (toute la foule via quelques flux, pas N états).
     pub(crate) fn summary_perceived(&self) -> u32 {
         self.link.summary_perceived()
+    }
+
+    /// Compteurs d'ingestion de résumé (D25, instrumentation) : pourquoi les résumés sont
+    /// acceptés/rejetés — pour trancher « la découverte ne livre pas » vs « D26 couche 1 rejette ».
+    pub(crate) fn summary_stats(&self) -> super::link::SummaryStats {
+        self.link.summary_stats
     }
 
     /// Remet à zéro le compteur d'écoute (chap. 8.2b) : appelé au DÉBUT de la fenêtre de

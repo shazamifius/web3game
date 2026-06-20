@@ -1306,6 +1306,86 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
   **Preuve :** à `crowd 500` puis `5000`, couverture ~100 % et débit ↓ **plat** (ne croît pas
   avec N) ; on rejoue 8.0 et on montre la courbe couverture(N) ≈ 100 % à débit constant.
 
+> ### ⚙ REDESIGN 8.3★ — PERCEPTION AUTO-CERTIFIANTE (le chef de cellule RETIRÉ) — écrit le 20 juin 2026 (PAPIER, zéro code)
+> *Décidé avec l'utilisateur après la passe de mesure du banc bus (cascade-vs-N). On NE patche PAS le contrôle
+> d'hôte de D26 : on retire le besoin de chef. À CHALLENGER ensemble avant de coder ; la mesure tranchera.*
+>
+> **CE QUE LA MESURE A ÉTABLI (banc bus, 20 juin).** Deux murs DISTINCTS de la perception à l'échelle :
+> - **Mur n°1 (DOMINANT) — la taxe `émetteur≠hôte` de D26 couche 1.** `ingest_summary` n'accepte un résumé que
+>   si l'émetteur == `cell_host(cell)` = **le plus petit id connu DANS la cellule** (une *minimalité*). Or à grand
+>   N chaque nœud connaît un sous-ensemble DIFFÉRENT → vues de l'hôte DIVERGENTES → rejet de résumés pourtant
+>   légitimes. Mesuré (fenêtres ~45-55 s) : taxe **10 % (N=500) → 24 % (1000) → 61 % (2000) → 68 % (5000)** ;
+>   perception/N s'effondre **91 % → 64 % → 10 %**. *C'est le suspect initial de l'utilisateur, CONFIRMÉ.*
+> - **Mur n°2 (secondaire, orthogonal) — stagnation de découverte au bootstrap**, seulement à ~5000 (~49 pairs
+>   pendant ~40 s puis cascade), robuste au jitter d'horloges → propriété réelle du protocole, pas un artefact de
+>   banc. **NON traité par ce redesign** (il vise la perception, pas la découverte).
+>
+> **LA FAUTE D'ÉLÉGANCE D'ORIGINE.** On a emprunté à l'ORBE son modèle d'**autorité par chef unique élu** (plus
+> petit id, déterministe). Pour l'orbe c'est *nécessaire* (un maître doit trancher la physique, sinon l'état se
+> corrompt). Pour la PERCEPTION il n'y a **rien à trancher** : voir une foule est un **constat**, pas un acte
+> d'autorité. On a donc importé un problème de **consensus sur un chef sous vue partielle** — intrinsèquement
+> view-dépendant — là où il n'en fallait pas. La taxe 10→68 % EST cette view-dépendance. Aucune rustine (fenêtre
+> d'hôtes, K plus petits ids) ne guérit la cause ; il faut **retirer le besoin de chef**.
+>
+> **LE PRINCIPE ÉLÉGANT — preuve, pas permission (le keystone du projet, un cran plus haut).**
+> - **6.1** : l'identité ne dépend pas d'un annuaire de confiance, elle **se prouve** (id = clé).
+> - **9.4b** : on ne croit pas une accusation sur parole, on exige de la **corroboration** (diversité d'IP).
+> - **8.3★** : un résumé de cellule n'est pas « la parole d'un chef », c'est un **paquet de PREUVES** —
+>   un échantillon de **positions SIGNÉES** `(id, pos, seq)` (auto-certifiantes, comme un état joueur). On ne
+>   vérifie plus *QUI* envoie (l'émetteur n'est qu'un **porteur d'octets** : « Own ≠ Relais » du README), on
+>   vérifie **les signatures dedans**. *C'est aussi le principe n°7 (mesurer le réel > croire une déclaration).*
+>
+> **LE MODÈLE (à challenger).**
+> - Un résumé = `cell` + **K échantillons signés** `(id, x, z, seq, sceau)` (K borné, ~8) + un **indice de
+>   densité** `count` (MOU, non autoritaire). **N'importe quel nœud** peut agréger les états signés qu'il a reçus
+>   et en relayer un sous-ensemble. Plus d'élection, plus de `cell_host` à l'ingestion.
+> - À la réception : pour chaque échantillon, **vérifier le sceau** (auto-certifiant) + **fraîcheur par id**
+>   (`accept_seq`, qu'on a déjà) + **TTL** (D16, qu'on a déjà). On **UNIONNE** les échantillons vérifiés reçus de
+>   **plusieurs relayeurs indépendants** (diversité /24, comme 9.4b).
+> - **Perception** = `|union des gens signés vérifiés, récents, dans la région|` (l'ensemble des « visages » sûrs)
+>   **+** la densité molle corroborée (la « marée » en nombre, pour le LOD lointain).
+>
+> **POURQUOI ÇA DISSOUT LES DEUX MURS DE PERCEPTION (pas patche : dissout).**
+> - **Plus de chef → plus de vue divergente → la taxe `émetteur≠hôte` DISPARAÎT** (mur n°1 supprimé).
+> - **Inventer des fantômes = IMPOSSIBLE** : chaque personne du résumé porte SA signature (on ne montre que du réel).
+> - **Gonfler le compte = IMPOSSIBLE** si la perception se compte sur les échantillons VÉRIFIÉS (pas sur le `count`).
+> - **Cacher des gens (éclipse douce) = BORNÉ** : l'**union** d'évidence signée est *monotone* — un trou-noir peut
+>   OMETTRE, jamais retrancher à l'union des autres sources. → **la couche 2 (corroboration) est résolue PAR
+>   CONSTRUCTION**, dans le même geste. *(D26 couche 1 + couche 2 fusionnées ; le concept « hôte de cellule
+>   autoritaire » est RETIRÉ de la roadmap — il restait une scorie de l'orbe.)*
+>
+> **ANALOGIE PHYSIQUE (pourquoi c'est « vrai »).** Tu crois qu'une foule lointaine existe parce que (a) tu
+> reconnais **quelques visages** assez nets pour être sûr, et (b) **plusieurs points de vue** concordent — pas
+> parce qu'un porte-parole officiel te l'a dit.
+>
+> **L'INVARIANT & LE COÛT (preuve papier — à FERMER avant de coder, c'est le make-or-break).**
+> - **Bande passante** : K échantillons signés × ~(32+4+4+8+64) ≈ **~112 o/échantillon** → K=8 ≈ **0,9 Ko/résumé**,
+>   à basse fréquence, par cellule SUIVIE. Reste **O(cellules), indépendant de N** (l'invariant tient). À chiffrer
+>   contre le débit-cible (~40-46 Ko/s mesuré).
+> - **CPU (LE mur à fermer)** : vérifs Ed25519 = `C_cellules × K × fréquence`. Ed25519 verify ≈ 20-50 µs. Il faut
+>   borner C, K, fréquence pour rester à quelques %/cœur. *Si ça ne ferme pas → l'idée tombe, et on l'aura su gratis.*
+> - **Exactitude** : connaître **toute** la foule individuellement reste **O(N)** (incompressible — l'élégance
+>   n'efface pas la physique). On l'assume : LOD = **densité molle** (combien) + **échantillon signé TOURNANT**
+>   (quelques visages, renouvelés dans le temps et diversifiés entre relayeurs → l'union grossit). On NE prétend PAS
+>   percevoir 5000 individus à coût O(cellules).
+>
+> **MURS POSSIBLES (honnêteté — à examiner sur le papier).** (1) coût CPU des vérifs (ci-dessus) ; (2)
+> **échantillonnage représentatif** : si tout le monde échantillonne les mêmes K, l'union ne grossit pas → il faut
+> un tirage TOURNANT/diversifié (par relayeur) ; (3) le `count` mou peut être sur-déclaré → ne JAMAIS le compter
+> comme perception, seulement comme indice de rendu ; (4) fraîcheur/TTL pour ne pas unioner des partis (on a
+> `accept_seq` + D16) ; (5) le format `KIND_CELL_SUMMARY` grossit → touche le wire (prouvable headless, mais à
+> re-vérifier en 3D par l'utilisateur) ; (6) n'adresse pas le mur n°2 (découverte).
+>
+> **PLAN EN PETITS PAS + CRITÈRE DE SUCCÈS PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT).**
+> 1. **Papier** : fermer le calcul de coût CPU/bande passante (ce bloc). Si CPU ne ferme pas → STOP, on garde l'idée mais on ne code pas.
+> 2. **Prototype headless** (banc bus) : nouveau résumé à échantillons signés + ingestion par union vérifiée, le
+>    `cell_host` RETIRÉ de l'ingestion. Additif/derrière un drapeau pour rester un harnais de régression.
+> 3. **Mesure (le résultat décide)** : à N=1000/2000/5000, **la taxe `émetteur≠hôte` doit DISPARAÎTRE** et
+>    **perception/N doit remonter nettement** (cible : ne s'effondre plus comme 91→10 %), **à débit ↓ PLAT** et
+>    **CPU borné** (mesuré, pas argumenté), **sans rouvrir** la forge de fantômes (test red-team : échantillon non
+>    signé / rejoué rejeté). Si la perception ne remonte pas OU le CPU explose → l'idée est réfutée, on le note.
+> 4. **Anti-rejeu de l'attaque** : un `attack` qui forge un faux résumé (fantômes/gonflage) doit imprimer « ÉCHOUÉ ».
+
 **— Phase B : l'inclusivité, maintenant que la foule est visible (ferme D3, D4, D5) —**
 
 - [ ] 8.4 — **Budget de réception annoncé (water-filling BILATÉRAL).** Chaque joueur publie
