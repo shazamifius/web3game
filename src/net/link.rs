@@ -138,6 +138,21 @@ pub(crate) fn union_mode() -> bool {
     *U.get_or_init(|| matches!(std::env::var("UNION").as_deref(), Ok("1") | Ok("true")))
 }
 
+/// MODE DENSITÉ-MAX (chap. 8.3★, étape C-diag, env `DENSITY_MAX=1`). L'étape A a montré que retirer
+/// l'élection d'hôte fait THRASHER le « 1 résumé/cellule (dernier arrivé) » : un émetteur au petit
+/// `count` écrase la vue complète → la densité moyenne s'effondre. Ici, on garde par cellule le
+/// résumé au `count` le PLUS GRAND vu (= l'émetteur le mieux informé de la cellule). C'est MONOTONE
+/// donc non-thrashant : un proxy HONNÊTE de banc pour MESURER si la DENSITÉ (Σ counts ≈ N) se
+/// restaure une fois la taxe `émetteur≠hôte` retirée. Implique la relaxation de l'hôte (on agrège
+/// TOUS les émetteurs). ⚠ NON SÉCURISÉ — le `count` MAX est trivialement inflationnable (un menteur
+/// déclare `count` énorme) : c'est un INSTRUMENT de diagnostic, JAMAIS la production. La densité MOLLE
+/// CORROBORÉE (accord de K émetteurs diversifiés /24, pas un max aveugle) = étape C-sécu, plus tard.
+/// Le défaut (absent) laisse le comportement prouvé INTACT. Résolu une fois par processus.
+pub(crate) fn density_max_mode() -> bool {
+    static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *D.get_or_init(|| matches!(std::env::var("DENSITY_MAX").as_deref(), Ok("1") | Ok("true")))
+}
+
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
 /// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
 pub(crate) const MAX_STRIKES: u32 = 5;
@@ -619,7 +634,7 @@ impl NetLink {
         // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
         // ÉTAPE A/B (8.3★) : on retire ce contrôle sous `relax_host_check()` OU `union_mode()` (l'union se
         // nourrit de TOUS les émetteurs). ⚠ NON SÉCURISÉ (banc honnête) ; la sécurité par échantillon = étape C.
-        if !relax_host_check() && !union_mode() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
+        if !relax_host_check() && !union_mode() && !density_max_mode() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
             self.summary_stats.rej_host += 1; // instrumentation D25 (lecture seule)
             return false; // forge anonyme / cellule qu'il n'héberge pas
         }
@@ -633,6 +648,29 @@ impl NetLink {
             for &(id, _x, _z) in &s.samples {
                 self.perceived.insert(id);
             }
+        }
+        // ÉTAPE C-diag (8.3★, DENSITY_MAX) : on garde par cellule le résumé au `count` le PLUS GRAND vu
+        // (l'émetteur le mieux informé), au lieu du plus-frais-par-seq. Monotone → tue le « thrash » du
+        // dernier-arrivé mesuré à l'étape A. La perception (Σ counts) mesure alors la DENSITÉ restaurée.
+        // ⚠ INSTRUMENT non sécurisé (count inflationnable) ; la corroboration molle = étape C-sécu.
+        if density_max_mode() {
+            match self.cell_summaries.get(&s.cell) {
+                Some(existing) => {
+                    if s.count <= existing.count {
+                        self.summary_stats.rej_stale += 1; // pas plus DENSE que le meilleur vu → on garde le max
+                        return false;
+                    }
+                }
+                None => {
+                    if self.cell_summaries.len() >= MAX_CELLS {
+                        self.summary_stats.rej_full += 1;
+                        return false;
+                    }
+                }
+            }
+            self.summary_stats.accepted += 1;
+            self.cell_summaries.insert(s.cell, s);
+            return true;
         }
         // 3) fraîcheur par hôte.
         match self.cell_summaries.get(&s.cell) {

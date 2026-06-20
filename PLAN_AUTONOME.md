@@ -90,6 +90,25 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE C-diag (8.3★, 20 juin, supervisé) — RETIRER LE CHEF RESTAURE LA DENSITÉ ; le seul plafond
+  restant de la perception à grande échelle est la DÉCOUVERTE (mur n°2).** *Fait :* drapeau additif
+  `DENSITY_MAX=1` (link.rs) — count/cellule = **MAX vu** (monotone, non-thrashant ; hôte relâché), perception
+  = Σ counts ; + fix d'honnêteté de mesure (coopsim.rs : libellé « pas plus DENSE » sous ce mode). **77 tests,
+  0 warning, défaut intact.** *Critère pré-enregistré (Règle 2, écrit AVANT) : taxe→0 ET Σ counts/N ≥ 70 %
+  hors bootstrap ET débit plat ET pas de deadlock.* **Résultats (banc bus) :** N=1000 → perception moy
+  **895 / max 1000 (89 %)**, taxe **0 %**, débit ↓46,8 → ✅ **passe plein** ; N=2000 → moy **1050 / max 1207
+  (52/60 %)**, taxe **0 %**, débit ↓47,2 (PLAT ✓), perception/découverte = 1050/1420 = **74 %** (le reste manque
+  car le bootstrap n'a pas fini de découvrir dans la fenêtre) ; N=5000 → trajectoire **plateau-puis-cascade**
+  (0 jusqu'à ~t=45 = mur n°2, puis 379→1127→1725 à t=60/80/100, montait encore — bilan à venir). **Leçon
+  (valide la thèse 8.3★) :** le **mur n°1 (taxe émetteur≠hôte) est DISSOUS** (0 % partout) et la densité
+  **SUIT la découverte** → ce qu'il reste à attaquer pour la perception à l'échelle, c'est le **bootstrap lent
+  (mur n°2)** — orthogonal, robuste au jitter = propriété réelle du protocole. **Caveat GRAVÉ :** `DENSITY_MAX`
+  est un **INSTRUMENT non sécurisé** (le MAX est trivialement inflationnable) — la version SÛRE = densité MOLLE
+  CORROBORÉE /24 = **étape C-sécu, écrite sur PAPIER** (FEUILLE_DE_ROUTE §D, bloc 8.3★ C-sécu). Self-challenge
+  important : **le banc bus ne peut PAS prouver la sécurité /24** (loopback, ports gratuits) → l'anti-inflation
+  se prouve sous le **harnais NAT (vraies IP), en réutilisant 9.4b**. **PROCHAIN : 5000 finit (bilan), puis
+  challenger/coder C-sécu-1 (récupération headless) puis C-sécu-2 (anti-inflation NAT).**
+
 - **ÉTAPE B (8.3★, 20 juin, supervisé) — l'union d'individus NE récupère PAS la perception ; la mesure
   révèle que « perception » conflait DEUX notions.** *Fait :* échantillons porteurs d'**ID** (cell.rs ;
   wire `KIND_CELL_SUMMARY` 8→40 o/échantillon — bot/bench uniquement, `PROTO_VERSION` inchangé → un
