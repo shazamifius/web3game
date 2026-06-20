@@ -111,6 +111,17 @@ impl SummaryStats {
     }
 }
 
+/// DRAPEAU DIAGNOSTIC (étape A du redesign 8.3★, env `RELAX_HOST=1`) : si activé, `ingest_summary` NE
+/// vérifie PLUS `émetteur == cell_host`. But UNIQUE : MESURER sur le banc honnête si l'élection d'hôte
+/// est bien le mur de perception (la taxe `émetteur≠hôte` croît 10→68 % avec N). ⚠ NON SÉCURISÉ — sans
+/// ce contrôle, n'importe qui peut forger un résumé : c'est un INSTRUMENT de mesure, JAMAIS un mode de
+/// production. Le vrai fix (échantillons auto-signés, qui referme la forge) = étape B. Le défaut (drapeau
+/// absent) laisse le comportement prouvé INTACT (harnais de régression). Résolu une fois par processus.
+pub(crate) fn relax_host_check() -> bool {
+    static R: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *R.get_or_init(|| matches!(std::env::var("RELAX_HOST").as_deref(), Ok("1") | Ok("true")))
+}
+
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
 /// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
 pub(crate) const MAX_STRIKES: u32 = 5;
@@ -587,7 +598,9 @@ impl NetLink {
     /// consultatif, cf. registre).
     pub(crate) fn ingest_summary(&mut self, s: CellSummary, me: (f32, f32), my_id: PeerId) -> bool {
         // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
-        if self.cell_host(s.cell, me, my_id) != Some(s.host) {
+        // ÉTAPE A (diagnostic 8.3★) : `relax_host_check()` PEUT retirer ce contrôle pour MESURER si
+        // l'élection d'hôte est le mur de perception. ⚠ NON SÉCURISÉ (banc honnête) ; vrai fix = étape B.
+        if !relax_host_check() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
             self.summary_stats.rej_host += 1; // instrumentation D25 (lecture seule)
             return false; // forge anonyme / cellule qu'il n'héberge pas
         }

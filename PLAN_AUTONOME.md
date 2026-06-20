@@ -90,6 +90,22 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE A (diagnostic 8.3★, 20 juin, supervisé) — la taxe hôte est RÉELLE et retirable, MAIS la
+  relaxation naïve NE suffit PAS : l'UNION est le mécanisme porteur.** Drapeau `RELAX_HOST=1` (banc
+  HONNÊTE, non sécurisé ; défaut absent → comportement prouvé intact, 77 tests, 0 warning). *Critère
+  pré-enregistré : taxe→0 ET perception remonte.* **Résultat N=2000 :** rejet émetteur≠hôte **61 %→0 %**,
+  93 % acceptés ✓ ; **MAIS perception MOYENNE s'effondre 192→~20** tandis que le **MAX bondit 577→1324**.
+  → **version naïve RÉFUTÉE** (la moitié du critère échoue, honnêtement notée). *Cause (diagnostic) :*
+  `cell_summaries` garde **UN résumé par cellule (dernier arrivé)** ; sans la canonisation qu'apportait
+  l'élection d'hôte, ça **THRASHE** (chaque nœud écrase son résumé par celui d'un émetteur au petit
+  `count`) → moyenne effondrée, max élevé pour les chanceux. *Leçon (raffine 8.3★, important) :* l'élection
+  d'hôte ne TAXAIT pas seulement, elle **CANONISAIT**. Le vrai fix n'est donc PAS « retirer le contrôle »
+  mais **remplacer « 1 résumé/cellule (dernier) » par « UNION d'évidence par cellule »** (accumuler les
+  gens DISTINCTS vus, perception = |union|) — le cœur de 8.3★, désormais **empiriquement justifié**.
+  **PROCHAIN = étape B :** échantillons porteurs d'**ID** + ingestion par **UNION** (sans signatures
+  d'abord, banc honnête → isole la récupération de perception) ; puis étape C : signatures par échantillon
+  + cache de vérif → test du calcul CPU.
+
 - **CONCEPTION ÉCRITE (20 juin, supervisé) — REDESIGN 8.3★ « perception auto-certifiante » (PAPIER, zéro
   code).** Décidé avec l'utilisateur (il vise l'élégance, pas une rustine) : on **retire le chef de cellule**
   et on fonde la perception sur des **échantillons SIGNÉS** unionnés sur des relayeurs diversifiés (keystone
