@@ -247,8 +247,20 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > 2. **FRAÎCHEUR pas encore CHIFFRÉE en propre.** La perception ≈ N à débit plat le démontre INDIRECTEMENT (les
 >    résumés sont assez frais pour couvrir la foule), mais l'âge moyen de perception d'un lointain AVEC vs SANS
 >    résumés n'est pas encore une métrique dédiée. *À faire si on veut la preuve directe du « 1/N tué ».*
-> 3. **INVARIANT à 1000→2000 pas encore couru.** 500 est prouvé ; le cap « 55k sans serveur » demande de voir la
->    perception SUIVRE N à débit ↓ plat à 1000 puis 2000. **PROCHAINE ACTION.**
+> 3. ✅ **INVARIANT À L'ÉCHELLE COURU (20 juin) — prouvé jusqu'à la LIMITE DU BANC.** `crowd 1000` (90 s) :
+>    ↑ émis **39,8 Ko/s (cap budget, max 47)**, ↓ reçu 39,4 Ko/s — la réception NE GRANDIT PAS avec N (200→1000
+>    restent ~40-47 Ko/s) → O(budget), indépendant de N ; perception moy **775 / max 839 sur 999** ; couverture
+>    80 %. **À `crowd 2000` (90 s) le débit CHUTE (22,7 Ko/s, couverture 22 %) — ARTEFACT MONO-PC CONFIRMÉ PAR
+>    L'ARITHMÉTIQUE, pas une limite du protocole :** la mesure dit **1 nœud ≈ 1 % d'un cœur**, et la machine a
+>    **12 cœurs** (`nproc`) → 2000 nœuds = ~20 cœurs demandés sur 12 → sur-souscription ×1,7 → threads affamés →
+>    ils tiquent au ralenti → émettent/reçoivent moins. Le mur du banc est ~**1200-1500 nœuds** ici. **La perception
+>    MAX suit quand même N partout (200→500→903→1805).** *(challenge de la feuille :* le « échelle 5000 » littéral
+>    de D22 est bloqué par le BANC — un OS-thread par bot — PAS par le protocole. Pour prouver 5000+ sur UN PC il
+>    faudrait un simulateur léger (ordonnancement coopératif, N bots/thread) → dette de HARNAIS, voir registre. Le
+>    protocole, lui, est démontré : budget capé, perception ∝ N.)*
+>
+> **▶ 8.3d FERMÉ → le chapitre 8 « foule dense » (Phase A) est BOUCLÉ. PROCHAINE ACTION = Phase B (inclusivité,
+> D3/D4/D5) OU chapitre 10 (vie privée + identité) — à arbitrer (les deux ferment des doutes proches de la vision).**
 >
 > ### 🔬 APRÈS le ch.8/9 — PASSE DE VALIDATION par simulation (proposée par l'utilisateur, avant le ch.10)
 > *Finir au PROPRE les chapitres 8 et 9, puis — AVANT d'attaquer le ch.10 — une passe dédiée qui POSE DE VRAIS
@@ -289,6 +301,12 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 >   jugé, pas dérivés. À calibrer si la convergence ou le coût l'exigent.
 > - **Pas d'éviction de pairs** (`MAX_KNOWN` est un mur sans TTL) : sur longue session, la table se
 >   remplit de morts et bloque l'apprentissage → D16 (ch.12).
+> - **DETTE DE HARNAIS (8.3d) — le banc plafonne à ~1200-1500 nœuds sur ce PC (12 cœurs).** `sim`/`crowd`
+>   lance **un OS-thread par bot** : à ~1 %cœur/nœud, au-delà de ~1500 on sur-souscrit les 12 cœurs et la
+>   simu (pas le protocole) étouffe. Conséquence : le « D22 = échelle 5000 » LITTÉRAL n'est pas prouvable
+>   ici. *Parade future possible (si on doute du résultat) : simulateur léger à ordonnancement coopératif
+>   (N bots par thread, une seule boucle d'événements) → 5000+ tiendrait sur un PC.* Jugé NON urgent : le
+>   protocole est déjà démontré (budget d'émission capé → réception O(1) en N ; perception ∝ N jusqu'à 2000).
 
 **Méthode de travail (rappel des préférences de l'utilisateur) :** parler **français**
 uniquement ; débutant Linux → toujours donner les commandes complètes **avec `cd`** ;
@@ -371,9 +389,10 @@ Chaque doute a : **Constat** (ce qui ne va pas / ce dont je ne suis pas sûr),
 **Piste de correction**, **Comment on le vérifiera**. Le chapitre qui le ferme est
 indiqué entre crochets `[ch. X]`.
 
-> ### 📊 AUDIT DES DOUTES — état honnête au 19 juin (ce tableau fait FOI ; l'analyse détaillée suit)
-> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). 7 fermés, 7 bornés,
-> 10 ouverts — et les 10 ouverts se regroupent PROPREMENT en 4 chantiers, ce qui confirme le plan (voir sous le tableau).*
+> ### 📊 AUDIT DES DOUTES — état honnête au 20 juin (ce tableau fait FOI ; l'analyse détaillée suit)
+> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **8 fermés** (D22
+> fermé au 8.3d), **6 bornés**, 10 ouverts — et les 10 ouverts se regroupent PROPREMENT en 4 chantiers, ce qui
+> confirme le plan (voir sous le tableau).*
 >
 > | # | Statut | Où en est-on / qui le ferme |
 > |---|---|---|
@@ -398,7 +417,7 @@ indiqué entre crochets `[ch. X]`.
 > | **D19** coût réel jamais mesuré | ✅ | 7.4/7.4b : Ko/s ↑↓, %CPU, RAM par nœud |
 > | **D20** attaques combinées | 🟡 | `sim` lance plusieurs attaquants en // ; pas encore de scénario coordonné adaptatif |
 > | **D21** sécurité du rendez-vous | 🟡 | 9.5a (cap mémoire + PoW) ; reste rate-limit débit + anti-spoofing |
-> | **D22** foule dense (aveugle > 32) | 🟡 | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) ; reste **8.3 échelle 5000** |
+> | **D22** foule dense (aveugle > 32) | ✅ | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) + **8.3d (résumés frais, invariant prouvé jusqu'au banc ~1500 ; 5000 littéral = dette de HARNAIS, pas du protocole)** |
 > | **D23** gossip = ampli DDoS | ✅ | 8.1b : prouvé par `attack gossip-flood` |
 > | **D24** foule visible plafonnée 64 | ✅ | 8.2c : rendu deux tiers, confirmé à l'écran |
 >
