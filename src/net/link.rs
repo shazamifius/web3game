@@ -13,7 +13,7 @@ use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Resource)]
 pub struct NetLink {
@@ -42,6 +42,13 @@ pub struct NetLink {
     /// ailleurs (ex. coller un témoin sur une victime pour fabriquer une fausse co-localisation et
     /// framer, D9). Les jugements de crédibilité (9.2) la lisent ; `peer_pos` reste l'indice ouvert.
     pub(crate) confirmed_pos: HashMap<PeerId, (f32, f32)>,
+    /// DERNIÈRE PREUVE DE VIE par pair (chap. 12.1 / D16) : l'instant où on a eu un signe
+    /// qu'il est vivant (état accepté, ou adresse corroborée). Sert à l'ÉVICTION par TTL :
+    /// quand la table `peers` est pleine, on récupère le slot du pair le plus anciennement vu
+    /// — mais SEULEMENT s'il dépasse `PEER_TTL` (présumé mort). On ne touche JAMAIS un pair
+    /// actif → l'ancien mur dur (`MAX_KNOWN` qui refusait tout) ne bloque plus l'apprentissage
+    /// sur longue session, SANS rouvrir le flood/éclipse (un attaquant ne peut évincer que des morts).
+    pub(crate) peer_seen: HashMap<PeerId, Instant>,
     /// ANTI-REJEU (chap. 5.2, durci au 7.3) : une FENÊTRE GLISSANTE par pair (style
     /// IPsec/DTLS). On retient le plus grand `seq` vu + un masque des 64 derniers déjà
     /// acceptés → on tolère le ré-ordonnancement du réseau (un paquet en retard mais
@@ -131,6 +138,12 @@ pub(crate) const WITNESS_FLOOR: f32 = 0.34;
 /// MÉMOIRE : au-delà de `MAX_KNOWN` cartes, on cesse d'en ajouter (anti-inondation de
 /// fausses cartes). Très large devant une foule réaliste ; l'éviction fine (TTL) est D16.
 pub(crate) const MAX_KNOWN: usize = 4096;
+
+/// TTL d'INACTIVITÉ d'un pair (chap. 12.1 / D16) : au-delà de ce silence, un pair est présumé
+/// MORT et son slot devient récupérable quand la table est pleine. 120 s ≫ la période d'émission
+/// d'un état (un pair vivant rafraîchit sa preuve de vie bien avant) → on ne récupère QUE des
+/// morts, jamais un actif. Borne le risque flood/éclipse (l'attaquant n'évince que du déjà-silencieux).
+pub(crate) const PEER_TTL: Duration = Duration::from_secs(120);
 
 /// Plafond du nombre de RÉSUMÉS de cellule retenus (chap. 8.3). Comme `MAX_KNOWN` pour les pairs :
 /// borne la mémoire contre un attaquant qui inventerait des milliers de fausses cellules. Très
@@ -255,6 +268,7 @@ impl NetLink {
             peers: HashMap::new(),
             peer_pos: HashMap::new(),
             confirmed_pos: HashMap::new(),
+            peer_seen: HashMap::new(),
             replay: HashMap::new(),
             strikes: HashMap::new(),
             accusations: HashMap::new(),
@@ -288,13 +302,44 @@ impl NetLink {
         }
         if self.peers.contains_key(&id) {
             self.peers.insert(id, addr); // adresse rafraîchie (source corroborée), pas un nouveau
+            self.peer_seen.insert(id, Instant::now()); // …et preuve de vie : protège de l'éviction
             return false;
         }
-        if self.peers.len() >= MAX_KNOWN {
-            return false; // table pleine : on borne la mémoire (D16)
+        if !self.has_room_for_new_peer(Instant::now()) {
+            return false; // table pleine ET aucun mort à évincer (on ne touche pas aux actifs, D16)
         }
         self.peers.insert(id, addr);
+        self.peer_seen.insert(id, Instant::now());
         true
+    }
+
+    /// Y a-t-il de la place pour un NOUVEAU pair (chap. 12.1 / D16) ? Si la table n'est pas pleine,
+    /// oui. Si elle l'est, on tente de RÉCUPÉRER le slot du pair le plus anciennement vu — mais
+    /// seulement s'il dépasse `PEER_TTL` (présumé mort). On ne touche JAMAIS un pair actif : si tous
+    /// sont frais, la table reste pleine et on refuse (anti-flood préservé). `now` injecté = testable.
+    fn has_room_for_new_peer(&mut self, now: Instant) -> bool {
+        if self.peers.len() < MAX_KNOWN {
+            return true;
+        }
+        // Table pleine : cherche le plus anciennement vu PARMI les morts (silence ≥ PEER_TTL).
+        let victim = self
+            .peer_seen
+            .iter()
+            .filter(|&(id, &seen)| self.peers.contains_key(id) && now.duration_since(seen) >= PEER_TTL)
+            .min_by_key(|&(_, &seen)| seen)
+            .map(|(&id, _)| id);
+        match victim {
+            Some(id) => {
+                // On purge le pair mort de TOUTES ses tables (mémoire vraiment libérée).
+                self.peers.remove(&id);
+                self.peer_pos.remove(&id);
+                self.confirmed_pos.remove(&id);
+                self.peer_seen.remove(&id);
+                self.replay.remove(&id);
+                true
+            }
+            None => false, // tous les pairs sont actifs → on ne sacrifie personne
+        }
     }
 
     /// RECHARGE les seaux d'apprentissage de gossip (chap. 8.1b) : à appeler une fois par
@@ -334,18 +379,20 @@ impl NetLink {
             self.peer_pos.insert(id, pos);
             return false;
         }
-        if self.peers.len() >= MAX_KNOWN {
-            return false; // table pleine (D16)
-        }
         // (d) seau par source : un seul expéditeur ne peut pas nous faire apprendre une foule
-        //     d'un coup (borne la réflexion + la pollution à la source).
-        let credit = self.gossip_credit.entry(from).or_insert(GOSSIP_LEARN_CAP);
-        if *credit < 1.0 {
+        //     d'un coup (borne la réflexion + la pollution à la source). On copie le crédit (fin de
+        //     l'emprunt) avant de tenter l'éviction, et on ne le DÉPENSE que si on admet vraiment.
+        let credit = *self.gossip_credit.entry(from).or_insert(GOSSIP_LEARN_CAP);
+        if credit < 1.0 {
             return false; // cet expéditeur a épuisé son budget d'apprentissage
         }
-        *credit -= 1.0;
+        if !self.has_room_for_new_peer(Instant::now()) {
+            return false; // table pleine ET aucun mort à évincer (D16 ; anti-flood préservé)
+        }
+        *self.gossip_credit.get_mut(&from).unwrap() -= 1.0; // entrée garantie présente (or_insert ci-dessus)
         self.peer_pos.insert(id, pos);
         self.peers.insert(id, addr);
+        self.peer_seen.insert(id, Instant::now()); // un appris-par-ouï-dire compte comme « vu » à présent
         true
     }
 
@@ -356,6 +403,7 @@ impl NetLink {
     pub(crate) fn note_pos(&mut self, id: PeerId, xz: (f32, f32)) {
         self.peer_pos.insert(id, xz);
         self.confirmed_pos.insert(id, xz);
+        self.peer_seen.insert(id, Instant::now()); // D16 : un état accepté = la plus forte preuve de vie
     }
 
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
@@ -806,6 +854,57 @@ mod tests {
         link.peer_pos.insert(b.id(), (2.0, 2.0));
         assert!(link.ingest_summary(signe(&b, (0, 0), 80, 1), me, my_id)); // seq plus PETIT, hôte neuf → OK
         assert_eq!(link.summary_perceived(), 80);
+    }
+
+    /// Un PeerId distinct par index `n` (sans souci de PoW : on insère dans `peers` directement,
+    /// comme les autres tests de table — on teste l'ÉVICTION, pas la garde d'admission).
+    fn pid_n(n: usize) -> PeerId {
+        let mut b = [0u8; 32];
+        b[0..4].copy_from_slice(&(n as u32).to_le_bytes());
+        b[4] = 1; // octet ≠ 0 → jamais l'id nul
+        PeerId::from_bytes(b)
+    }
+
+    /// D16 (chap. 12.1) — quand la table est PLEINE, on récupère le slot du pair le plus
+    /// anciennement vu S'IL est mort (silence ≥ `PEER_TTL`) ; on ne touche JAMAIS un actif. Ainsi le
+    /// mur dur `MAX_KNOWN` ne bloque plus l'apprentissage sur longue session, sans rouvrir le flood.
+    #[test]
+    fn eviction_recupere_un_mort_jamais_un_actif() {
+        let now = Instant::now();
+        let vieux = now.checked_sub(PEER_TTL + Duration::from_secs(10)).expect("instant passé");
+        let plus_vieux = now.checked_sub(PEER_TTL + Duration::from_secs(60)).expect("instant passé");
+
+        // (1) Table PLEINE avec 2 morts (dont un PLUS vieux) et le reste FRAIS.
+        let mut link = link_de_test();
+        for n in 0..MAX_KNOWN {
+            link.peers.insert(pid_n(n), addr(1));
+            link.peer_seen.insert(pid_n(n), now); // frais par défaut
+        }
+        link.peer_seen.insert(pid_n(0), vieux); // un mort
+        link.peer_seen.insert(pid_n(1), plus_vieux); // le PLUS vieux mort
+        assert_eq!(link.peers.len(), MAX_KNOWN);
+        // De la place se libère : on évince le PLUS anciennement vu des morts = pid_n(1).
+        assert!(link.has_room_for_new_peer(now));
+        assert!(!link.peers.contains_key(&pid_n(1)), "le plus vieux mort doit être évincé");
+        assert!(link.peers.contains_key(&pid_n(0)), "l'autre mort, moins vieux, reste pour l'instant");
+        assert_eq!(link.peers.len(), MAX_KNOWN - 1); // un slot vraiment libéré
+        assert!(!link.peer_seen.contains_key(&pid_n(1))); // purge complète
+
+        // (2) Table PLEINE mais TOUS actifs (vus à l'instant) → on ne sacrifie personne.
+        let mut plein = link_de_test();
+        for n in 0..MAX_KNOWN {
+            plein.peers.insert(pid_n(n), addr(1));
+            plein.peer_seen.insert(pid_n(n), now);
+        }
+        assert!(!plein.has_room_for_new_peer(now)); // aucun mort → refus (anti-flood préservé)
+        assert_eq!(plein.peers.len(), MAX_KNOWN); // rien évincé
+
+        // (3) Table NON pleine → toujours de la place, sans rien évincer.
+        let mut creux = link_de_test();
+        creux.peers.insert(pid_n(0), addr(1));
+        creux.peer_seen.insert(pid_n(0), vieux); // même un mort n'est pas touché si pas plein
+        assert!(creux.has_room_for_new_peer(now));
+        assert!(creux.peers.contains_key(&pid_n(0)));
     }
 
     /// 8.2a-bis — le focus est COLLANT : il prend les plus proches, NE bouge PAS sous un petit

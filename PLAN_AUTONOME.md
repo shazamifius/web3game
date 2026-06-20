@@ -74,6 +74,18 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **T1.1 ✅ (20 juin) — D16 : TTL/éviction des pairs.** *Menace* : `learn_peer`/`learn_from_gossip`
+  avaient un mur DUR (`peers.len() >= MAX_KNOWN → refuse`) → sur longue session la table se remplit de
+  pairs MORTS et bloque l'apprentissage de nouveaux. *Fix (additif, link.rs)* : champ `peer_seen`
+  (dernière preuve de vie), const `PEER_TTL=120s`, helper `has_room_for_new_peer(now)` qui, table pleine,
+  récupère le slot du pair le plus anciennement vu **uniquement s'il dépasse le TTL** (présumé mort) —
+  **jamais un actif** → l'anti-flood/éclipse du mur dur est PRÉSERVÉ (un attaquant n'évince que du
+  déjà-silencieux). Preuve de vie marquée sur état accepté (`note_pos`) + adresse corroborée + admission.
+  *Preuve* : test `eviction_recupere_un_mort_jamais_un_actif` (évince le plus vieux mort ; refuse si tous
+  actifs ; ne touche rien si pas plein) + `sim 50 5` → essaim TENU, orbe intègre, couverture 98 %.
+  **74 tests, 0 warning.** *NE fait PAS* : pas de DHT/fédération (D10, annexe H) ; le TTL (120 s) est un
+  réglage au jugé, à calibrer si une vraie longue session le demande.
+
 - **T0.2 ⛔ (20 juin) — garde-fou de FIDÉLITÉ : ÉCHEC honnête → T0 GELÉ, escaladé.** Comparaison à
   N=1000, mêmes conditions (POW_BITS=8, fenêtre 25 s) :
   | perception résumé | `crowd 1000` (réf threadé) | `coopsim 1000` (1 thread) |
