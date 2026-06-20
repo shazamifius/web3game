@@ -199,7 +199,15 @@ anti-triche).
 
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
-> - **▶ ÉTAT COURANT (20 juin) — 10.1 : IDENTITÉ PERSISTANTE (tu es le même entre sessions).** Ta clé est
+> - **▶ ÉTAT COURANT (20 juin) — D26 couche 1 : le RÉSUMÉ DE CELLULE est AUTHENTIFIÉ.** C'était le seul
+>   paquet anonyme : n'importe qui forgeait un résumé pour n'importe quelle cellule, et un `ts = u64::MAX`
+>   épinglait le mensonge à vie. Désormais l'hôte **embarque sa clé et SIGNE** son résumé (comme un état
+>   joueur), la fraîcheur est un **compteur `seq` par hôte** (plus l'horloge forgeable), et on n'accepte un
+>   résumé que si **l'émetteur est bien l'hôte attendu de la cellule** PUIS si le **sceau** tient. → forge
+>   anonyme, effacement de région (`count=0`) et épinglage tués (tests red-team + sim `crowd 200` : perception
+>   intacte, **max 200 occupants via 1 flux**). **73 tests, 0 warning.** *(Reste la couche 2 = corroboration :
+>   un hôte LÉGITIME peut encore mentir sur SA cellule — voir [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md) §0.)*
+> - **10.1 : IDENTITÉ PERSISTANTE (tu es le même entre sessions).** Ta clé est
 >   minée une fois puis sauvée dans `~/.web3game/<profil>.key` (perms 600, comme une clé SSH) et rechargée au
 >   lancement → fini l'identité neuve à chaque fois (ferme **D14**). `NetLink::new` (simu/bots) reste éphémère
 >   et intact ; le vrai jeu utilise `new_persistent` (profil = le mode → `a.key` ≠ `b.key`, deux fenêtres

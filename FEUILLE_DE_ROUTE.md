@@ -52,19 +52,23 @@
 >
 > **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense »
 > Phase A BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule frais), **10.1 identité
-> PERSISTANTE FAIT** (D14 fermé). **68 tests, 0 warning.** Audit : **9 fermés · 7 bornés · 10 ouverts**
-> (sur 26).
+> PERSISTANTE FAIT** (D14 fermé), **D26 couche 1 FAITE** (résumé de cellule AUTHENTIFIÉ : signé +
+> `seq`/hôte + `émetteur==cell_host`). **73 tests, 0 warning.** Audit : **9 fermés · 8 bornés · 9 ouverts**
+> (sur 26 ; D26 passe d'ouvert à BORNÉ — couche 2 = corroboration restante).
 >
 > **3 MESURES « TROP GENTILLES » à ne pas se mentir (détail au 🧾 registre) :** (a) « couverture » =
 > pairs CONNUS, pas ENTENDUS (optimiste) ; (b) la FRAÎCHEUR (âge de perception d'un lointain) jamais
 > mesurée en direct → « 1/N tué » prouvé seulement *indirectement* ; (c) banc plafonné ~1500 nœuds →
 > « perception ∝ N » mesuré à 1000-2000, *argumenté* au-delà → **ne JAMAIS dire « 55K prouvé »**.
 >
-> **⚠ DOUTE VIVANT repéré le 20 juin (à traiter en H2) :** les résumés de cellule (8.3) sont **NON
-> authentifiés** — `ingest_summary` ne vérifie que `ts` + borne mémoire (aucune signature, aucune
-> PoW, aucun contrôle d'émetteur). Donc **D26 est plus large que « l'hôte ment »** : n'importe qui
-> forge un résumé pour n'importe quelle cellule, et un `ts = u64::MAX` ÉPINGLE le mensonge à vie (la
-> vraie info ne peut plus l'écraser — c'est le « verrou v65535 » de l'orbe, mais SANS le garde de 5.3).
+> **✅ D26 COUCHE 1 FAITE (20 juin) — le résumé de cellule n'est plus anonyme.** Avant, `ingest_summary`
+> ne vérifiait que `ts` + borne mémoire : n'importe qui forgeait un résumé pour n'importe quelle cellule,
+> et un `ts = u64::MAX` épinglait le mensonge à vie. Désormais l'hôte **embarque sa clé + SIGNE** (modèle
+> état joueur), la fraîcheur est un **`seq` monotone PAR HÔTE** (plus l'horloge `ts` forgeable), et
+> l'ingestion exige **`émetteur == cell_host` PUIS sceau valide** (cheap avant cher). → forge anonyme,
+> `count=0` qui efface une région, et épinglage `ts=MAX` **tués** (tests red-team + sim crowd 200 : perception
+> intacte, max 200 occupants via 1 flux). **73 tests, 0 warning.** *Reste la COUCHE 2 (l'hôte LÉGITIME peut
+> mentir sur SA cellule → corroboration, couplée à D4) = le vrai mur. 3 dettes assumées au 🧾 registre.*
 >
 > **✅ H2 DÉFRICHÉ (20 juin) — les 2 murs vus gratuitement sur le papier :**
 > - **D4+D5** retournés en problème de MESURE, pas d'économie : « **parent par mesure du réel** » (capacité
@@ -76,9 +80,11 @@
 >   le vrai lot de « devinettes » à dériver ≈ **6** (focus/budget/relais) = **le même fix que D4**.
 > - Inélégances code notées : `weak` auto-déclaré [main.rs:126], parent = plus petit id [send.rs:123].
 >
-> **PROCHAINE ACTION = écrire/coder la PHASE B** (inclusivité), en commençant par le quasi-mécanique :
-> **couche 1 de D26** (authentifier le résumé) + **« parent par mesure du réel »** (qui dérive AUSSI le focus/
-> budget). *Petit pas, preuve d'abord : compile→test→sim→commit→push.*
+> **PROCHAINE ACTION = PHASE B suite.** Couche 1 de D26 faite (ci-dessus). Deux pistes au choix :
+> **(A) « parent par mesure du réel »** (dérive AUSSI le focus/budget — le gros morceau D4/D5) ;
+> **(B) couche 2 de D26** (corroboration multi-informateurs — même principe que D4). Note : un résumé est
+> aujourd'hui durci sur le chemin SIM (bots) ; le câbler dans le client réel `netcode/receive.rs` viendra
+> avec la couche 2. *Petit pas, preuve d'abord : compile→test→sim→commit→push.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
@@ -375,6 +381,19 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 >   jugé, pas dérivés. À calibrer si la convergence ou le coût l'exigent.
 > - **Pas d'éviction de pairs** (`MAX_KNOWN` est un mur sans TTL) : sur longue session, la table se
 >   remplit de morts et bloque l'apprentissage → D16 (ch.12).
+> - **D26 couche 1 (résumé AUTHENTIFIÉ, codé le 20 juin) — 3 dettes assumées :**
+>   **(1) `cell_host` est ESTIMÉ localement** (à partir de `peer_pos` connu) : si je ne connais pas
+>   encore l'occupant au plus petit id, je calcule un mauvais hôte attendu et je **rejette un résumé
+>   pourtant légitime** (faux négatif). C'est SÛR (consultatif → je perds juste ce résumé jusqu'à
+>   apprendre l'occupant, aucune corruption), mais ça peut **affamer la perception en connaissance
+>   partielle**. *Parade future : tolérer une fenêtre d'hôtes plausibles, ou corroborer (couche 2).*
+>   **(2) Rate-limit par `SocketAddr`, pas par `host`** : robuste contre un spammeur d'une IP, mais un
+>   attaquant multi-IP/relais dilue la limite. Borné par `MAX_CELLS` de toute façon. *Parade : clé par
+>   identité d'hôte si besoin.*
+>   **(3) La couche 1 n'EMPÊCHE PAS l'hôte LÉGITIME de mentir** sur SA cellule (sur/sous-compter) :
+>   c'est la **couche 2** (corroboration multi-informateurs, couplée à D4) — le vrai mur, plus tard.
+>   *(Le client réel `netcode/receive.rs` n'ingère pas encore les résumés — seuls les bots, pour la
+>   sim d'échelle ; couche 1 durcit donc le chemin SIM, là où la preuve d'échelle se joue.)*
 > - **DETTE DE HARNAIS (8.3d) — le banc plafonne à ~1200-1500 nœuds sur ce PC (12 cœurs).** `sim`/`crowd`
 >   lance **un OS-thread par bot** : à ~1 %cœur/nœud, au-delà de ~1500 on sur-souscrit les 12 cœurs et la
 >   simu (pas le protocole) étouffe. Conséquence : le « D22 = échelle 5000 » LITTÉRAL n'est pas prouvable
