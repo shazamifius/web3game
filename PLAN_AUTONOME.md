@@ -90,6 +90,16 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE C-sécu-1a — TEST D'ÉCHELLE (N=2000, 21 juin, supervisé) : la corroboration BAT la taxe à l'échelle
+  → critère pré-enregistré REMPLI, 8.3★ validé comme solution d'ÉCHELLE.** CORROB 2000 : perception moy **761 /
+  max 1999 (38 % de N)**, taxe **0 %**, débit ↑54/↓55, **encore en hausse à t=100**. *Comparaison à N=2000 :*
+  défaut-AVEC-taxe = **192 (10 %)** ; DENSITY_MAX (sans taxe, instrument) = **1050 (52 %)** ; **CORROB = 761** →
+  **~4× la taxe**, et **72 % de DENSITY_MAX**. *La BASCULE attendue est confirmée :* à 1000 la corroboration PERD
+  (563 < 759, taxe douce ~24 %) ; à 2000 elle GAGNE largement (761 ≫ 192, taxe brutale 61 %). Et l'efficacité vs
+  l'instrument MAX **MONTE avec N** (63 %→72 %) car plus de signataires/cellule → moins de repli conservateur.
+  **Reste :** 5000 (taxe 68 %, où l'écart doit être le plus net) + C-sécu-1b (plancher vérifié) pour remonter
+  encore la récup dans les cellules peu corroborées.
+
 - **ÉTAPE C-sécu-1a (8.3★, 21 juin, supervisé) — corroboration MULTI-SIGNATAIRE : sécurité OK, RÉCUPÉRATION
   PARTIELLE (63 %) SOUS la cible — le PLANCHER vérifié (1b, reporté) manque pour récupérer.** *Fait :* drapeau
   `CORROB` ; chaque nœud publie l'estimation de SA cellule (`build_own_cell_claim`, plus seulement l'hôte) ;
