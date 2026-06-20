@@ -74,6 +74,17 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **T1.2 ✅ (20 juin) — D21 : rendez-vous, rate-limit débit.** *Menace* : chaque HELLO coûte un
+  WELCOME en retour (amplification + CPU) ; aucune borne de débit par source → une source pouvait nous
+  faire répondre à volonté. *Fix (additif, rendezvous.rs)* : seau à jetons par adresse source
+  (`HELLO_RATE=4/s`, pointe `HELLO_BURST=8`), rechargé au temps écoulé ; à sec, on ignore le HELLO (plus
+  de WELCOME → fin de l'amplification depuis cette source). Honnête = 1 HELLO/s → jamais throttlé.
+  *Preuve* : test `rate_limit_hello_coupe_la_rafale_pas_l_honnete` (une rafale de 100 → 8 réponses ; à
+  sec, rien dépensé) + `sim 60 4` → couverture 99 %, essaim TENU (découverte NON gênée). **75 tests, 0 warning.**
+  *NE fait PAS* : pas l'anti-spoofing COMPLET — un flood multi-sources usurpées distinctes peut encore
+  saturer la table (borné par `MAX_CLIENTS` + éviction 5 s). La parade restante = handshake de ROUTABILITÉ
+  (change le flux HELLO côté client) → laissée à une étape SUPERVISÉE.
+
 - **T1.1 ✅ (20 juin) — D16 : TTL/éviction des pairs.** *Menace* : `learn_peer`/`learn_from_gossip`
   avaient un mur DUR (`peers.len() >= MAX_KNOWN → refuse`) → sur longue session la table se remplit de
   pairs MORTS et bloque l'apprentissage de nouveaux. *Fix (additif, link.rs)* : champ `peer_seen`

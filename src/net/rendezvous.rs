@@ -23,17 +23,37 @@ use std::time::{Duration, Instant};
 /// borne, un flood de HELLO depuis des adresses bidon ferait croître la table jusqu'à épuiser la
 /// RAM (le rendez-vous est notre SEUL point central → le protéger compte, D21). Large devant une
 /// vraie instance ; l'éviction des silencieux (5 s) libère en continu.
-/// *Limite ASSUMÉE (résidu) : une fois plein, un nouveau venu HONNÊTE peut être refusé tant que la
-/// table est saturée de sources usurpées. La vraie parade = routabilité (handshake prouvant que la
-/// source est réelle) → plus lourd, étape ultérieure (anti-spoofing). Ici on borne la MÉMOIRE
-/// (anti-crash), pas encore l'éviction par usurpation.*
+/// *Résidu ASSUMÉ (D21, après T1.2) : le rate-limit débit ci-dessous coupe l'amplification d'UNE
+/// source, mais un flood depuis BEAUCOUP de sources usurpées distinctes peut encore saturer la table
+/// (chaque adresse a son propre seau) — borné par ce plafond + l'éviction 5 s, pas supprimé. La vraie
+/// parade restante = ROUTABILITÉ (handshake prouvant que la source peut RECEVOIR à son adresse), plus
+/// lourde car elle change le flux HELLO côté client → laissée à une étape supervisée (anti-spoofing complet).*
 const MAX_CLIENTS: usize = 8192;
+
+/// RATE-LIMIT DÉBIT par source (chap. 12.3 / D21) : un HELLO nous coûte un WELCOME en retour
+/// (amplification + CPU). Sans borne, une source peut nous faire répondre à volonté. On met donc un
+/// seau à jetons PAR adresse source : `HELLO_RATE` HELLO/s tolérés en régime, `HELLO_BURST` en pointe.
+/// Un client HONNÊTE émet 1 HELLO/s (`HELLO_PERIOD`) → jamais throttlé ; un spammeur, lui, se voit
+/// ignoré dès qu'il dépasse (on ne lui répond plus → fin de l'amplification depuis cette source).
+const HELLO_RATE: f32 = 4.0;
+const HELLO_BURST: f32 = 8.0;
 
 /// Admet-on ce HELLO dans la table du rendez-vous (chap. 9.5a) ? Un client DÉJÀ connu est toujours
 /// admis (on rafraîchit). Un NOUVEAU n'est admis que s'il reste de la place sous le plafond. Pur →
 /// testable sans lancer la boucle réseau.
 fn should_admit(is_known: bool, current_len: usize, cap: usize) -> bool {
     is_known || current_len < cap
+}
+
+/// Politique de rate-limit débit (D21), PURE/testable : depuis le crédit courant d'une source, rend
+/// `(répond-on ?, crédit restant)`. On répond (et on dépense 1 jeton) s'il reste au moins 1 jeton ;
+/// sinon on ignore SANS dépenser (la source a épuisé son budget de réponses pour l'instant).
+fn rate_limit_hello(credit: f32) -> (bool, f32) {
+    if credit >= 1.0 {
+        (true, credit - 1.0)
+    } else {
+        (false, credit)
+    }
 }
 
 /// Ce que le rendez-vous retient d'un client : son id, sa dernière activité, sa
@@ -62,8 +82,22 @@ pub fn run_rendezvous() {
     );
 
     let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
+    // D21 : seaux de rate-limit débit par source (adresse). Rechargés au temps écoulé à chaque tour.
+    let mut hello_credit: HashMap<SocketAddr, f32> = HashMap::new();
+    let mut last_tick = Instant::now();
 
     loop {
+        // Recharge des seaux débit (D21) par le temps réellement écoulé depuis le tour précédent ;
+        // on draine les sources inactives (seau plein) si la table enfle (anti-saturation mémoire).
+        let dt = last_tick.elapsed().as_secs_f32();
+        last_tick = Instant::now();
+        for credit in hello_credit.values_mut() {
+            *credit = (*credit + dt * HELLO_RATE).min(HELLO_BURST);
+        }
+        if hello_credit.len() > MAX_CLIENTS {
+            hello_credit.retain(|_, c| *c < HELLO_BURST);
+        }
+
         for (from, bytes) in socket.poll() {
             // HELLO porte la position du joueur (pour l'AoI) ET son identité (clé
             // publique). Depuis le chap. 6.1, le rendez-vous n'ATTRIBUE plus de numéro :
@@ -74,6 +108,14 @@ pub fn run_rendezvous() {
             // 6.2 : une identité sans preuve de travail n'est même pas listée.
             if !id.has_pow(pow_bits()) {
                 continue;
+            }
+            // D21 : rate-limit débit par source. Une source ne peut pas nous faire répondre à
+            // volonté (anti-amplification + anti-CPU). Honnête (1 HELLO/s) → jamais throttlé.
+            let credit = hello_credit.entry(from).or_insert(HELLO_BURST);
+            let (repond, reste) = rate_limit_hello(*credit);
+            *credit = reste;
+            if !repond {
+                continue; // budget de réponses épuisé pour cette source → on l'ignore ce tour
             }
             // 9.5a (D21) : borne MÉMOIRE. Un client déjà connu est rafraîchi ; un nouveau n'entre
             // que s'il reste de la place sous le plafond → un flood de sources usurpées ne peut
@@ -141,5 +183,32 @@ mod tests {
         assert!(!should_admit(false, 8192, 8192)); // nouveau + plein → refusé
         assert!(should_admit(true, 8192, 8192)); // connu + plein → rafraîchi quand même
         assert!(!should_admit(false, 9000, 8192)); // au-delà du plafond aussi
+    }
+
+    /// D21 — le rate-limit débit : on répond tant qu'il reste un jeton (et on le dépense) ; à sec,
+    /// on ignore SANS dépenser. Une rafale d'une même source finit donc ignorée (anti-amplification),
+    /// pendant qu'un client honnête (1 HELLO/s, seau qui se recharge à 4/s) garde toujours du crédit.
+    #[test]
+    fn rate_limit_hello_coupe_la_rafale_pas_l_honnete() {
+        // Seau plein : on répond et on décompte.
+        let (ok, reste) = rate_limit_hello(HELLO_BURST);
+        assert!(ok);
+        assert_eq!(reste, HELLO_BURST - 1.0);
+        // Pile un jeton : dernier répondu, tombe à zéro.
+        assert_eq!(rate_limit_hello(1.0), (true, 0.0));
+        // À sec : on ignore, et on ne descend pas sous zéro (rien dépensé).
+        assert_eq!(rate_limit_hello(0.5), (false, 0.5));
+        assert_eq!(rate_limit_hello(0.0), (false, 0.0));
+        // Une rafale qui épuise le seau finit ignorée (8 réponses puis plus rien jusqu'à recharge).
+        let mut c = HELLO_BURST;
+        let mut repondus = 0;
+        for _ in 0..100 {
+            let (r, reste) = rate_limit_hello(c);
+            c = reste;
+            if r {
+                repondus += 1;
+            }
+        }
+        assert_eq!(repondus, HELLO_BURST as i32); // exactement la pointe, pas 100
     }
 }
