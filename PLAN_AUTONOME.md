@@ -63,16 +63,27 @@
   (cap mémoire + PoW déjà là en 9.5a ; reste le débit + anti-usurpation d'adresse source).
   - *Preuve* : test/sim — un client qui spamme le rendez-vous est throttlé ; un HELLO à adresse source
     incohérente est rejeté. *NE fait pas* : ne supprime pas la centralisation du rendez-vous (D10, annexe H).
-- **T1.3 — D18 : speed-hack grossier (ch.11.4).** Raffiner la détection de vitesse au-delà du
-  téléport déjà couvert (9.x) : une vitesse soutenue au-dessus du plausible → faute/sourdine.
-  - *Preuve* : `attack` — un bot « rapide mais sous le seuil téléport » finit en sourdine ; la marche
-    normale passe. Additif (réputation existante). *NE fait pas* : pas d'autorité physique complète (ch.11).
+- **T1.3 — ✋ STOP au PAPIER (D18 speed-hack).** À l'inspection, le détecteur de vitesse SOUTENUE n'est
+  PAS cleanly bornable en autonomie : `MAX_SPEED` est un placeholder (vraie vitesse du jeu non figée) et
+  un contrôle fenêtré faux-positive sur un honnête après perte de paquets (sourdine injuste, visible
+  seulement dans le vrai jeu). → escaladé en FILE UTILISATEUR plutôt que de coder une rustine.
 
 > Ordre conseillé : **T0 d'abord** (plus gros gain, risque nul), puis T1.1 → T1.2 → T1.3.
 
 ---
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
+
+- **T1.3 ✋ (20 juin) — D18 speed-hack : STOP au PAPIER (risque rustine), escaladé. FILE SÛRE ÉPUISÉE.**
+  `move_plausible` est un contrôle PAR PAS (`dist ≤ MAX_SPEED·dt + SLACK`). Le « speed-hack grossier »
+  est le cas SOUTENU : rester sous la borne à chaque pas mais la tenir en continu (~30 m/s = 3× un
+  sprint). Je ne code PAS le détecteur en aveugle, car (vérifié dans le code) : **(1)** `MAX_SPEED=30`
+  est un placeholder (« à affiner avec la vraie vitesse du jeu ») → impossible de poser honnêtement un
+  seuil « soutenu » ; **(2)** la perte de paquets crée de GRANDS pas légitimes (test
+  `longue_absence_autorise_un_grand_pas`) → un contrôle fenêtré naïf faux-positive sur un honnête →
+  sourdine injuste, qui n'affecte que le VRAI jeu (non observable par moi) ; **(3)** maison = ch.11.4
+  (supervisé). → respecté mon STOP « risque rustine = papier ». Défriché en FILE UTILISATEUR.
+  **Conséquence : T1.3 était le dernier item Tier 1 → la file SÛRE est épuisée → j'ARRÊTE le loop.**
 
 - **T1.2 ✅ (20 juin) — D21 : rendez-vous, rate-limit débit.** *Menace* : chaque HELLO coûte un
   WELCOME en retour (amplification + CPU) ; aucune borne de débit par source → une source pouvait nous
@@ -141,4 +152,14 @@
   CŒUR → **je ne le fais pas sans ton feu vert.** *Si tu autorises, je le code, je revérifie que la base
   est intacte, et T0.3 (chasse au mur 50k) redevient possible.* C'est LA pièce qui débloquerait enfin la
   mesure directe de l'échelle (dette D25). **À toi de trancher au retour.**
+- **D18 speed-hack SOUTENU (défriché de T1.3, 20 juin) — décision/réglage pour toi.** Le trou : un
+  attaquant tient une vitesse JUSTE sous `MAX_SPEED` à chaque pas mais en CONTINU (~30 m/s soutenu = 3×
+  un sprint), que `move_plausible` (contrôle par pas) ne voit pas. *Mécanisme proposé* : par pair, une
+  moyenne de vitesse sur une FENÊTRE de pas consécutifs FRÉQUENTS, **réinitialisée à tout trou** > G (pour
+  ne pas punir un grand pas légitime après perte) ; si la moyenne sur la fenêtre W dépasse un
+  `SUSTAINED_MAX < MAX_SPEED`, faute/sourdine. *Pourquoi je ne l'ai PAS codé seul* : W, G et
+  `SUSTAINED_MAX` exigent **la vraie vitesse du jeu** (aujourd'hui un placeholder) + **le profil de perte
+  RÉEL** ; mal réglé, ça sourdine des honnêtes — invisible sans lancer le 3D (toi). *Quand tu reviens* :
+  fixe la vitesse réelle du perso, donne-moi un profil de perte cible, et je code + prouve par `attack`
+  (un bot « soutenu » muet, la marche normale passe). C'est un raffinement « à surveiller » (🟡), pas un bloqueur.
 - _(ce que j'ajouterai si je dois stopper un pas)_
