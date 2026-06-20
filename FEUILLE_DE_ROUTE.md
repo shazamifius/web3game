@@ -66,9 +66,13 @@
 > forge un résumé pour n'importe quelle cellule, et un `ts = u64::MAX` ÉPINGLE le mensonge à vie (la
 > vraie info ne peut plus l'écraser — c'est le « verrou v65535 » de l'orbe, mais SANS le garde de 5.3).
 >
-> **PROCHAINE ACTION = H2 (défricher SUR LE PAPIER, règle 5)** les 2 murs probables avant de coder
-> Phase B : **D4** (incitation au relais = problème de MÉCANISME, le vrai mur intellectuel → EN
-> PREMIER) puis **D26** (résumé menteur, cf. doute ci-dessus). *Ne PAS construire d'outillage avant
+> **H2 EN COURS (défrichage sur papier, règle 5) :** ✅ **D4+D5 DÉFRICHÉS (20 juin)** — retournés en
+> problème de MESURE, pas d'économie : « **parent par mesure du réel** » (capacité observée infalsifiable
+> + affectation locale + dégradation équitable ; réputation seulement vs tricheurs). A dégagé le **principe
+> directeur n°7** (« composer avec le réel : fait vs devinette → dériver ») + révélé 2 inélégances dans le
+> code (`weak` auto-déclaré `main.rs:126` ; parent = plus petit id `send.rs:123`). **PROCHAINE ACTION =
+> défricher D26** (résumé de cellule menteur/non authentifié, cf. doute ci-dessus — partage la même
+> « mesure vs confiance » que D4). Puis écrire/coder la **Phase B**. *Ne PAS construire d'outillage avant
 > d'avoir pensé le mécanisme.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
@@ -410,6 +414,14 @@ modes `rendezvous | a | b | bot <nom> | attack <type> | sim <bots> <attaquants> 
 5. **Honnêteté.** On préfère un MVP qui marche et des limites écrites, à une fausse
    promesse. Tout doute est un travail à planifier, pas à cacher.
 6. **Plus tard, pas maintenant :** portabilité Unreal/Unity. On finit le cœur d'abord.
+7. **Composer avec le RÉEL, pas inventer des stats (élégance).** *(Dégagé en H2, 20 juin 2026.)*
+   Un nombre magique qui encode un **fait du monde** (rayon de l'orbe, vitesse humaine max) → on le
+   garde. Un nombre qui **remplace une mesure qu'on pourrait prendre** (taille du focus, choix du
+   parent, débit de relais) → on le **dérive de l'observation** (mesure passive, infalsifiable),
+   jamais d'un rôle **auto-déclaré** ni d'un cap **universel**. On vise l'élégance (la meilleure
+   technique), pas « ça tient ». *Discriminateur :* « ce nombre est-il un fait, ou une devinette qui
+   tient lieu de mesure ? ». Unifie D3 (lien faible), D4 (relais) et le plafond de focus (`MAX_NEIGHBORS`).
+   → **Passe d'élégance** : à chaque chapitre, repasser les constantes au crible « fait vs devinette ».
 
 ---
 
@@ -464,8 +476,7 @@ indiqué entre crochets `[ch. X]`.
 > | **D1** tests = localhost | ✅ | ch.7 : `tc netem` + NAT réel en namespaces (7.1→7.5) |
 > | **D2** bot ≠ jeu | 🟡 | décisions de confiance partagées ; orchestration encore dupliquée → ch.12.2 |
 > | **D3** lien faible noyé (réception) | 🔴 | inclusivité, **ch.8 Phase B** (8.4/8.6) |
-> | **D4** économie du parent (free-riding) | 🔴 | inclusivité, **ch.8 Phase B** (8.7) |
-> | **D5** parent qui censure | 🔴 | inclusivité, **ch.8 Phase B** (8.8) |
+> | **D4 + D5** parent (free-riding + censure, fusionnés) | 🟡 | DÉFRICHÉ en H2 → « **parent par MESURE du réel** » (capacité observée infalsifiable + affectation locale + dégradation équitable ; réputation SEULEMENT vs tricheurs). À CODER en **Phase B** |
 > | **D6** PoW « jouet » | 🟡 | 9.1a : PoW **réglable**, socle 18 (mesuré) ; adaptative → annexe H |
 > | **D7** framing par quorum | ✅ | 9.2 (crédibilité) + 9.4b (diversité IP) — prouvé par `attack sybil-frame` |
 > | **D8** pas de réhabilitation | ✅ | 9.3 : fautes à décroissance temporelle |
@@ -498,9 +509,12 @@ indiqué entre crochets `[ch. X]`.
 > proches de la vision.** Le reste (ch.11/12) est du durcissement « confort », pas un bloqueur de la promesse P2P.
 >
 > **⭐ LES DEUX DOUTES LES PLUS DURS QUI RESTENT (nommés le 20 juin — à ne PAS laisser se noyer dans la liste) :**
-> - **D4 — l'INCITATION (« pourquoi relayer pour les faibles ? »).** Pas du code : du *mécanisme*. Le pilier
->   « les forts aident les faibles » est aspirationnel tant que rien ne récompense le relais. Conditionne D3 + D17.
->   C'est le vrai mur intellectuel du projet. À traiter en TÊTE de Phase B, pas à la fin.
+> - **D4 — l'INCITATION → RETOURNÉE en problème de MESURE (défrichée en H2, 20 juin).** On a renversé le
+>   cadrage : ce n'est PAS une économie (récompenser le relais) mais une **OPTIMISATION** — quand la capacité
+>   est abondante, relayer coûte du bruit ; il suffit de **mesurer la capacité réelle (observée, infalsifiable)
+>   et d'affecter le meilleur parent**. Plus de monnaie de réputation ; la réputation reste *seulement* contre
+>   les tricheurs. D4 + D5 fusionnés en « parent par mesure du réel ». Reste à CODER + PROUVER en Phase B.
+>   Conditionne D3 + D17.
 > - **D10 — le rendez-vous reste la DERNIÈRE centralisation.** Le « sans serveur » garde un astérisque : l'amorçage
 >   passe par un rendez-vous (le gossip réduit la dépendance, la fédération/DHT est en annexe H). Pour un « VRAIMENT
 >   sans serveur », c'est le dernier nœud de confiance à décentraliser. Borné aujourd'hui, pas supprimé.
@@ -544,21 +558,31 @@ résumé basse fréquence (positions échantillonnées, foule en LOD). *Vérif :
 throttlé à 5 Ko/s, le joueur reste fonctionnel (voit ses voisins immédiats, foule
 lointaine en basse fidélité) et ne perd pas la connexion.
 
-**D4 — L'économie du parent n'est pas résolue (free-riding).** 🔴 `[ch. 8]`
-*Constat :* *pourquoi* un nœud à bon upload dépenserait-il sa bande passante pour les
-autres ? Sans réponse, tout le monde se déclare « faible » et personne ne relaie.
-*Pourquoi :* c'est LE problème de mécanisme du « partage de puissance ». *Piste :*
-réciprocité façon **BitTorrent** (donnant-donnant : je relaie surtout pour ceux qui me
-rendent service / ont bonne réputation ; « optimistic unchoke » pour amorcer), la
-réputation devenant une quasi-monnaie. *Vérif :* en simu, des nœuds égoïstes (qui ne
-relaient jamais) obtiennent un service dégradé ; les coopératifs, un bon service.
-
-**D5 — Un parent malveillant censure en silence (disponibilité ≠ intégrité).** 🟠 `[ch. 8]`
-*Constat :* la signature garantit qu'un parent ne *falsifie* pas ton état, mais rien ne
-l'empêche de le *jeter* — tu deviens invisible. *Piste :* plusieurs parents en
-parallèle (redondance), + détection du drop (si mes voisins ne confirment jamais avoir
-reçu mon état via le parent, je change de parent). *Vérif :* un parent « trou noir »
-est détecté et contourné en N secondes.
+**D4 + D5 — Le parent, par MESURE du réel (fusionnés ; direction DÉFRICHÉE en H2, 20 juin).** 🟡 `[Phase B]`
+*Constat (D4) :* aujourd'hui le rôle faible est **auto-déclaré** (`cargo run -- weak` → `main.rs:126`)
+et le parent est choisi par **le plus petit id** (`send.rs:123`) — aucun rapport avec la réalité du
+lien. Sans rien, tout le monde se déclare faible et personne ne relaie. *Constat (D5) :* un parent
+qui *jette* tes paquets (sans les falsifier — la signature l'en empêche) te rend **invisible en silence**.
+**Reframe décisif (H2) : ce n'est PAS une économie (récompenser le relais), c'est une OPTIMISATION.**
+Quand la capacité est abondante, relayer coûte du **bruit** (un fibre relaie 3 mobiles pour
+~0,04 Mbit/s, cf. 7.4b) → pas besoin d'incitation, juste d'une bonne **affectation**. *Piste retenue :*
+- **(1) Capacité OBSERVÉE, pas déclarée.** Chaque nœud mesure *passivement* le débit/fraîcheur qu'il
+  reçoit RÉELLEMENT de chaque pair → estime sa capacité. **Infalsifiable** (on ne simule pas des
+  paquets que les voisins n'ont pas reçus) ; **pas de speed-test actif** (coûteux, vecteur d'abus).
+- **(2) Affectation LOCALE.** Depuis sa cellule, chacun choisit parent = `argmax(capacité dispo ×
+  proximité ÷ charge)`, recalculé en continu → **bon compromis local**, pas un optimum global prouvé.
+- **(3) Pénurie réelle.** Aucun algo ne crée de bande passante : on **dégrade ÉQUITABLEMENT** (tout
+  le monde baisse de LOD ensemble) au lieu d'exclure quelqu'un (minimax, principe 4).
+- **(4) Réputation SEULEMENT contre les tricheurs** (principe 7) : celui qui **truque sa mesure**, et
+  le **relais trou-noir** (= D5 : si mes voisins ne confirment jamais recevoir mon état via lui → il
+  ment → je change de parent ; redondance multi-parents en secours).
+*Rejeté explicitement :* le **tit-for-tat symétrique** façon BitTorrent (le faible n'a aucun upload à
+rendre → ça l'EXCLUT), et toute **monnaie de réputation positive** (elle rouvrirait un Sybil de
+*gonflage* de score que le ch.9 n'a PAS fermé — il n'a fermé que le framing négatif).
+*Doute restant à PROUVER (sim, plus tard) :* la mesure passive est-elle vraiment **infalsifiable ET
+assez rapide** pour suivre un mobile qui bouge ? *Vérif :* nœuds égoïstes → service dégradé ;
+coopératifs → bon service ; **faibles-mais-honnêtes (témoignent sans relayer) NON exclus** ; relais
+trou-noir contourné en N s. *(Remplace l'inélégance actuelle : `weak` auto-déclaré + parent = plus petit id.)*
 
 ### Catégorie 3 — Sybil & réputation
 
