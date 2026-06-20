@@ -90,6 +90,24 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE C-sécu-1a (8.3★, 21 juin, supervisé) — corroboration MULTI-SIGNATAIRE : sécurité OK, RÉCUPÉRATION
+  PARTIELLE (63 %) SOUS la cible — le PLANCHER vérifié (1b, reporté) manque pour récupérer.** *Fait :* drapeau
+  `CORROB` ; chaque nœud publie l'estimation de SA cellule (`build_own_cell_claim`, plus seulement l'hôte) ;
+  stockage + relais des résumés **SIGNÉS** par (cellule, signataire) (`cell_claims`) pour propager l'épidémie
+  verbatim ; densité = Σ `qth_largest(counts, Q=3)` par cellule (**fonction PURE, test unitaire** : inflation
+  bornée au max honnête tant que < Q menteurs, contrôle à k≥Q = limite botnet). **Bug trouvé+corrigé en route :**
+  le relais lisait `cell_summaries` (non rempli par corrob) → **110 résumés reçus** ; après fix → **975 240**.
+  **78 tests, 0 warning, défaut intact.** *Résultat N=1000 :* taxe **0 %**, perception moy **563 / max 1000 = 63 %**
+  de DENSITY_MAX (895), **encore en hausse à t=70** (convergence plus lente : multi-signataire = plus à propager) ;
+  débit ↑54/↓55 Ko/s (**+17 %** vs DENSITY_MAX = coût de l'émission multi-signataire). *Lecture honnête (Règle 2,
+  le résultat décide) :* critère **≥80 % NON atteint** ; et **563 < 759** (mode défaut AVEC taxe à 1000, où la taxe
+  n'est que ~24 %) → **à 1000 la corroboration Q=3 coûte PLUS que la taxe qu'elle retire**. CAUSE probable : le
+  **repli CONSERVATEUR** des cellules à < Q signataires (→ plus petit count) sous-compte — c'est exactement ce que
+  le **PLANCHER vérifié (étape 1b, reporté)** doit corriger (donc le plancher n'est pas qu'anti-omission, il est
+  NÉCESSAIRE à la récupération). **PROCHAIN = C-sécu-1b :** densité = `max(plancher union vérifiée, qth_largest)`
+  → re-mesurer ; puis comparer corroboration vs taxe à **2000/5000** (la corroboration ne vaut QUE si elle SCALE
+  mieux que la taxe — à 1000 elle perd, mais la taxe explose à 68 % à 5000 : c'est là que ça se jouera).
+
 - **ÉTAPE C-diag (8.3★, 20 juin, supervisé) — RETIRER LE CHEF RESTAURE LA DENSITÉ ; le seul plafond
   restant de la perception à grande échelle est la DÉCOUVERTE (mur n°2).** *Fait :* drapeau additif
   `DENSITY_MAX=1` (link.rs) — count/cellule = **MAX vu** (monotone, non-thrashant ; hôte relâché), perception
