@@ -95,9 +95,20 @@
   **✅ RÉSOLU (20 juin) — c'était bien le LOCKSTEP.** Fix harnais-only (piste a) : décaler le démarrage
   des bots (`tick >= idx%20`) pour briser la synchro des timers (plus FIDÈLE au réel, pas une rustine).
   Résultat à N=1000 : pairs connus 44→**550**, perception **max 851** (≈ `crowd` 857 ✅), **débit ↑43,6
-  Ko/s plat** (= `crowd` ✅), moy 389 vs 454 (~85 %, côté CONSERVATEUR = sous-estime). **T0.2-bis PASSE :
-  le banc bus reproduit `crowd 1000` sur les invariants (max-perception + débit plat).** Banc bus VALIDÉ
-  → extrapolation 5k-50k désormais légitime (T0.3 dégelé).
+  Ko/s plat** (= `crowd` ✅), moy 389 vs 454 (~85 %, côté CONSERVATEUR = sous-estime). T0.2-bis passe À
+  N=1000 (le banc bus reproduit `crowd 1000` sur max-perception + débit plat).
+  **⚠ CORRECTION (20 juin, même session) — j'ai SUR-AFFIRMÉ : « extrapolation légitime » était PRÉMATURÉ ;
+  la mesure suivante l'a réfuté.** À **N=5000 le DEADLOCK REVIENT** (pairs connus 51, perception 0, débit
+  2,8). Mon décalage de démarrage (JOIN_SPREAD=20) ne désynchronise qu'au DÉMARRAGE puis revient en
+  lockstep → il a sauvé 1000 mais pas 5000. **Donc le banc n'est validé que jusqu'à ~1000 (≈ le plafond
+  d'avant). AUCUNE extrapolation 5k-50k.**
+  **QUESTION OUVERTE (pour toi) — le deadlock à 5000 est-il :** (i) un **vrai mur du PROTOCOLE** (le
+  bootstrap ne percole pas à l'échelle : rosters « 32 plus proches » asymétriques + `PUNCH_GIVEUP=40` +
+  gossip trop lent — *le genre de mur qu'on cherche TÔT, ce serait une vraie trouvaille*), ou (ii) un
+  **résidu de mon HARNAIS** (décalage trop grossier) ? Je ne tranche PAS sans (a) un décalage CONTINU des
+  timers (risque de « tuner » le banc jusqu'à ce que ça plaise = rustine), ou (b) rendre le bootstrap
+  symétrique côté `bot.rs` (apprendre+percer en retour au reçu d'un PUNCH inconnu = touche le PROTOCOLE →
+  supervisé). **STOP honnête : à reprendre AVEC toi.**
 
 - **T1.3 ✋ (20 juin) — D18 speed-hack : STOP au PAPIER (risque rustine), escaladé. FILE SÛRE ÉPUISÉE.**
   `move_plausible` est un contrôle PAR PAS (`dist ≤ MAX_SPEED·dt + SLACK`). Le « speed-hack grossier »
