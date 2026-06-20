@@ -90,6 +90,30 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **CASCADE-vs-N (20 juin, supervisé) — DEUX murs distincts SÉPARÉS par la mesure ; le suspect D26 de
+  l'utilisateur est le mur DOMINANT.** *Mesure validée ensemble : t de décollage + décomposition des
+  rejets à N=500/1000/2000/5000 (instantanés /5 s via env `SNAP_S`, additif).*
+  | N | régime | perception/N (fenêtre) | acceptés | **émetteur≠hôte** | pas-frais |
+  |---|---|---|---|---|---|
+  | 500 | pas de plateau, perc≈découverte | 453/500 = **91 %** (50 s) | 23 % | **10 %** | 67 % |
+  | 1000 | pas de plateau, perc≈découverte | 639/1000 = 64 % (45 s) | 22 % | **24 %** | 54 % |
+  | 2000 | découverte OK mais perception ÉTRANGLÉE | 192/2000 = **10 %** (50 s) | 14 % | **61 %** | 25 % |
+  | 5000 | découverte STAGNE ~49 (40 s) puis cascade | ~13 % à t=110 (monte) | 15 % | **68 %** | 17 % |
+  - **MUR n°1 (DOMINANT) — perception étranglée par D26 couche 1.** Le contrôle `émetteur == cell_host`
+    calcule l'hôte attendu sur une **vue LOCALE partielle** (le plus petit id connu DANS la cellule) ; à N
+    grand, chaque nœud connaît un sous-ensemble différent → vues de l'hôte DIVERGENTES → la taxe de rejet
+    monte **10 → 24 → 61 → 68 %** et la perception/N s'effondre **91 → 64 → 10 %**. *C'est le suspect INITIAL
+    de l'utilisateur, CONFIRMÉ par la mesure.* (Déjà au registre comme « faux négatif » de D26 couche 1,
+    parade prévue : tolérer une FENÊTRE d'hôtes plausibles, ou corroborer = couche 2.)
+  - **MUR n°2 (secondaire) — stagnation de découverte au bootstrap**, seulement à très grand N (~5000) :
+    ~49 pairs pendant ~40 s puis cascade. Robuste au jitter → propriété réelle (i). À 2000 la découverte ne
+    stagne PAS (101→992) ; le mur n°2 n'apparaît qu'au-delà.
+  - **Honnêteté de mesure :** les % de rejet sont agrégés non fenêtrés → dépendent de l'état de convergence
+    (fenêtres comparables 45-55 s ici → tendance robuste, pas une comparaison stricte). Banc bus = réseau
+    PARFAIT (mesure l'échelle algo, pas le réseau). « 55K » toujours pas prouvé directement.
+  - **DÉCISION POUR L'UTILISATEUR (pas de fix autonome) :** attaquer le mur n°1 (assouplir/corroborer le
+    contrôle d'hôte de D26) = le plus gros gain de perception, et c'est un vrai sujet de protocole.
+
 - **TEST JITTER → (i) PROPRIÉTÉ DU PROTOCOLE + la taxe D26 CROÎT à l'échelle (20 juin, supervisé).**
   *Test discriminant pré-enregistré (Règle 2) : jitter continu des horloges, opt-in `JITTER=1` (déphasage
   CONSTANT par bot = horloges indépendantes, plus fidèle au réel = D13 ; défaut inchangé → harnais de

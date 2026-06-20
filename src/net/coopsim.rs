@@ -213,7 +213,8 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     // INSTANTANÉ PÉRIODIQUE (D25, instrumentation) : toutes les ~10 s SIM, on imprime la TRAJECTOIRE
     // (pairs connus, trous ouverts, perception). Tranche « convergence LENTE » (ça monte) de
     // « DEADLOCK » (plat) en UN seul run — lecture seule, ne change rien au protocole.
-    let snap_every = (10.0_f32 / dt) as u64;
+    let snap_s: f32 = std::env::var("SNAP_S").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+    let snap_every = (snap_s / dt) as u64;
     for tick in 0..ticks {
         rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
         for (idx, bot) in bots.iter_mut().enumerate() {
