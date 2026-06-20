@@ -99,7 +99,14 @@
   **895 / max 1000 (89 %)**, taxe **0 %**, débit ↓46,8 → ✅ **passe plein** ; N=2000 → moy **1050 / max 1207
   (52/60 %)**, taxe **0 %**, débit ↓47,2 (PLAT ✓), perception/découverte = 1050/1420 = **74 %** (le reste manque
   car le bootstrap n'a pas fini de découvrir dans la fenêtre) ; N=5000 → trajectoire **plateau-puis-cascade**
-  (0 jusqu'à ~t=45 = mur n°2, puis 379→1127→1725 à t=60/80/100, montait encore — bilan à venir). **Leçon
+  (0 jusqu'à ~t=45 = mur n°2, puis 379→1127→1725→2213 à t=60/80/100/120). **Bilan final N=5000 (130 s) :**
+  perception moy **2426 / max 2992 (49/60 %)**, taxe **0 %**, découverte 1512/5000 (30 %), perception/découverte
+  = **160 %** (la densité agrège AU-DELÀ de ce que chaque nœud découvre seul). ⚠ **Lecture honnête (Règle 3,
+  pas d'extrapolation) :** (1) la densité n'atteint pas 70 % car la DÉCOUVERTE n'est qu'à 30 % — à 5000 le
+  **bootstrap (mur n°2) est si long que 130 s ne suffisent pas à converger** (perception montait ENCORE à t=120) ;
+  c'est mur n°2 qui domine la fenêtre, PAS un défaut de la densité. (2) Débit ↓**32,2** Ko/s, PLUS BAS que
+  1000/2000 (~47) = artefact d'une moyenne dominée par le long plateau (essaim non convergé) → **« débit plat »
+  confirmé 1000↔2000, INCONFIRMABLE à 5000** tant que le bench ne passe pas mur n°2. **Leçon
   (valide la thèse 8.3★) :** le **mur n°1 (taxe émetteur≠hôte) est DISSOUS** (0 % partout) et la densité
   **SUIT la découverte** → ce qu'il reste à attaquer pour la perception à l'échelle, c'est le **bootstrap lent
   (mur n°2)** — orthogonal, robuste au jitter = propriété réelle du protocole. **Caveat GRAVÉ :** `DENSITY_MAX`
