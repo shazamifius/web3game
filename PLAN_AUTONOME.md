@@ -90,6 +90,57 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **ÉTAPE C-diag (8.3★, 20 juin, supervisé) — RETIRER LE CHEF RESTAURE LA DENSITÉ ; le seul plafond
+  restant de la perception à grande échelle est la DÉCOUVERTE (mur n°2).** *Fait :* drapeau additif
+  `DENSITY_MAX=1` (link.rs) — count/cellule = **MAX vu** (monotone, non-thrashant ; hôte relâché), perception
+  = Σ counts ; + fix d'honnêteté de mesure (coopsim.rs : libellé « pas plus DENSE » sous ce mode). **77 tests,
+  0 warning, défaut intact.** *Critère pré-enregistré (Règle 2, écrit AVANT) : taxe→0 ET Σ counts/N ≥ 70 %
+  hors bootstrap ET débit plat ET pas de deadlock.* **Résultats (banc bus) :** N=1000 → perception moy
+  **895 / max 1000 (89 %)**, taxe **0 %**, débit ↓46,8 → ✅ **passe plein** ; N=2000 → moy **1050 / max 1207
+  (52/60 %)**, taxe **0 %**, débit ↓47,2 (PLAT ✓), perception/découverte = 1050/1420 = **74 %** (le reste manque
+  car le bootstrap n'a pas fini de découvrir dans la fenêtre) ; N=5000 → trajectoire **plateau-puis-cascade**
+  (0 jusqu'à ~t=45 = mur n°2, puis 379→1127→1725 à t=60/80/100, montait encore — bilan à venir). **Leçon
+  (valide la thèse 8.3★) :** le **mur n°1 (taxe émetteur≠hôte) est DISSOUS** (0 % partout) et la densité
+  **SUIT la découverte** → ce qu'il reste à attaquer pour la perception à l'échelle, c'est le **bootstrap lent
+  (mur n°2)** — orthogonal, robuste au jitter = propriété réelle du protocole. **Caveat GRAVÉ :** `DENSITY_MAX`
+  est un **INSTRUMENT non sécurisé** (le MAX est trivialement inflationnable) — la version SÛRE = densité MOLLE
+  CORROBORÉE /24 = **étape C-sécu, écrite sur PAPIER** (FEUILLE_DE_ROUTE §D, bloc 8.3★ C-sécu). Self-challenge
+  important : **le banc bus ne peut PAS prouver la sécurité /24** (loopback, ports gratuits) → l'anti-inflation
+  se prouve sous le **harnais NAT (vraies IP), en réutilisant 9.4b**. **PROCHAIN : 5000 finit (bilan), puis
+  challenger/coder C-sécu-1 (récupération headless) puis C-sécu-2 (anti-inflation NAT).**
+
+- **ÉTAPE B (8.3★, 20 juin, supervisé) — l'union d'individus NE récupère PAS la perception ; la mesure
+  révèle que « perception » conflait DEUX notions.** *Fait :* échantillons porteurs d'**ID** (cell.rs ;
+  wire `KIND_CELL_SUMMARY` 8→40 o/échantillon — bot/bench uniquement, `PROTO_VERSION` inchangé → un
+  vieux résumé est rejeté PROPREMENT par taille non canonique, pas mal lu) ; mode `UNION=1` (accumule
+  les individus distincts vus, perception = |union| ; implique hôte relâché). **77 tests, 0 warning,
+  défaut intact.** *Résultat N=2000 :* taxe émetteur≠hôte **0 %** ✓, MAIS perception moy **139** (max
+  571) → **ne bat même pas la baseline (192)**. *Cause :* échantillon déterministe strié (≤16/cellule)
+  → l'union plafonne à ~`cellules×16` ; et « individus distincts » est **intrinsèquement O(N)** / borné
+  par l'échantillonnage. *Leçon (raffine 8.3★, important) :* « perception » = **(1) DENSITÉ** (combien,
+  doit ≈ N — c'est CE qui s'effondrait via la taxe ; un NOMBRE) **+ (2) ÉCHANTILLON** (quels visages —
+  borné LOD, à faire tourner). L'union ne mesure que (2) ; le mur n°1 d'origine était la (1). **PROCHAIN
+  (à décider ensemble) :** restaurer la DENSITÉ sous hôte relâché via un count/cellule NON-thrashant (ex.
+  garder le MAX count vu = proxy honnête de la densité corroborée) → mesurer si Σ counts ≈ N revient sans
+  la taxe ; la sécurité du count (anti-inflation) = soft + corroboration (étape C). L'échantillon tournant
+  (diversité) = un raffinement séparé pour le rendu LOD.
+
+- **ÉTAPE A (diagnostic 8.3★, 20 juin, supervisé) — la taxe hôte est RÉELLE et retirable, MAIS la
+  relaxation naïve NE suffit PAS : l'UNION est le mécanisme porteur.** Drapeau `RELAX_HOST=1` (banc
+  HONNÊTE, non sécurisé ; défaut absent → comportement prouvé intact, 77 tests, 0 warning). *Critère
+  pré-enregistré : taxe→0 ET perception remonte.* **Résultat N=2000 :** rejet émetteur≠hôte **61 %→0 %**,
+  93 % acceptés ✓ ; **MAIS perception MOYENNE s'effondre 192→~20** tandis que le **MAX bondit 577→1324**.
+  → **version naïve RÉFUTÉE** (la moitié du critère échoue, honnêtement notée). *Cause (diagnostic) :*
+  `cell_summaries` garde **UN résumé par cellule (dernier arrivé)** ; sans la canonisation qu'apportait
+  l'élection d'hôte, ça **THRASHE** (chaque nœud écrase son résumé par celui d'un émetteur au petit
+  `count`) → moyenne effondrée, max élevé pour les chanceux. *Leçon (raffine 8.3★, important) :* l'élection
+  d'hôte ne TAXAIT pas seulement, elle **CANONISAIT**. Le vrai fix n'est donc PAS « retirer le contrôle »
+  mais **remplacer « 1 résumé/cellule (dernier) » par « UNION d'évidence par cellule »** (accumuler les
+  gens DISTINCTS vus, perception = |union|) — le cœur de 8.3★, désormais **empiriquement justifié**.
+  **PROCHAIN = étape B :** échantillons porteurs d'**ID** + ingestion par **UNION** (sans signatures
+  d'abord, banc honnête → isole la récupération de perception) ; puis étape C : signatures par échantillon
+  + cache de vérif → test du calcul CPU.
+
 - **CONCEPTION ÉCRITE (20 juin, supervisé) — REDESIGN 8.3★ « perception auto-certifiante » (PAPIER, zéro
   code).** Décidé avec l'utilisateur (il vise l'élégance, pas une rustine) : on **retire le chef de cellule**
   et on fonde la perception sur des **échantillons SIGNÉS** unionnés sur des relayeurs diversifiés (keystone

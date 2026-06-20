@@ -274,10 +274,20 @@ fn report_summary_rejections(bots: &[Bot]) {
     println!("  ✅ acceptés         : {acc} ({:.0}%)", pct(acc));
     println!("  ❌ émetteur≠hôte    : {host} ({:.0}%)   ← la dette D26 couche 1 (vue locale de l'hôte)", pct(host));
     println!("  ❌ sceau invalide   : {sig} ({:.0}%)", pct(sig));
-    println!("  ❌ pas plus frais   : {stale} ({:.0}%)   (même hôte, seq ≤ existant)", pct(stale));
+    // Le compteur `rej_stale` est partagé, mais sa SIGNIFICATION dépend du mode (honnêteté de mesure,
+    // 8.3★ étape C-diag) : sous DENSITY_MAX on rejette « count ≤ max déjà vu » (pas plus DENSE), sinon
+    // « seq ≤ existant » (pas plus FRAIS). On affiche le bon libellé pour ne pas se mé-relire plus tard.
+    let stale_label = if crate::net::link::density_max_mode() {
+        "pas plus DENSE (count ≤ max vu — normal sous DENSITY_MAX, redondance épidémique)"
+    } else {
+        "même hôte, seq ≤ existant"
+    };
+    println!("  ❌ pas plus frais   : {stale} ({:.0}%)   ({stale_label})", pct(stale));
     println!("  ❌ table pleine     : {full} ({:.0}%)   (MAX_CELLS)", pct(full));
     if recus == 0 {
         println!("=> 0 résumé reçu : le mur est la DÉCOUVERTE/PERÇÉE, PAS l'ingestion (D26 hors de cause ici).");
+    } else if crate::net::link::density_max_mode() {
+        println!("=> DENSITY_MAX : taxe émetteur≠hôte attendue à 0 % (contrôle d'hôte relâché) ; densité = Σ counts (MAX/cellule).");
     } else if host >= acc && host >= sig && host >= stale {
         println!("=> Rejet dominé par émetteur≠hôte : suspect D26 couche 1 (vues locales divergentes) PLAUSIBLE.");
     }

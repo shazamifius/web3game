@@ -1386,6 +1386,69 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
 >    signé / rejoué rejeté). Si la perception ne remonte pas OU le CPU explose → l'idée est réfutée, on le note.
 > 4. **Anti-rejeu de l'attaque** : un `attack` qui forge un faux résumé (fantômes/gonflage) doit imprimer « ÉCHOUÉ ».
 
+> ### ⚙ REDESIGN 8.3★ — ÉTAPE C-sécu : DENSITÉ MOLLE CORROBORÉE (PAPIER, écrit le 20 juin 2026)
+> *Conçu + auto-challengé pendant que les benchs C-diag tournaient (l'utilisateur s'en remet à moi sur ce choix
+> très pointu — cf. mémoire). À CHALLENGER encore à la relecture ; la mesure tranchera. Zéro code ici.*
+>
+> **CE QUE C-diag A ÉTABLI (banc bus, 20 juin) — le pré-requis de ce bloc.** Sous `DENSITY_MAX=1` (count/cellule =
+> MAX vu, non-thrashant ; hôte relâché), la DENSITÉ se restaure : N=1000 → perception moy **895 / max 1000** (89 %
+> de N), **taxe émetteur≠hôte = 0 %**, débit ↓ plat (~47 Ko/s) ; N=2000 → moy ~1035 (52 %, montait encore, plafonné
+> par la découverte = mur n°2). *Donc le mur n°1 (taxe) est bien la cause, et la densité est RÉCUPÉRABLE une fois la
+> taxe retirée.* MAIS `DENSITY_MAX` est un **INSTRUMENT non sécurisé** : le MAX est trivialement gonflable (un menteur
+> déclare `count` énorme → densité empoisonnée). C-sécu = rendre cette densité SÛRE sans rouvrir le mur n°1.
+>
+> **LA TENSION À DÉNOUER.** Les deux extrêmes échouent symétriquement : **MAX** robuste à l'omission (un trou-noir
+> qui sous-compte ne baisse pas le max) mais cassé par l'**inflation** ; **MIN** robuste à l'inflation mais cassé par
+> l'**omission** (un menteur dit 0 → suppression). Pire : entre HONNÊTES, le vrai count ≈ le plus informé → « crois le
+> plus haut » ; la sécurité dit « ne crois pas le plus haut ». Il faut un agrégat robuste qui réconcilie les deux.
+>
+> **LE PRINCIPE (cohérent 6.1 / 9.4b / 8.3★ : preuve + corroboration diversifiée, jamais une parole).** La densité
+> finale n'est pas un scalaire qu'on croit — c'est DEUX choses superposées :
+> - **(1) PLANCHER dur vérifiable = l'union signée (étape B réutilisée comme borne basse).** `|union des individus
+>   SIGNÉS distincts, frais, dans la cellule|`. Infalsifiable (chaque élément porte sa signature), **monotone** : un
+>   trou-noir peut OMETTRE, jamais RETRANCHER à ce que J'ai vérifié. Coût **O(cellules)** (échantillon ≤ K/cellule),
+>   pas O(N). Faiblesse assumée : sous-compte (~139 à 2000 mesuré) → c'est un plancher de CONFIANCE, pas le chiffre.
+> - **(2) DENSITÉ MOLLE corroborée (le vrai chiffre, sécurisé par diversité /24).** Chaque nœud peut publier
+>   `(cell, count, signer_id, seq, sig)` — **SIGNÉ** (anti-forge anonyme) mais **SANS élection d'hôte** (c'est ce qui
+>   supprime le mur n°1 : plus de `émetteur==cell_host` → plus de vue divergente → plus de taxe). Le receveur garde
+>   **un count par /24 distinct** (le meilleur de ce /24, modèle de cap de 9.4b), et **densité estimée = le Q-ième plus
+>   grand count parmi les /24 distincts** (un quantile haut borné par quorum, **Q≈3** comme `ACCUSE_QUORUM`).
+> - **Densité retenue = `max(plancher vérifié, densité molle corroborée)`** ; **consultative** (LOD/rendu), jamais autoritaire.
+>
+> **POURQUOI ÇA DISSOUT LES DEUX ATTAQUES (par construction).**
+> - **Inflation** : le `count` géant d'un menteur = **1 seul /24** → 1ᵉ plus haut, mais le **Q-ième est inchangé**.
+>   Pour le bouger il faut **Q réseaux /24 distincts** → coût = diversité d'IP (ressource rare, 9.4b), pas du CPU gratuit.
+> - **Omission / trou-noir** : déclarer 0 ajoute une valeur basse → ne baisse PAS le Q-ième plus haut, ne touche PAS au
+>   plancher vérifié. **La couche 2 (corroboration) est résolue dans le même geste.**
+> - **Suppression par flood de bas counts** : ajouter des valeurs basses ne déplace jamais un quantile HAUT, et on ne
+>   peut pas « dé-signer » les claims hauts des honnêtes → robuste.
+> - **Plus d'élection → la taxe émetteur≠hôte ne peut pas réapparaître** (mur n°1 dissous définitivement). Le count
+>   signé réintroduit un *signataire* mais **PAS une autorité** (chacun signe le sien, aucune élection) → ce n'est pas
+>   le retour du chef de cellule.
+>
+> **MES DOUTES (à garder ouverts — c'est mon rôle de les porter).**
+> 1. **⚠ Le banc bus NE peut PAS prouver la sécurité /24** (loopback = même /24, ports gratuits pour un attaquant — la
+>    limite EXACTE de 9.4b). → headless prouve la **récupération honnête** + la *logique* (tests unitaires) ; l'**anti-
+>    inflation /24 se prouve sous le harnais NAT namespaces (vraies IP)**, en réutilisant l'infra 9.4b. À ne JAMAIS confondre.
+> 2. **Temps de chauffe à découverte sparse** : avoir Q /24 distincts/cellule suppose assez de sources ; pendant le
+>    bootstrap (mur n°2) la densité retombe sur le **plancher vérifié** (conservateur) → dégrade vers la PRUDENCE
+>    (sous-compte), jamais vers la sur-confiance. Acceptable, à noter.
+> 3. **Récupération < MAX** : le Q-ième plus haut est un cran sous le MAX → on perdra un peu des 89 % (prix de la sécurité).
+> 4. **Choix de Q** : trop bas (1-2) = inflation trop facile ; trop haut = sous-compte permanent + temps de chauffe long.
+>    Q=3 proposé, **à confirmer par la mesure**. Limite fondamentale (comme tout P2P) : un botnet à IP réellement diverses
+>    contourne — et un attaquant qui POSSÈDE toute une cellule (tous Sybils) la définit (densité consultative → toléré).
+>
+> **PLAN EN PETITS PAS + CRITÈRE DE SUCCÈS PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT).**
+> 1. **Papier** : ce bloc (fait). Si un trou apparaît à la relecture → STOP, on ne code pas.
+> 2. **C-sécu-1 (headless, banc bus)** : count signé `(cell,count,signer,seq,sig)` SANS élection + agrégation
+>    « Q-ième plus haut par /24 » + plancher = union vérifiée. *Critère : densité corroborée ≥ **~80 % de ce que
+>    `DENSITY_MAX` atteignait** (on ne perd qu'un cran), débit ↓ PLAT, CPU borné.* Tests unitaires : Q-ième plus haut
+>    correct, plancher monotone, anti-rejeu par signer (seq).
+> 3. **C-sécu-2 (harnais NAT, vraies IP — réutilise 9.4b)** : red-team **inflation** (attaquant multi-Sybil sur 1 /24
+>    gonfle des counts → inflation mesurée ≈ 0 au-dessus de l'honnête → `attack` imprime « inflation ÉCHOUÉE ») ;
+>    red-team **omission** (trou-noir déclare 0 → densité perçue par les honnêtes INCHANGÉE).
+> 4. Si la récupération s'effondre OU le CPU explose OU l'inflation passe → l'idée est réfutée, on le note (résultat négatif = résultat).
+
 **— Phase B : l'inclusivité, maintenant que la foule est visible (ferme D3, D4, D5) —**
 
 - [ ] 8.4 — **Budget de réception annoncé (water-filling BILATÉRAL).** Chaque joueur publie
