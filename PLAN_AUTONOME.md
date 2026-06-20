@@ -90,6 +90,15 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **CONCEPTION ÉCRITE (20 juin, supervisé) — REDESIGN 8.3★ « perception auto-certifiante » (PAPIER, zéro
+  code).** Décidé avec l'utilisateur (il vise l'élégance, pas une rustine) : on **retire le chef de cellule**
+  et on fonde la perception sur des **échantillons SIGNÉS** unionnés sur des relayeurs diversifiés (keystone
+  6.1 + 9.4b un cran plus haut ; émetteur = porteur d'octets). Dissout le mur n°1 (taxe émetteur≠hôte) ET la
+  couche 2 (hôte menteur) par construction. **Détail + invariant + murs possibles + plan/critère
+  pré-enregistré : `FEUILLE_DE_ROUTE.md` §D, bloc « ⚙ REDESIGN 8.3★ ».** *Make-or-break = fermer le coût CPU
+  des vérifs sur le PAPIER avant de coder ; n'adresse PAS le mur n°2 (découverte).* **PROCHAIN : challenger le
+  papier ensemble, puis prototype headless mesuré.**
+
 - **CASCADE-vs-N (20 juin, supervisé) — DEUX murs distincts SÉPARÉS par la mesure ; le suspect D26 de
   l'utilisateur est le mur DOMINANT.** *Mesure validée ensemble : t de décollage + décomposition des
   rejets à N=500/1000/2000/5000 (instantanés /5 s via env `SNAP_S`, additif).*
