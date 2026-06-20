@@ -61,6 +61,10 @@ pub fn run_coopsim(n_bots: usize, secs: u64) {
 
     // 3) LA BOUCLE COOPÉRATIVE : on step CHAQUE bot une fois par tick, puis UN seul sleep cadence
     //    toute la marée. C'est ici que disparaît la sur-souscription d'OS-threads de `sim`.
+    // On photographie les octets AVANT la fenêtre (les prises comptent déjà le trafic du HELLO) →
+    // le débit mesuré ne couvre QUE la fenêtre `secs`, comparable au `crowd` (invariant débit plat).
+    let up0: u64 = bots.iter().map(|b| b.bytes_up()).sum();
+    let down0: u64 = bots.iter().map(|b| b.bytes_down()).sum();
     let tick = Duration::from_millis(50);
     let start = Instant::now();
     let mut last = Instant::now();
@@ -80,17 +84,25 @@ pub fn run_coopsim(n_bots: usize, secs: u64) {
     let total_accepted: u64 = bots.iter().map(|b| b.accepted()).sum();
     let avg_summary = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / n;
     let max_summary = bots.iter().map(|b| b.summary_perceived()).max().unwrap_or(0);
+    // Débit par nœud sur la fenêtre (mêmes compteurs de prise que `crowd` → comparable pour T0.2).
+    let up = bots.iter().map(|b| b.bytes_up()).sum::<u64>().saturating_sub(up0) as f32;
+    let down = bots.iter().map(|b| b.bytes_down()).sum::<u64>().saturating_sub(down0) as f32;
+    let kos_up = up / 1000.0 / n / secs as f32;
+    let kos_down = down / 1000.0 / n / secs as f32;
     println!("-------- CONVERGENCE (banc léger, 1 thread) --------");
-    println!("Voisinage moyen          : {avg_neighbors:.1} pairs/nœud (borné ~{}).", super::aoi::MAX_NEIGHBORS);
+    println!("Pairs CONNUS moyen       : {avg_neighbors:.1}/nœud (table, bornée MAX_KNOWN — PAS le focus ~32).");
     println!("États acceptés (total)   : {total_accepted} (≥1 ⇒ échange de bout en bout PROUVÉ)");
     println!(
         "Perception par RÉSUMÉ     : moy {avg_summary:.0}, max {max_summary} occupants via 1 flux (foule {})",
         bots.len()
     );
+    println!("Débit par nœud (fenêtre) : ↑{kos_up:.1} / ↓{kos_down:.1} Ko/s (invariant : doit rester PLAT quand N grandit)");
     println!("===========================================");
     if total_accepted > 0 && avg_neighbors >= 1.0 {
-        println!("✅ T0.1 : le banc coopératif mono-thread DÉLIVRE (découverte + échange d'états).");
-        println!("   ⚠ Fidélité PAS encore prouvée — voir T0.2 (reproduire `crowd 1000`) avant toute extrapolation.");
+        println!("✅ Le banc coopératif mono-thread DÉLIVRE (découverte + échange d'états).");
+        println!("   ⚠ T0.2 : FIDÈLE seulement à BAS N. À N≈1000, ce banc perçoit ~2× MOINS que `crowd 1000`");
+        println!("   (un thread sérialise N nœuds → dilate le temps mural ; l'UDP réel interdit un dt fixe).");
+        println!("   → NE PAS extrapoler vers 50k. Banc fidèle haute échelle = bus mémoire = change le cœur (file utilisateur).");
     } else {
         println!("⚠ Pas de convergence : rallonge `secondes`, ou le rendez-vous n'a pas amorcé.");
     }

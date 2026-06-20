@@ -48,10 +48,9 @@
   chiffres connus du vrai `sim`/`crowd` à ~1000–1500 nœuds (perception par résumé, débit plat, orbe 0/N).
   - *Preuve* : un run léger à 1000 nœuds donne perception/débit **cohérents** (±marge) avec le vrai
     `crowd 1000`. Si NON → le banc est faux (comme le bug 7.4b), je m'arrête et je le note. **Bloquant.**
-- **T0.3 — Extension + chasse au mur.** Seulement si T0.2 vert : rejouer perception ∝ N et débit à
-  **1k / 5k / 20k / 50k**. Rapporter : l'invariant tient-il ? où ça plie ? quel coût/nœud ?
-  - *Preuve* : un tableau N → {perception moy/max, Ko/s ↑↓, %CPU, RAM}. **Honnêteté** : dire si c'est
-    le PROTOCOLE qui plie ou le BANC (et lequel). Ne jamais écrire « 55K prouvé » — écrire ce qui EST mesuré.
+- **T0.3 — ⛔ GELÉ (T0.2 a échoué).** Extension à 5k/20k/50k IMPOSSIBLE de façon fidèle sur ce banc
+  (UDP réel + un thread = temps mural dilaté). Débloqué SEULEMENT si l'utilisateur autorise le bus
+  mémoire (= changement de cœur, voir FILE UTILISATEUR). Tant que non : **aucune extrapolation**.
 
 ### 🥈 TIER 1 — Durcissements concrets, bornés, additifs, headless
 - **T1.1 — D16 : TTL / éviction des pairs (ch.12.1).** Aujourd'hui `MAX_KNOWN` est un mur sans TTL →
@@ -75,6 +74,22 @@
 
 ## 📓 JOURNAL (rempli au fil des itérations autonomes — le plus récent en HAUT)
 
+- **T0.2 ⛔ (20 juin) — garde-fou de FIDÉLITÉ : ÉCHEC honnête → T0 GELÉ, escaladé.** Comparaison à
+  N=1000, mêmes conditions (POW_BITS=8, fenêtre 25 s) :
+  | perception résumé | `crowd 1000` (réf threadé) | `coopsim 1000` (1 thread) |
+  |---|---|---|
+  | moyenne | **454** | **97** |
+  | max | **857** | **427** |
+  Le banc léger perçoit **~2× moins**. *Diagnostic* : un seul thread sérialise N nœuds → **dilate le
+  temps mural** (25 s réelles = bien moins de ticks de protocole effectifs que la version threadée où
+  chaque thread dort 50 ms indépendamment). On **ne peut PAS** corriger par un pas de temps fixe : les
+  nœuds parlent en **UDP réel** (livraison asynchrone en temps mural) → découpler temps-sim/temps-réseau
+  est incohérent. **Donc un banc fidèle à haute échelle EXIGE un bus mémoire synchrone = rendre `Socket`
+  permutable = TOUCHER LE CŒUR → hors périmètre autonome.** *Décision* : T0.2 bloquant → **je n'extrapole
+  PAS (T0.3 gelé)**, j'escalade en FILE UTILISATEUR. Le banc reste utile/fidèle à BAS N (≤~200). Outil
+  ajouté (mesure débit ↑/↓ par nœud) + étiquette « voisinage » corrigée (c'est la table connue, pas le focus).
+  *NE conclut RIEN sur 55k* — c'est précisément ce que le garde-fou devait empêcher (cf. piège 7.4b).
+
 - **T0.1 ✅ (20 juin) — squelette du banc coopératif.** *Menace* : `sim`/`crowd` = un OS-thread +
   un `thread::sleep` PAR bot → plafond ~1500 (sur-souscription des cœurs), « 55K » jamais mesuré.
   *Fix* : nouveau `src/net/coopsim.rs` + sous-commande `coopsim` — N bots steppés dans UNE boucle,
@@ -94,4 +109,13 @@
 - **D26 couche 2 (corroboration)** et **D4 « parent par mesure du réel »** : murs de DESIGN, à
   défricher avec toi (risque rustine si fait en aveugle). *(Je peux les pré-défricher sur PAPIER si tu
   passes le périmètre à « + Tier 2 sur papier ».)*
+- **⭐ BANC FIDÈLE HAUTE ÉCHELLE (escaladé de T0.2, 20 juin) — décision pour toi.** Le banc léger
+  coopératif sur UDP réel n'est PAS fidèle au-delà de ~quelques centaines de nœuds (temps mural dilaté ;
+  mesuré : 2× moins de perception que `crowd 1000`). Pour mesurer DIRECTEMENT 5k-50k il faut un **bus
+  mémoire synchrone** → rendre `Socket` permutable (un backend mémoire en plus de l'UDP), ce qui touche
+  `transport.rs` (+ un constructeur `NetLink` injectant la prise). C'est faisable **strictement additif**
+  (le chemin UDP réel reste byte-pour-byte intact, prouvable par les 73 tests + `sim`), mais ça touche le
+  CŒUR → **je ne le fais pas sans ton feu vert.** *Si tu autorises, je le code, je revérifie que la base
+  est intacte, et T0.3 (chasse au mur 50k) redevient possible.* C'est LA pièce qui débloquerait enfin la
+  mesure directe de l'échelle (dette D25). **À toi de trancher au retour.**
 - _(ce que j'ajouterai si je dois stopper un pas)_
