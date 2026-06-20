@@ -45,46 +45,57 @@
 >   relais = problème de mécanisme) et **D26** (agrégateur/parent menteur). Si l'un est un vrai mur, le voir gratuit.
 > - **🟠 H3 — `Phase B inclusivité`** (D3/D4/D5) une fois H2 défriché. Puis NAT (D17) → voix → chiffrement → Unreal.
 
-> ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (≤30 lignes — L'ANCRE anti-dérive ; maj 20 juin 2026)
+> ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (L'ANCRE anti-dérive ; maj 21 juin 2026)
 > *Lire CE bloc + le 🎯 ci-dessus suffit pour reprendre au bon niveau. Tout ce qui suit dans §0
 > est un JOURNAL d'archive — ne le relire qu'au besoin, via `grep`. Anti-collapse : on s'ancre ici,
 > on ne se rejoue pas tout l'historique à chaque session.*
 >
-> **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense »
-> Phase A BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule frais), **10.1 identité
-> PERSISTANTE FAIT** (D14 fermé), **D26 couche 1 FAITE** (résumé de cellule AUTHENTIFIÉ : signé +
-> `seq`/hôte + `émetteur==cell_host`). **73 tests, 0 warning.** Audit : **9 fermés · 8 bornés · 9 ouverts**
-> (sur 26 ; D26 passe d'ouvert à BORNÉ — couche 2 = corroboration restante).
+> **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense » Phase A
+> BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule), **10.1 identité PERSISTANTE FAIT**
+> (D14 fermé). **Investigation 8.3★ EN COURS** (perception à grande échelle) : un **banc bus mémoire** (D25,
+> dette de harnais levée) mesure désormais jusqu'à 5000+ nœuds sur un PC. Il a **séparé DEUX murs**, et le
+> redesign **« perception auto-certifiante » RETIRE le chef de cellule** (l'élection d'hôte de D26 couche 1
+> était le mur dominant — mesuré, pas supposé). **78 tests, 0 warning, cœur + chemin UDP byte-pour-byte intacts.**
 >
-> **3 MESURES « TROP GENTILLES » à ne pas se mentir (détail au 🧾 registre) :** (a) « couverture » =
-> pairs CONNUS, pas ENTENDUS (optimiste) ; (b) la FRAÎCHEUR (âge de perception d'un lointain) jamais
-> mesurée en direct → « 1/N tué » prouvé seulement *indirectement* ; (c) banc plafonné ~1500 nœuds →
-> « perception ∝ N » mesuré à 1000-2000, *argumenté* au-delà → **ne JAMAIS dire « 55K prouvé »**.
+> **⚙ 8.3★ — LES DEUX MURS DE LA PERCEPTION (mesurés au banc bus, 20-21 juin) :**
+> - **MUR n°1 — la taxe `émetteur≠hôte` (D26 couche 1) = DISSOUS.** L'ingestion n'acceptait un résumé que si
+>   `émetteur == cell_host` (le plus petit id connu de la cellule) ; à grand N les vues divergent → rejet
+>   **10→68 %**, perception/N s'effondre **91→10 %**. **Étape C-diag (`DENSITY_MAX`) :** on retire l'élection,
+>   count/cellule = MAX vu → taxe **0 %**, densité RESTAURÉE : **N=1000 → 89 % (perception 895/1000)**, débit ↓
+>   PLAT (~46-47 Ko/s). Mesuré, pas argumenté.
+> - **MUR n°2 — bootstrap LENT de la découverte** (~45 s à 5000 puis cascade ; robuste au jitter = propriété
+>   RÉELLE du protocole). C'est désormais **LE plafond restant** de la perception à l'échelle : la densité SUIT
+>   la découverte (N=2000 → 52 %, N=5000 → 49 % et MONTAIT encore en fin de fenêtre). **Orthogonal au 8.3★.**
+> - **Sécurité (étape C-sécu, EN COURS) :** `DENSITY_MAX` est un INSTRUMENT (le MAX est gonflable). La version
+>   SÛRE = **densité MOLLE CORROBORÉE** (`CORROB` : Q-ième plus grand count par /24 distinct = `qth_largest` ;
+>   prouvé : inflation bornée au max honnête tant que < Q menteurs, contrôle à k≥Q = limite botnet). **C-sécu-1a
+>   CODÉ + testé** ; récupération en cours de mesure ; anti-inflation /24 = harnais NAT (réutilise 9.4b). Détail :
+>   §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu ».
 >
-> **✅ D26 COUCHE 1 FAITE (20 juin) — le résumé de cellule n'est plus anonyme.** Avant, `ingest_summary`
-> ne vérifiait que `ts` + borne mémoire : n'importe qui forgeait un résumé pour n'importe quelle cellule,
-> et un `ts = u64::MAX` épinglait le mensonge à vie. Désormais l'hôte **embarque sa clé + SIGNE** (modèle
-> état joueur), la fraîcheur est un **`seq` monotone PAR HÔTE** (plus l'horloge `ts` forgeable), et
-> l'ingestion exige **`émetteur == cell_host` PUIS sceau valide** (cheap avant cher). → forge anonyme,
-> `count=0` qui efface une région, et épinglage `ts=MAX` **tués** (tests red-team + sim crowd 200 : perception
-> intacte, max 200 occupants via 1 flux). **73 tests, 0 warning.** *Reste la COUCHE 2 (l'hôte LÉGITIME peut
-> mentir sur SA cellule → corroboration, couplée à D4) = le vrai mur. 3 dettes assumées au 🧾 registre.*
+> **3 MESURES « TROP GENTILLES » à ne pas se mentir (détail au 🧾 registre) :** (a) « couverture » = pairs
+> CONNUS, pas ENTENDUS (optimiste) ; (b) la FRAÎCHEUR (âge de perception d'un lointain) jamais mesurée en direct ;
+> (c) **« 55K » jamais mesuré DIRECTEMENT** — densité mesurée à 1000 (89 %), à 2000/5000 bridée par le bootstrap
+> (mur n°2) → **ne JAMAIS dire « 55K prouvé » ni « converge à 5000 »**.
 >
-> **✅ H2 DÉFRICHÉ (20 juin) — les 2 murs vus gratuitement sur le papier :**
-> - **D4+D5** retournés en problème de MESURE, pas d'économie : « **parent par mesure du réel** » (capacité
->   observée infalsifiable + affectation locale + dégradation équitable ; réputation seulement vs tricheurs).
-> - **D26** (résumé menteur) en 2 couches : **(1)** authentifier le résumé (signer + `seq`/hôte + vérifier
->   `émetteur==cell_host`) — quasi mécanique ; **(2)** corroborer (le vrai mur, même principe que D4).
-> - A dégagé le **principe directeur n°7** (« composer avec le réel : fait vs devinette → dériver ») et, via
->   3 sous-agents, confirmé que **D26 est le SEUL paquet vraiment ouvert** (WELCOME/PUNCH/GOSSIP bornés) et que
->   le vrai lot de « devinettes » à dériver ≈ **6** (focus/budget/relais) = **le même fix que D4**.
-> - Inélégances code notées : `weak` auto-déclaré [main.rs:126], parent = plus petit id [send.rs:123].
+> ### 🎬 POUR LA CONCEPTION D'UNE DÉMO (ce qui est PROUVÉ vs ce qu'il ne faut PAS prétendre — maj 21 juin)
+> **Démontrable, solide (à montrer sans risque) :**
+> - **Jeu 3D P2P réel** : plusieurs fenêtres, avatars + pseudos + badge OWN, hole-punching NAT RÉEL (full-cone, namespaces), orbe autoritaire avec migration.
+> - **Foule dense en 3D** : rendu à deux tiers (focus net + foule en imposteurs LOD), **>64 visibles sans lag** (confirmé écran à `tools/foule-3d.sh 80`).
+> - **Tenue sous mauvais réseau** : 250 ms + jitter + 5 % perte + ré-ordonnancement → l'essaim tient (ch.7, `tools/sim-netem.sh`).
+> - **Résistance aux attaques** (headless, `cargo run -- attack …`) : Sybil-framing ÉCHOUE, gossip-flood absorbé (0 réflexion), orbe 0 volée, tricheurs en sourdine.
+> - **Échelle (headless, banc bus)** : perception d'une foule via résumés de cellule, **densité restaurée à 1000 (89 %) à débit reçu PLAT** ; coût/nœud ~0,27 Mbit/s ↑.
+> - **Identité persistante** : même « compte » entre deux lancements (clé locale, comme une clé SSH).
+> **À NE PAS prétendre dans la démo (honnêteté = crédibilité) :**
+> - **PAS « 55 000 prouvé »** : mesuré directement jusqu'à ~1000-2000 ; au-delà = archi + extrapolation.
+> - **PAS « converge à 5000 »** : à 5000 le bootstrap (mur n°2) est lent → la perception monte mais n'a pas fini dans nos fenêtres ; « débit plat » n'est confirmé que 1000↔2000.
+> - **PAS « densité sécurisée prouvée »** : `CORROB` n'est prouvé qu'en *logique* + récupération headless ; le /24 anti-inflation réel attend le harnais NAT (C-sécu-2).
+> - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
+> - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = PHASE B suite.** Couche 1 de D26 faite (ci-dessus). Deux pistes au choix :
-> **(A) « parent par mesure du réel »** (dérive AUSSI le focus/budget — le gros morceau D4/D5) ;
-> **(B) couche 2 de D26** (corroboration multi-informateurs — même principe que D4). Note : un résumé est
-> aujourd'hui durci sur le chemin SIM (bots) ; le câbler dans le client réel `netcode/receive.rs` viendra
-> avec la couche 2. *Petit pas, preuve d'abord : compile→test→sim→commit→push.*
+> **PROCHAINE ACTION = finir l'étape C-sécu.** (1) mesurer la RÉCUPÉRATION de `CORROB` vs `DENSITY_MAX` (cible
+> ≥ ~80 %, en cours) ; (2) C-sécu-1b : plancher vérifié anti-omission (union signée) ; (3) C-sécu-2 : red-team
+> inflation/omission sous harnais NAT (vraies IP). **Puis** : attaquer le **mur n°2** (bootstrap symétrique — touche
+> le protocole → supervisé), ou Phase B inclusivité, ou ch.10.2 chiffrement. *Petit pas, preuve d'abord.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
@@ -496,10 +507,10 @@ Chaque doute a : **Constat** (ce qui ne va pas / ce dont je ne suis pas sûr),
 **Piste de correction**, **Comment on le vérifiera**. Le chapitre qui le ferme est
 indiqué entre crochets `[ch. X]`.
 
-> ### 📊 AUDIT DES DOUTES — état honnête au 20 juin (ce tableau fait FOI ; l'analyse détaillée suit)
-> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **9 fermés** (D22
-> au 8.3d, D14 au 10.1), **7 bornés** (+ D25 banc d'essai), **10 ouverts** (+ D26 agrégateur menteur) — sur 26 doutes.
-> Les ouverts se regroupent PROPREMENT en chantiers, ce qui confirme le plan (voir sous le tableau).*
+> ### 📊 AUDIT DES DOUTES — état honnête au 21 juin (ce tableau fait FOI ; l'analyse détaillée suit)
+> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **9 fermés**, **11
+> bornés**, **6 ouverts** (sur 26 ; maj : D16 TTL FAIT → borné ; D21 rate-limit FAIT ; D25 banc bus BÂTI ; D26 en
+> refonte 8.3★). Les ouverts se regroupent PROPREMENT en chantiers, ce qui confirme le plan (voir sous le tableau).*
 >
 > | # | Statut | Où en est-on / qui le ferme |
 > |---|---|---|
@@ -517,17 +528,17 @@ indiqué entre crochets `[ch. X]`.
 > | **D13** pas d'horloge commune | 🔴 | autorité, **ch.11.3** |
 > | **D14** identité non persistante | ✅ | **10.1 FAIT** : clé sauvée `~/.web3game/<profil>.key`, rechargée au lancement (prouvé) |
 > | **D15** tout en clair (vie privée) | 🔴 | **ch.10.2** (chiffrement X25519) |
-> | **D16** fuites mémoire long terme | 🔴 | longévité, **ch.12.1** (TTL/éviction) |
+> | **D16** fuites mémoire long terme | 🟡 | **T1.1 FAIT** : TTL/éviction des pairs (un mort cède son slot, jamais un actif) ; DHT/fédération → annexe H |
 > | **D17** NAT symétrique | 🔴 | longévité, **ch.12.3** (relais/IPv6) |
 > | **D18** speed-hack grossier | 🟡 | à surveiller, **ch.11.4** |
 > | **D19** coût réel jamais mesuré | ✅ | 7.4/7.4b : Ko/s ↑↓, %CPU, RAM par nœud |
 > | **D20** attaques combinées | 🟡 | `sim` lance plusieurs attaquants en // ; pas encore de scénario coordonné adaptatif |
-> | **D21** sécurité du rendez-vous | 🟡 | 9.5a (cap mémoire + PoW) ; reste rate-limit débit + anti-spoofing |
-> | **D22** foule dense (aveugle > 32) | ✅ | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) + **8.3d (résumés frais, invariant prouvé jusqu'au banc ~1500 ; 5000 littéral = dette de HARNAIS, pas du protocole)** |
+> | **D21** sécurité du rendez-vous | 🟡 | 9.5a (cap mémoire + PoW) + **T1.2 FAIT** (rate-limit débit par source) ; reste l'anti-spoofing (handshake de routabilité) |
+> | **D22** foule dense (aveugle > 32) | ✅ | 8.1 (plafond cassé) + 8.2 (deux tiers) + 8.2c (rendu) + 8.3d (résumés frais). **8.3★ (banc bus) :** densité restaurée à 1000 (89 %) à débit PLAT ; à 5000 bridée par la DÉCOUVERTE (mur n°2), pas par le protocole |
 > | **D23** gossip = ampli DDoS | ✅ | 8.1b : prouvé par `attack gossip-flood` |
 > | **D24** foule visible plafonnée 64 | ✅ | 8.2c : rendu deux tiers, confirmé à l'écran |
-> | **D25** banc d'essai plafonné (~1500) ; « 55k » non mesuré DIRECTEMENT | 🟡 | invariant prouvé à 1000 + argument d'archi (budget capé) ; 5000+ = simulateur léger à bâtir (dette harnais) |
-> | **D26** agrégateur/résumé MENTEUR | 🟡 | DÉFRICHÉ en H2 : **couche 1** authentifier le résumé (signer + `seq`/hôte + émetteur==cell_host) ; **couche 2** corroboration (couplée D4). À CODER en tête de Phase B |
+> | **D25** banc d'essai ; « 55k » non mesuré DIRECTEMENT | 🟡 | **banc BUS mémoire BÂTI** (dt fixe, découplé du mural) → mesure jusqu'à 5000+ ; reste : 55k non direct + mur n°2 (bootstrap) limite la convergence à 5000 |
+> | **D26** agrégateur/résumé MENTEUR | 🟡 | **REDESIGN 8.3★ : on RETIRE le chef de cellule** (l'élection était le mur n°1, mesuré). C-diag : taxe dissoute, densité restaurée. **C-sécu** (en cours) : densité molle CORROBORÉE /24 (`qth_largest`) → couches 1+2 fusionnées par construction |
 >
 > **Les doutes 🔴 ouverts se rangent en chantiers — ça VALIDE le plan :**
 > - **Inclusivité** (D3, **D4**, D5 + **D26**) → **fin du ch.8, Phase B** *(prochain gros cap)*
@@ -1309,6 +1320,11 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
 > ### ⚙ REDESIGN 8.3★ — PERCEPTION AUTO-CERTIFIANTE (le chef de cellule RETIRÉ) — écrit le 20 juin 2026 (PAPIER, zéro code)
 > *Décidé avec l'utilisateur après la passe de mesure du banc bus (cascade-vs-N). On NE patche PAS le contrôle
 > d'hôte de D26 : on retire le besoin de chef. À CHALLENGER ensemble avant de coder ; la mesure tranchera.*
+>
+> **▶ ÉTAT (21 juin) — le papier est devenu de la MESURE :** **C-diag FAIT** (`DENSITY_MAX` — retirer le chef
+> RESTAURE la densité : N=1000 → 89 %, taxe 0 %, débit plat ; à 5000 bridé par la découverte = mur n°2).
+> **C-sécu-1a CODÉ + testé** (`CORROB` : densité molle corroborée /24, `qth_largest` prouvé), récupération en
+> cours de mesure. Détail/plan de la sécurité : bloc **« ÉTAPE C-sécu »** plus bas. Journal des mesures : `PLAN_AUTONOME.md`.
 >
 > **CE QUE LA MESURE A ÉTABLI (banc bus, 20 juin).** Deux murs DISTINCTS de la perception à l'échelle :
 > - **Mur n°1 (DOMINANT) — la taxe `émetteur≠hôte` de D26 couche 1.** `ingest_summary` n'accepte un résumé que

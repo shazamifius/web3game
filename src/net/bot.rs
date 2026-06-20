@@ -567,12 +567,22 @@ impl Bot {
                     //     ET relayé). La FRAÎCHEUR n'est plus l'horloge `ts` (forgeable) mais mon `seq`
                     //     monotone interne, porté verbatim par les relais (8.3d) → ma copie fraîche bat
                     //     les vieilles encore en vol, et un non-hôte ne peut pas forger ce seq.
-                    if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id) {
+                    // 8.3★ C-sécu : sous corroboration, CHAQUE nœud publie l'estimation de SA cellule
+                    // (pas seulement l'hôte → plusieurs signataires/cellule, la corroboration est exercée) ;
+                    // sinon (défaut/DENSITY_MAX) seul l'hôte élu résume sa cellule (modèle 8.3c/8.3d).
+                    if crate::net::link::density_corrob_mode() {
+                        let s = self.link.build_own_cell_claim((pos.x, pos.z), my_id);
+                        self.link.ingest_summary(s, (pos.x, pos.z), my_id);
+                    } else if let Some(s) = self.link.build_my_cell_summary((pos.x, pos.z), my_id) {
                         self.link.ingest_summary(s, (pos.x, pos.z), my_id);
                     }
-                    // (b) Relais borné : un échantillon TOURNANT des résumés détenus (épidémie).
-                    let summaries: Vec<CellSummary> =
-                        self.link.cell_summaries.values().cloned().collect();
+                    // (b) Relais borné : un échantillon TOURNANT des résumés détenus (épidémie). Sous CORROB
+                    // on relaie les claims multi-signataires (`cell_claims`) ; sinon les résumés d'hôte.
+                    let summaries: Vec<CellSummary> = if crate::net::link::density_corrob_mode() {
+                        self.link.cell_claims.values().cloned().collect()
+                    } else {
+                        self.link.cell_summaries.values().cloned().collect()
+                    };
                     if !summaries.is_empty() {
                         let start = self.summary_cursor % summaries.len();
                         self.summary_cursor = self.summary_cursor.wrapping_add(1);

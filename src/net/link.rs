@@ -89,6 +89,14 @@ pub struct NetLink {
     /// Remplace le « 1 résumé/cellule (dernier) » qui thrashait sans élection d'hôte (mesuré étape A).
     /// (Banc statique : pas de TTL ici ; l'éviction des partis = étape ultérieure, liée à D16.)
     pub(crate) perceived: HashSet<PeerId>,
+    /// CORROBORATION DE DENSITÉ (chap. 8.3★, étape C-sécu — actif sous `density_corrob_mode()`). Pour chaque
+    /// (cellule, SIGNATAIRE), le dernier RÉSUMÉ SIGNÉ reçu — on garde le résumé ENTIER (pas juste le count)
+    /// pour pouvoir le RELAYER VERBATIM (la signature doit voyager intacte → épidémie multi-signataires). La
+    /// densité d'une cellule = `qth_largest` des counts par signataire distinct → bornée contre l'inflation
+    /// (< Q menteurs ⇒ estimation ≤ max honnête ; il faut Q /24 distincts pour la contrôler). Pas d'élection
+    /// → pas de mur n°1. `seq` par signataire = anti-rejeu. Sur le banc, un nœud = un /24 (port) → signataire
+    /// ≡ /24 ; le vrai cap /24 + le plancher vérifié anti-omission = étapes suivantes (NAT, 9.4b). Borné `MAX_CELL_CLAIMS`.
+    pub(crate) cell_claims: HashMap<((i32, i32), PeerId), CellSummary>,
     /// INSTRUMENTATION (D25, banc — lecture seule, ne change AUCUNE décision). Compte POURQUOI les
     /// résumés de cellule sont acceptés/rejetés à l'ingestion, pour disambiguer « la découverte ne
     /// livre pas les résumés » (reçus ≈ 0) de « les résumés arrivent mais sont rejetés » (D26 couche 1
@@ -153,6 +161,30 @@ pub(crate) fn density_max_mode() -> bool {
     *D.get_or_init(|| matches!(std::env::var("DENSITY_MAX").as_deref(), Ok("1") | Ok("true")))
 }
 
+/// MODE DENSITÉ CORROBORÉE (chap. 8.3★, étape C-sécu-1a, env `CORROB=1`). La version SÛRE que `DENSITY_MAX`
+/// préparait : au lieu du MAX aveugle (gonflable par un seul menteur), la densité d'une cellule = le **Q-ième
+/// plus grand count parmi les signataires DISTINCTS** (`qth_largest`, `CORROB_QUORUM`). Pas d'élection d'hôte
+/// (pas de mur n°1). Headless, ça PROUVE la RÉCUPÉRATION (un nœud = un /24 par port → signataire ≡ /24) ; le
+/// vrai cap /24 anti-inflation + le plancher vérifié anti-omission = étapes 1b/1c (harnais NAT, vraies IP).
+/// Le défaut (absent) laisse le comportement prouvé INTACT. Résolu une fois par processus.
+pub(crate) fn density_corrob_mode() -> bool {
+    static C: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *C.get_or_init(|| matches!(std::env::var("CORROB").as_deref(), Ok("1") | Ok("true")))
+}
+
+/// Le Q-ième plus grand d'une liste de counts (chap. 8.3★ C-sécu) — l'estimateur de densité robuste à
+/// l'inflation : il faut Q sources DISTINCTES pour porter une valeur jusqu'à ce rang. PUR → testable
+/// unitairement. Si moins de Q valeurs disponibles → CONSERVATEUR (on renvoie la plus PETITE qu'on a =
+/// on exige l'accord de toutes celles reçues) ; liste vide → 0. Le plancher vérifié (anti-omission) = 1b.
+pub(crate) fn qth_largest(mut counts: Vec<u32>, q: usize) -> u32 {
+    if counts.is_empty() {
+        return 0;
+    }
+    counts.sort_unstable_by(|a, b| b.cmp(a)); // décroissant
+    let idx = q.min(counts.len()) - 1; // Q-ième si on en a assez, sinon la plus petite reçue (conservateur)
+    counts[idx]
+}
+
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
 /// nœud est ainsi le « Shield » de ce qu'il observe : il détecte et bannit localement.
 pub(crate) const MAX_STRIKES: u32 = 5;
@@ -215,6 +247,15 @@ pub(crate) const PEER_TTL: Duration = Duration::from_secs(120);
 /// borne la mémoire contre un attaquant qui inventerait des milliers de fausses cellules. Très
 /// large devant le nombre de cellules réellement à portée d'un joueur.
 pub(crate) const MAX_CELLS: usize = 4096;
+
+/// Nombre de SIGNATAIRES /24-distincts requis pour corroborer une densité (chap. 8.3★ C-sécu). La densité
+/// d'une cellule = le Q-ième plus grand count → un menteur seul (1 /24) ne déplace pas ce quantile. Égal à
+/// `ACCUSE_QUORUM` (même philosophie : 3 sources indépendantes), à confirmer/ajuster par la mesure.
+pub(crate) const CORROB_QUORUM: usize = ACCUSE_QUORUM;
+
+/// Plafond du nombre de claims de count `(cellule × signataire)` retenus (chap. 8.3★ C-sécu) — anti-saturation
+/// mémoire, comme `MAX_CELLS` mais pour la corroboration multi-signataires (plusieurs signataires par cellule).
+pub(crate) const MAX_CELL_CLAIMS: usize = 65536;
 
 /// NOUVEAUX pairs/s qu'UNE source de gossip peut nous faire apprendre (chap. 8.1b, D23).
 /// Au-delà, ses cartes inconnues sont ignorées : un attaquant ne peut plus nous faire
@@ -364,6 +405,7 @@ impl NetLink {
             cell_summaries: HashMap::new(),
             summary_seq: 0,
             perceived: HashSet::new(),
+            cell_claims: HashMap::new(),
             summary_stats: SummaryStats::default(),
             weak,
         }
@@ -617,6 +659,24 @@ impl NetLink {
         Some(s)
     }
 
+    /// Construit un RÉSUMÉ SIGNÉ de MA propre cellule SANS condition d'hôte (chap. 8.3★ C-sécu). Sous le
+    /// modèle « pas de chef », N'IMPORTE QUEL nœud publie son estimation de SA cellule (les occupants qu'il
+    /// connaît + lui) → PLUSIEURS signataires par cellule, ce qui exerce la corroboration (`qth_largest`).
+    /// `seq` monotone + sceau (auto-certifiant). Même corps que `build_my_cell_summary` mais sans l'élection.
+    pub(crate) fn build_own_cell_claim(&mut self, me: (f32, f32), my_id: PeerId) -> CellSummary {
+        let my_cell = cell_of(me.0, me.1);
+        let mut occupants: Vec<(PeerId, f32, f32)> = vec![(my_id, me.0, me.1)]; // moi
+        for (id, pos) in &self.peer_pos {
+            if self.peers.contains_key(id) && cell_of(pos.0, pos.1) == my_cell {
+                occupants.push((*id, pos.0, pos.1));
+            }
+        }
+        self.summary_seq += 1;
+        let mut s = build_cell_summary(my_cell, my_id, &occupants, self.summary_seq);
+        sign_summary(&mut s, &self.identity);
+        s
+    }
+
     /// INGÈRE un résumé de cellule reçu (chap. 8.3c, durci 8.3d, AUTHENTIFIÉ D26-couche-1). Trois
     /// verrous, du moins cher au plus cher (borne le coût CPU d'un flot de faux) :
     /// 1. **émetteur LÉGITIME** : `s.host` doit être l'hôte attendu de `s.cell` selon MA connaissance
@@ -634,13 +694,34 @@ impl NetLink {
         // 1) émetteur légitime (pas cher) AVANT 2) le sceau (cher).
         // ÉTAPE A/B (8.3★) : on retire ce contrôle sous `relax_host_check()` OU `union_mode()` (l'union se
         // nourrit de TOUS les émetteurs). ⚠ NON SÉCURISÉ (banc honnête) ; la sécurité par échantillon = étape C.
-        if !relax_host_check() && !union_mode() && !density_max_mode() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
+        if !relax_host_check() && !union_mode() && !density_max_mode() && !density_corrob_mode() && self.cell_host(s.cell, me, my_id) != Some(s.host) {
             self.summary_stats.rej_host += 1; // instrumentation D25 (lecture seule)
             return false; // forge anonyme / cellule qu'il n'héberge pas
         }
         if !summary_sig_ok(&s) {
             self.summary_stats.rej_sig += 1;
             return false; // sceau invalide : contenu falsifié ou clé usurpée
+        }
+        // ÉTAPE C-sécu-1a (8.3★, CORROB) : on garde le dernier count SIGNÉ par (cellule, SIGNATAIRE) ;
+        // la densité (`summary_perceived`) = Q-ième plus grand par cellule → borné contre l'inflation
+        // (< Q menteurs ⇒ estimation ≤ max honnête ; il faut Q /24-distincts pour contrôler). Anti-rejeu
+        // par seq/signataire (un vieux count ne ré-écrase pas). Borné par `MAX_CELL_CLAIMS`.
+        if density_corrob_mode() {
+            let key = (s.cell, s.host);
+            match self.cell_claims.get(&key) {
+                Some(existing) if s.seq <= existing.seq => {
+                    self.summary_stats.rej_stale += 1; // pas plus frais de CE signataire (anti-épinglage)
+                    return false;
+                }
+                None if self.cell_claims.len() >= MAX_CELL_CLAIMS => {
+                    self.summary_stats.rej_full += 1; // table pleine : on borne la mémoire
+                    return false;
+                }
+                _ => {}
+            }
+            self.summary_stats.accepted += 1;
+            self.cell_claims.insert(key, s); // on garde le résumé SIGNÉ ENTIER (pour le relais verbatim)
+            return true;
         }
         // ÉTAPE B (8.3★) : sous UNION, on ACCUMULE les personnes distinctes vues (par id d'échantillon)
         // → perception = |union|, robuste au « thrash » du dernier-arrivé. Idempotent (insertion de set).
@@ -699,7 +780,15 @@ impl NetLink {
     /// cellules. Si ≈ la taille de la foule à portée, l'invariant tient : on voit toute la foule via
     /// QUELQUES flux résumés (O(cellules)), pas N états au compte-gouttes 1/N de la conscience.
     pub(crate) fn summary_perceived(&self) -> u32 {
-        if union_mode() {
+        if density_corrob_mode() {
+            // Étape C-sécu-1a (8.3★) : densité = Σ sur cellules du Q-ième plus grand count parmi les
+            // signataires DISTINCTS → borné contre l'inflation (< Q menteurs ⇒ estimation ≤ max honnête).
+            let mut by_cell: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+            for (&(cell, _signer), claim) in &self.cell_claims {
+                by_cell.entry(cell).or_default().push(claim.count);
+            }
+            by_cell.into_values().map(|v| qth_largest(v, CORROB_QUORUM)).sum()
+        } else if union_mode() {
             // Étape B (8.3★) : perception = nombre de personnes DISTINCTES vues dans les échantillons.
             self.perceived.len() as u32
         } else {
@@ -880,6 +969,30 @@ mod tests {
 
     fn addr(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    /// 8.3★ C-sécu-1a — l'estimateur de densité robuste : le Q-ième plus grand count. Garantie exacte
+    /// (Q=3) : avec **k menteurs < Q**, l'estimation = le (Q−k)-ième count HONNÊTE → bornée par le max
+    /// honnête (≤ vraie densité) → **pas d'inflation AU-DESSUS du réel** ; il faut **k ≥ Q menteurs
+    /// /24-distincts pour CONTRÔLER** la valeur (limite botnet, 9.4b). Et à moins de Q sources →
+    /// CONSERVATEUR (la plus petite reçue, on exige l'accord de toutes).
+    #[test]
+    fn qth_largest_borne_l_inflation_sous_q_menteurs_et_reste_conservateur() {
+        // Honnêtes seuls → 3ᵉ plus grand = la densité corroborée.
+        assert_eq!(qth_largest(vec![100, 100, 98, 50, 10], 3), 98);
+        // 1 menteur (k=1<Q) : décale au (Q−1)=2ᵉ honnête = 100 → reste ≤ max honnête (100), JAMAIS au-dessus.
+        assert_eq!(qth_largest(vec![9999, 100, 100, 98, 50], 3), 100);
+        // 2 menteurs (k=2<Q) : décale au 1ᵉ honnête = 100 → toujours borné par le réel.
+        assert_eq!(qth_largest(vec![9999, 8888, 100, 100, 98], 3), 100);
+        // 3 menteurs (k=Q) : ILS CONTRÔLENT → inflation. C'est la limite fondamentale (il faut Q /24 distincts).
+        assert_eq!(qth_largest(vec![9999, 8888, 7777, 100, 100], 3), 7777);
+        // Ordre indifférent (fonction pure sur l'ensemble).
+        assert_eq!(qth_largest(vec![50, 98, 100, 10, 100], 3), 98);
+        // Moins de Q sources → conservateur = la PLUS PETITE reçue (on exige l'accord de toutes).
+        assert_eq!(qth_largest(vec![100, 80], 3), 80);
+        assert_eq!(qth_largest(vec![100], 3), 100);
+        // Liste vide → 0 (aucune corroboration).
+        assert_eq!(qth_largest(vec![], 3), 0);
     }
 
     /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la
