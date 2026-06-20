@@ -125,7 +125,10 @@ fn main() {
     );
     let is_weak = mode == Some("weak");
     if is_client {
-        match net::NetLink::new(my_color, is_weak) {
+        // Identité PERSISTANTE (chap. 10.1) : le profil = le mode (`a`/`b`/`play`…) → deux fenêtres
+        // sur un même PC gardent des identités DISTINCTES *et* stables entre sessions (a.key ≠ b.key).
+        let profile = mode.unwrap_or("player");
+        match net::NetLink::new_persistent(my_color, is_weak, profile) {
             Ok(link) => {
                 app.insert_resource(link)
                     .init_resource::<net::RemoteAvatars>()

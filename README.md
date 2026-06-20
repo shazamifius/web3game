@@ -172,7 +172,13 @@ anti-triche).
 
 > ### 📍 Où on en est (journal de bord — chapitre 6 « refonte BÉTON »)
 > Objectif : **55 000 joueurs en P2P pur, un maximum d'attaquants, et que ça tienne.**
-> - **▶ ÉTAT COURANT (20 juin) — chapitre 8.3d : la foule dense passe à l'échelle.** Chapitres 0→7 faits,
+> - **▶ ÉTAT COURANT (20 juin) — 10.1 : IDENTITÉ PERSISTANTE (tu es le même entre sessions).** Ta clé est
+>   minée une fois puis sauvée dans `~/.web3game/<profil>.key` (perms 600, comme une clé SSH) et rechargée au
+>   lancement → fini l'identité neuve à chaque fois (ferme **D14**). `NetLink::new` (simu/bots) reste éphémère
+>   et intact ; le vrai jeu utilise `new_persistent` (profil = le mode → `a.key` ≠ `b.key`, deux fenêtres
+>   distinctes ET stables). Prouvé par test (2e lancement = même identité). **68 tests, 0 warning.** *(Premier
+>   pas du plan d'attaque « événement 55K » — voir FEUILLE_DE_ROUTE §0.)*
+> - **▶ chapitre 8.3d : la foule dense passe à l'échelle.** Chapitres 0→7 faits,
 >   chapitre 9 (confiance dure : Sybil/éclipse/framing) tenu, chapitre 8 presque bouclé. **Dernière étape
 >   8.3d :** un VRAI bug de conception trouvé et fermé — les résumés de cellule n'avaient pas d'ordre de
 >   FRAÎCHEUR, donc de vieilles copies partielles écrasaient les fraîches (la perception EMPIRAIT avec le

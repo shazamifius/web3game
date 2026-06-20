@@ -7,7 +7,7 @@
 use super::accuse::encode_accuse;
 use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
 use super::cell::{build_cell_summary, CellSummary};
-use super::crypto::{Identity, PeerId, pow_bits};
+use super::crypto::{load_or_create_identity, Identity, PeerId, pow_bits};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
@@ -203,17 +203,38 @@ impl NetLink {
     /// on n'émet plus son état à tous les pairs, mais une seule fois à un parent
     /// (relais) qui le recopie à notre place.
     pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
-        let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
-        let rendezvous = rendezvous_addr();
-        // On MINE notre identité (preuve de travail anti-Sybil, chap. 6.2/9.1) une fois,
-        // au lancement. La privée reste ici. Ce coût (réglable, `pow_bits()`) rend une
-        // identité « chère » → ni reconnexion gratuite après bannissement, ni Sybil de masse.
-        // En TESTS : identité NON minée (rapide) — sinon `cargo test` minerait à pleine
-        // difficulté à chaque `NetLink::new` ; la PoW elle-même est testée dans `crypto`.
+        // Identité ÉPHÉMÈRE minée à chaque lancement (preuve de travail anti-Sybil, chap. 6.2/9.1).
+        // Réservé à la simu / aux bots / aux attaques : PAS de fichier sur disque (1000 bots → 1000
+        // clés serait absurde). Le VRAI JEU utilise `new_persistent` (chap. 10.1) pour garder la
+        // même identité entre sessions. En TESTS : identité NON minée (rapide) — sinon `cargo test`
+        // minerait à pleine difficulté à chaque `NetLink::new` ; la PoW est testée dans `crypto`.
         #[cfg(test)]
         let identity = Identity::generate();
         #[cfg(not(test))]
         let identity = Identity::generate_pow(pow_bits());
+        Self::with_identity(color, weak, identity)
+    }
+
+    /// Comme `new`, mais avec une IDENTITÉ PERSISTANTE (chap. 10.1, ferme D14) : la clé du `profile`
+    /// est chargée depuis `~/.web3game/<profile>.key` si elle existe, sinon minée UNE fois et sauvée
+    /// (perms 600, comme une clé SSH). Le joueur garde donc la MÊME identité — même `0000…`, même
+    /// réputation — entre deux sessions. `profile` = le mode (`a`/`b`/…) → deux fenêtres sur un même
+    /// PC restent DISTINCTES (`a.key` ≠ `b.key`). Réservé au vrai jeu (la simu garde `new`, éphémère).
+    pub fn new_persistent(color: (f32, f32, f32), weak: bool, profile: &str) -> std::io::Result<NetLink> {
+        let (identity, path, fresh) = load_or_create_identity(profile, pow_bits())?;
+        if fresh {
+            println!("Identité PERSISTANTE créée et minée : {} → {}", identity.id().short(), path.display());
+        } else {
+            println!("Identité PERSISTANTE rechargée : {} ← {}", identity.id().short(), path.display());
+        }
+        Self::with_identity(color, weak, identity)
+    }
+
+    /// Cœur partagé par `new` / `new_persistent` (anti-divergence D2 : UNE seule construction du
+    /// `NetLink`, quelle que soit la provenance de l'identité) : ouvre la prise et assemble l'état.
+    fn with_identity(color: (f32, f32, f32), weak: bool, identity: Identity) -> std::io::Result<NetLink> {
+        let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
+        let rendezvous = rendezvous_addr();
         println!(
             "Client réseau : port local {}, rendez-vous {}{}.",
             socket.local_addr()?,

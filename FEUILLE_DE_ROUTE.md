@@ -20,6 +20,31 @@
 
 ## 0. ▶️ POINT DE REPRISE (lis ça en premier, surtout si nouvelle session)
 
+> ### 🎯 LE POURQUOI + RÈGLES + PLAN D'ATTAQUE (posé le 20 juin 2026 — lire EN PREMIER)
+> **Le but ultime :** un **événement P2P sans serveur réunissant ~55 000 personnes** sur Unreal Engine, pour fêter
+> le « départ du web3 » (décentralisé / identité possédée — PAS un token) ET prouver qu'on casse la limite du
+> serveur. **55K = la jauge réelle de la plus grande salle de concert au monde**, jamais réuni dans un jeu (les MMO
+> shardent ; Fortnite = instances de ~100 ; EVE ~6-8K sur gros serveurs). Version réalisable = **présence par LOD**
+> (~32 voisins nets + la marée en imposteurs agrégés).
+>
+> **LES 5 RÈGLES (le contrat de travail) :**
+> 1. **La base qui marche est INTOUCHABLE.** Chaque pas : compile → test → preuve → commit → push. Si un pas menace
+>    le cœur, on ne le fait pas. *L'humiliation ne serait pas d'échouer à 55K — ce serait d'abîmer la base.*
+> 2. **Petits pas, lentement.** Une seule chose prouvable à la fois.
+> 3. **55K = BOUSSOLE, pas échéance.** On bâtit l'archi qui *pourrait* y aller ; on ne court pas après le nombre.
+> 4. **SECRET jusqu'à solide.** On ne pitche personne (même les contacts VRChat/Vocaloid/Miku) tant que ce n'est pas
+>    prouvé — code expérimental, un mur invisible nous attend peut-être.
+> 5. **Chercher le mur TÔT et SUR LE PAPIER**, avant de coder par-dessus. *(Maths pour l'asymptote ; on NE bâtit PAS
+>    le gros simulateur D25 maintenant — 55K n'étant pas le but, le prouver n'est pas urgent.)*
+>
+> **LE PLAN D'ATTAQUE (3 horizons) :**
+> - **🟢 H1 — `10.1 identité persistante` ✅ FAIT (20 juin).** Clé sauvée `~/.web3game/<profil>.key` (perms 600),
+>   rechargée au lancement → même identité entre sessions (D14 fermé). `new` éphémère intact (simu/bots) ;
+>   `new_persistent` pour le vrai jeu (`a.key`≠`b.key`). 68 tests, 0 warning. **PROCHAINE = H2.**
+> - **🟡 H2 — défricher SUR LE PAPIER les 2 murs les plus probables** avant de coder Phase B : **D4** (incitation au
+>   relais = problème de mécanisme) et **D26** (agrégateur/parent menteur). Si l'un est un vrai mur, le voir gratuit.
+> - **🟠 H3 — `Phase B inclusivité`** (D3/D4/D5) une fois H2 défriché. Puis NAT (D17) → voix → chiffrement → Unreal.
+
 **Où on en est :** le **chapitre 6 (refonte BÉTON) est TERMINÉ** — les 10 trous de
 l'audit fermés/bornés (0.0→6.8), **35 tests, 0 warning**, et **le jeu 3D réel
 fonctionne** (avatars + pseudos `0000…` + badge OWN BALLE visibles à l'écran). Tout
@@ -213,8 +238,8 @@ Loopback distingué par port → simu intacte. Test dédié + non-régression `s
 > ### 🧭 CAP REPRIS (19 juin, soir) — décidé avec l'utilisateur
 > Le **chapitre 9 est tenu** (cœur dur Sybil/éclipse/framing/réputation) ; les durcissements avancés sont
 > **rangés en ANNEXE H** (optionnels). **Audit des doutes FAIT** → tableau d'état D1→D26 en tête de §C (maj 20 juin) :
-> **8 fermés, 7 bornés, 11 ouverts** (sur 26 ; D22 fermé au 8.3d, + D25 banc d'essai et D26 agrégateur menteur
-> nommés le 20 juin), regroupés en chantiers (inclusivité / vie privée / autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
+> **9 fermés, 7 bornés, 10 ouverts** (sur 26 ; D22 fermé au 8.3d, D14 fermé au 10.1, + D25 banc d'essai et D26
+> agrégateur menteur nommés le 20 juin), regroupés en chantiers (inclusivité / vie privée / autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
 > chapitre 10 (vie privée + identité) — ça ferme à soi seul 6 des 10 doutes ouverts, les plus proches de la
 > vision.** Le portage moteur (Unreal/VRChat, ch.14) reste APRÈS : on contrôle tout, moteur compris, jusque-là.
 >
@@ -390,8 +415,8 @@ Chaque doute a : **Constat** (ce qui ne va pas / ce dont je ne suis pas sûr),
 indiqué entre crochets `[ch. X]`.
 
 > ### 📊 AUDIT DES DOUTES — état honnête au 20 juin (ce tableau fait FOI ; l'analyse détaillée suit)
-> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **8 fermés** (D22
-> fermé au 8.3d), **7 bornés** (+ D25 banc d'essai), **11 ouverts** (+ D26 agrégateur menteur) — sur 26 doutes.
+> *Statut : ✅ fermé & prouvé · 🟡 borné/partiel (vit, à finir) · 🔴 ouvert (chapitre dédié). **9 fermés** (D22
+> au 8.3d, D14 au 10.1), **7 bornés** (+ D25 banc d'essai), **10 ouverts** (+ D26 agrégateur menteur) — sur 26 doutes.
 > Les ouverts se regroupent PROPREMENT en chantiers, ce qui confirme le plan (voir sous le tableau).*
 >
 > | # | Statut | Où en est-on / qui le ferme |
@@ -409,7 +434,7 @@ indiqué entre crochets `[ch. X]`.
 > | **D11** migration de l'orbe | 🔴 | autorité, **ch.11.2** (quorum) |
 > | **D12** tout codé pour 1 objet | 🔴 | autorité, **ch.11.1** (registre générique) |
 > | **D13** pas d'horloge commune | 🔴 | autorité, **ch.11.3** |
-> | **D14** identité non persistante | 🔴 | **ch.10.1** (clé sauvée sur disque) |
+> | **D14** identité non persistante | ✅ | **10.1 FAIT** : clé sauvée `~/.web3game/<profil>.key`, rechargée au lancement (prouvé) |
 > | **D15** tout en clair (vie privée) | 🔴 | **ch.10.2** (chiffrement X25519) |
 > | **D16** fuites mémoire long terme | 🔴 | longévité, **ch.12.1** (TTL/éviction) |
 > | **D17** NAT symétrique | 🔴 | longévité, **ch.12.3** (relais/IPv6) |
@@ -581,15 +606,14 @@ temps réel. *Vérif :* une course à l'objet est tranchée de façon cohérente
 
 ### Catégorie 6 — Identité & vie privée
 
-**D14 — L'identité n'est PAS persistante.** 🔴 `[ch. 10]`
-*Constat :* `NetLink::new` **mine une nouvelle identité à chaque lancement** du jeu. Ton
-identité change donc à chaque session : tes amis ne te reconnaissent pas, ta réputation
-ne s'accumule pas, tu n'as pas de « compte ». *Pourquoi :* indispensable pour un jeu
-social réel ET pour que la réputation/Sybil ait un sens dans la durée. *Piste :* générer
-la paire de clés **une fois**, la sauver chiffrée sur le disque, la recharger ensuite
-(la preuve de travail ne se paie qu'à la création). Option : pseudo lisible + avatar liés
-à la clé. *Vérif :* relancer le jeu garde la même identité (même `0000…`) ; la réputation
-survit aux sessions.
+**D14 — L'identité n'est PAS persistante.** ✅ `[10.1 FAIT, 20 juin]`
+*Constat (était) :* `NetLink::new` minait une identité neuve à chaque lancement → pas de « compte »,
+réputation qui ne s'accumule pas, amis qui ne te reconnaissent pas. *Résolu (10.1) :* la clé est minée
+UNE fois puis sauvée dans `~/.web3game/<profil>.key` (perms 600, comme `~/.ssh/id_ed25519`), rechargée
+au lancement (`crypto::load_or_create_in` + `from_secret`/`secret` ; `NetLink::new_persistent` côté jeu,
+`new` éphémère intact côté simu). Profil = le mode → `a.key` ≠ `b.key` (deux fenêtres distinctes ET
+stables). *Prouvé (test) :* 2e lancement RECHARGE la même identité, profils distincts = identités
+distinctes. *Reste (10.2) :* chiffrer le fichier par mot de passe (aujourd'hui en clair, passphrase plus tard).
 
 **D15 — Tout est en clair (aucune confidentialité).** 🟠 `[ch. 10]`
 *Constat :* positions, et bientôt la **voix**, circulent en clair ; le rendez-vous et tout
@@ -1320,8 +1344,14 @@ l'utilisateur, plusieurs fenêtres), on voit bien plus que 64 silhouettes sans c
 
 ### Chapitre 10 — Identité persistante & vie privée 🔴 *priorité 4*
 **But :** un vrai « compte » décentralisé, et de la confidentialité.
-- [ ] 10.1 — **Identité persistante** : clé sauvée (chiffrée) sur disque, rechargée au
-  lancement ; pseudo + avatar liés à la clé. Ferme D14.
+- [x] **10.1 — Identité persistante (20 juin) — FERME D14.** Clé minée UNE fois puis sauvée dans
+  `~/.web3game/<profil>.key` (perms 600, comme une clé SSH), rechargée au lancement. `NetLink::new`
+  (éphémère) reste INTACT pour la simu/les bots ; nouveau `NetLink::new_persistent(color, weak, profil)`
+  pour le vrai jeu, profil = le mode (`a.key` ≠ `b.key` → deux fenêtres restent distinctes ET stables
+  entre sessions). `crypto::load_or_create_in` (pure, testable) + `from_secret`/`secret`. *Prouvé :*
+  2e lancement RECHARGE la même identité (pas une neuve), profils distincts = identités distinctes.
+  68 tests, 0 warning. *(Chiffrement du fichier par mot de passe = plus tard, avec 10.2 ; pour l'instant
+  clé en clair sur disque, comme `~/.ssh/id_ed25519` sans passphrase — décision G.4.)*
 - [ ] 10.2 — **Chiffrement de transport** : échange X25519 par paire → contenu chiffré +
   signé. Ferme D15.
 **Ferme :** D14, D15. **Vérif :** relancer garde l'identité & la réputation ; un tiers ne

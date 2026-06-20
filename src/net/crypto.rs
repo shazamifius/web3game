@@ -23,6 +23,7 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Taille d'une clé publique Ed25519 (octets) : c'est l'identité d'un joueur.
@@ -182,6 +183,18 @@ impl Identity {
         PeerId(self.public())
     }
 
+    /// Reconstruit une identité depuis sa graine PRIVÉE (32 octets) relue du disque (chap. 10.1) :
+    /// c'est ce qui permet de RECHARGER son identité au lancement au lieu d'en miner une neuve.
+    pub(crate) fn from_secret(secret: [u8; 32]) -> Identity {
+        Identity { signing: SigningKey::from_bytes(&secret) }
+    }
+
+    /// La graine PRIVÉE (32 octets) — à écrire dans un fichier local protégé (perms 600), comme une
+    /// clé SSH. Ne quitte JAMAIS la machine : le réseau ne voit que `public()`. Sert à la persistance.
+    pub(crate) fn secret(&self) -> [u8; 32] {
+        self.signing.to_bytes()
+    }
+
     /// Appose notre sceau sur un message : 64 octets que seul le détenteur de
     /// notre clé privée pouvait produire pour CES octets précis.
     pub(crate) fn sign(&self, message: &[u8]) -> [u8; SIG_LEN] {
@@ -209,6 +222,62 @@ fn os_random_seed() -> [u8; 32] {
         .and_then(|mut f| f.read_exact(&mut seed))
         .expect("impossible de lire /dev/urandom pour générer les clés");
     seed
+}
+
+// ─────────────────────────── Identité PERSISTANTE (chapitre 10.1) ───────────────────────────
+// On garde la MÊME identité entre deux sessions : on mine la clé UNE fois, on la sauve sur disque
+// (comme une clé SSH), on la recharge ensuite. Sans ça, `NetLink::new` mine une identité neuve à
+// chaque lancement → pas de « compte », réputation qui ne s'accumule pas (D14). Réservé au VRAI
+// jeu : la simu/les bots gardent l'identité éphémère (`new`), pas de fichiers de clés à la pelle.
+
+/// Dossier du coffre d'identité : `$WEB3GAME_DIR` si défini, sinon `$HOME/.web3game`. Local par
+/// utilisateur, jamais réseau — comme `~/.ssh`.
+fn identity_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("WEB3GAME_DIR") {
+        return PathBuf::from(d);
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    home.join(".web3game")
+}
+
+/// Restreint un fichier de clé à son seul propriétaire (perms 600 sous Unix), comme `~/.ssh/id_*`.
+#[cfg(unix)]
+fn restrict_perms(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn restrict_perms(_path: &Path) {}
+
+/// CHARGE l'identité du `profile` depuis `dir`, ou en MINE une neuve et la SAUVE. Renvoie
+/// `(identité, neuve?)`. Une clé dont la PoW ne satisfait plus `bits` (ex. `POW_BITS` relevé) est
+/// re-minée + ré-écrite (sinon les pairs la rejetteraient). `dir` est un PARAMÈTRE → fonction
+/// testable avec un dossier temporaire (l'environnement reste hors d'ici).
+pub(crate) fn load_or_create_in(dir: &Path, profile: &str, bits: u32) -> std::io::Result<(Identity, bool)> {
+    let path = dir.join(format!("{profile}.key"));
+    if let Ok(bytes) = std::fs::read(&path) {
+        if let Ok(seed) = <[u8; 32]>::try_from(bytes.as_slice()) {
+            let id = Identity::from_secret(seed);
+            if id.id().has_pow(bits) {
+                return Ok((id, false)); // relue du disque, toujours valide
+            }
+            // PoW devenue insuffisante → on re-mine (sinon rejet par les pairs).
+        }
+        // fichier corrompu / mauvaise taille → on re-mine proprement.
+    }
+    let id = Identity::generate_pow(bits);
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(&path, id.secret())?;
+    restrict_perms(&path);
+    Ok((id, true))
+}
+
+/// Comme `load_or_create_in`, mais résout le dossier depuis l'environnement (`identity_dir`) et
+/// renvoie aussi le CHEMIN du fichier (pour l'afficher au joueur). Le point d'entrée du vrai jeu.
+pub(crate) fn load_or_create_identity(profile: &str, bits: u32) -> std::io::Result<(Identity, PathBuf, bool)> {
+    let dir = identity_dir();
+    let (id, fresh) = load_or_create_in(&dir, profile, bits)?;
+    Ok((id, dir.join(format!("{profile}.key")), fresh))
 }
 
 #[cfg(test)]
@@ -254,5 +323,33 @@ mod tests {
         let sig = autre.sign(msg); // signé par QUELQU'UN D'AUTRE
         // Vérifiée contre MA clé publique → refusée : pas d'usurpation possible.
         assert!(!verify(msg, &sig, &moi.public()));
+    }
+
+    /// 10.1 — la graine PRIVÉE se sérialise sans perte : graine → Identity → graine donne la MÊME
+    /// identité, et elle peut toujours signer. C'est ce qui rend l'identité sauvegardable/rechargeable.
+    #[test]
+    fn identite_survit_a_l_aller_retour_disque() {
+        let id = Identity::generate_pow(8);
+        let back = Identity::from_secret(id.secret());
+        assert_eq!(id.id(), back.id());
+        let msg = b"je suis le meme joueur qu'hier";
+        assert!(verify(msg, &back.sign(msg), &id.public())); // recharge → signe encore
+    }
+
+    /// 10.1 — LE CŒUR : un 2e « lancement » RECHARGE la même identité du disque (pas une neuve), et
+    /// deux profils distincts (ex. fenêtres `a` et `b`) ne collisionnent pas. Dossier temporaire →
+    /// pas de pollution de `~/.web3game`, pas de variable d'environnement (édition 2024).
+    #[test]
+    fn identite_persiste_entre_deux_lancements() {
+        let dir = std::env::temp_dir().join(format!("web3game-id-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir); // repart propre
+        let (id1, fresh1) = load_or_create_in(&dir, "joueur", 8).expect("création");
+        assert!(fresh1, "1er lancement : identité NEUVE minée et sauvée");
+        let (id2, fresh2) = load_or_create_in(&dir, "joueur", 8).expect("rechargement");
+        assert!(!fresh2, "2e lancement : identité RELUE du disque");
+        assert_eq!(id1.id(), id2.id(), "persistance : MEME identite entre deux lancements");
+        let (autre, _) = load_or_create_in(&dir, "autre", 8).expect("autre profil");
+        assert_ne!(id1.id(), autre.id(), "profils distincts (a/b) = identites distinctes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
