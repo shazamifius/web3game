@@ -15,6 +15,7 @@
 //!   - `world`  : la salle arcade (sol, murs, plafond, néon, lumière)
 //!   - `player` : le personnage, la caméra et les contrôles
 
+mod meteorites;
 mod net;
 mod player;
 mod scenes;
@@ -134,8 +135,23 @@ fn main() {
     .add_systems(OnExit(Scene::Hub), scenes::despawn_world)
     .add_systems(OnEnter(Scene::Arcade), (world::setup_room, scenes::enter_arcade_player))
     .add_systems(OnExit(Scene::Arcade), scenes::despawn_world)
-    .add_systems(OnEnter(Scene::Island), (scenes::setup_island, scenes::enter_island_player))
+    .add_systems(
+        OnEnter(Scene::Island),
+        (scenes::setup_island, scenes::enter_island_player, meteorites::setup_island_game),
+    )
     .add_systems(OnExit(Scene::Island), scenes::despawn_world)
+    // Le petit jeu de l'île (météorites) ne tourne QUE sur l'île.
+    .add_systems(
+        Update,
+        (
+            meteorites::spawn_meteors,
+            meteorites::fall_meteors,
+            meteorites::fade_trails,
+            meteorites::collect_meteors,
+            meteorites::update_score_text,
+        )
+            .run_if(in_state(Scene::Island)),
+    )
     .add_systems(
         Update,
         (

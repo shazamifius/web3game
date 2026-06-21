@@ -53,9 +53,9 @@ pub struct PortalLabel {
 
 const PORTAL_RADIUS: f32 = 1.1; // rayon (m) pour « entrer » dans un portail
 
-// Couleurs de fond (ciel) par scène : sombre en hub/arcade, ciel bleu sur l'île.
+// Couleurs de fond (ciel) par scène : sombre en hub/arcade, NUIT bleutée sur l'île.
 const SKY_DARK: Color = Color::srgb(0.02, 0.01, 0.05);
-const SKY_ISLAND: Color = Color::srgb(0.45, 0.70, 0.95);
+const SKY_NIGHT: Color = Color::srgb(0.015, 0.02, 0.06);
 
 /// Dé-spawn toute la géométrie de la scène qu'on quitte (branché sur chaque `OnExit`).
 pub fn despawn_world(mut commands: Commands, q: Query<Entity, With<WorldGeometry>>) {
@@ -284,37 +284,54 @@ pub fn setup_island(
         ));
     }
 
-    // --- NUAGES : quelques boules blanches douces qui flottent haut et loin. ---
-    let cloud = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.96, 1.0),
-        emissive: LinearRgba::rgb(0.25, 0.27, 0.32), // légèrement lumineux → pas grisâtre
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    for (x, y, z, s) in [
-        (-14.0_f32, 9.0_f32, -10.0_f32, 3.0_f32),
-        (12.0, 11.0, -16.0, 4.0),
-        (18.0, 8.0, 6.0, 3.5),
-        (-10.0, 10.0, 14.0, 3.0),
-    ] {
+    // --- ÉTOILES : une multitude de petits points blancs émissifs, semés sur un dôme
+    // lointain et haut (positions déterministes via un petit xorshift → même ciel à
+    // chaque visite, et zéro dépendance). Plus beau de NUIT, comme demandé. ---
+    let star = materials.add(emissive(2.2, 2.3, 2.6)); // blanc bleuté qui « glow »
+    let mut s: u32 = 0x51ED_3F17;
+    let mut rnd = || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32 // [0,1)
+    };
+    for _ in 0..160 {
+        // Point sur un grand dôme : angle autour + hauteur, rayon ~70.
+        let ang = rnd() * std::f32::consts::TAU;
+        let up = 0.15 + rnd() * 0.85; // surtout en hauteur
+        let r = 70.0;
+        let pos = Vec3::new(
+            ang.cos() * r * (1.0 - up * 0.5),
+            8.0 + up * 55.0,
+            ang.sin() * r * (1.0 - up * 0.5),
+        );
+        let sz = 0.15 + rnd() * 0.22;
         commands.spawn((
             WorldGeometry,
             Mesh3d(ball.clone()),
-            MeshMaterial3d(cloud.clone()),
-            Transform::from_xyz(x, y, z).with_scale(Vec3::new(s * 1.6, s * 0.7, s)),
+            MeshMaterial3d(star.clone()),
+            Transform::from_translation(pos).with_scale(Vec3::splat(sz)),
         ));
     }
 
-    // --- Le SOLEIL : lumière directionnelle chaude, avec ombres. ---
+    // --- CLAIR DE LUNE : lumière directionnelle douce et bleutée, avec ombres. ---
     commands.spawn((
         WorldGeometry,
         DirectionalLight {
-            color: Color::srgb(1.0, 0.96, 0.88),
-            illuminance: 11_000.0,
+            color: Color::srgb(0.70, 0.78, 1.0),
+            illuminance: 3_500.0, // tamisé : c'est la nuit
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(8.0, 12.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(8.0, 14.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // Une LUNE visible (boule claire émissive, haut dans le ciel).
+    let moon = materials.add(emissive(1.4, 1.5, 1.8));
+    commands.spawn((
+        WorldGeometry,
+        Mesh3d(ball.clone()),
+        MeshMaterial3d(moon),
+        Transform::from_xyz(-22.0, 34.0, -28.0).with_scale(Vec3::splat(4.0)),
     ));
 }
 
@@ -339,7 +356,7 @@ pub fn enter_island_player(
     mut clear: ResMut<ClearColor>,
     q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
-    clear.0 = SKY_ISLAND;
+    clear.0 = SKY_NIGHT;
     place_player(q, Vec3::new(0.0, GROUND_Y, 0.0));
 }
 
