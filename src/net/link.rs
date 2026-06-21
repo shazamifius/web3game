@@ -172,6 +172,21 @@ pub(crate) fn density_corrob_mode() -> bool {
     *C.get_or_init(|| matches!(std::env::var("CORROB").as_deref(), Ok("1") | Ok("true")))
 }
 
+/// PLANCHER VÉRIFIÉ anti-omission (chap. 8.3★, étape C-sécu-1b, env `FLOOR=1`, n'a de sens que sous
+/// `CORROB`). Le `qth_largest` est CONSERVATEUR dans les cellules à < Q signataires (il rend le plus
+/// petit count → sous-compte exactement là où la découverte est sparse, mesuré à N=1000 : 63 %). Le
+/// plancher remonte ça SÛREMENT : densité d'une cellule = `max(qth_largest, |union des IDs signés vus
+/// dans cette cellule|)`. L'union est MONOTONE (un trou-noir peut OMETTRE, jamais retrancher à l'union
+/// des autres sources → anti-éclipse PAR CONSTRUCTION) et chaque ID est une personne CONCRÈTE (pas un
+/// entier gonflable). ⚠ DETTE ÉCRITE (anti-inflation du plancher) : les échantillons ne sont pas encore
+/// AUTO-signés par chaque personne → un menteur seul peut injecter ≤ `MAX_CELL_SAMPLES` faux IDs/cellule.
+/// Fermeture = échantillons auto-certifiants + cap /24 (C-sécu-2 red-team / harnais NAT), exactement
+/// comme le cap /24 de `qth_largest` est différé. Le défaut (absent) laisse CORROB prouvé INTACT.
+pub(crate) fn density_floor_mode() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| matches!(std::env::var("FLOOR").as_deref(), Ok("1") | Ok("true")))
+}
+
 /// Le Q-ième plus grand d'une liste de counts (chap. 8.3★ C-sécu) — l'estimateur de densité robuste à
 /// l'inflation : il faut Q sources DISTINCTES pour porter une valeur jusqu'à ce rang. PUR → testable
 /// unitairement. Si moins de Q valeurs disponibles → CONSERVATEUR (on renvoie la plus PETITE qu'on a =
@@ -183,6 +198,18 @@ pub(crate) fn qth_largest(mut counts: Vec<u32>, q: usize) -> u32 {
     counts.sort_unstable_by(|a, b| b.cmp(a)); // décroissant
     let idx = q.min(counts.len()) - 1; // Q-ième si on en a assez, sinon la plus petite reçue (conservateur)
     counts[idx]
+}
+
+/// Densité corroborée d'UNE cellule (chap. 8.3★ C-sécu). PURE → testable sans réseau. `counts` = les
+/// counts déclarés par les signataires distincts ; `distinct_signed` = nombre d'IDs DISTINCTS vus dans
+/// les échantillons signés de cette cellule (le plancher d'union). Sans plancher (`floor=false`) =
+/// `qth_largest` seul (C-sécu-1a). Avec plancher (`floor=true`, C-sécu-1b) = `max(qth_largest, plancher)` :
+/// le plancher RELÈVE l'estimation des cellules peu corroborées (où `qth_largest` rend le plus petit
+/// count) sans jamais la baisser. Les deux termes restent des bornes BASSES honnêtes parmi des sources
+/// honnêtes (chaque ID compté est une personne réellement vue, chaque count est ≤ vrai max honnête).
+pub(crate) fn corroborated_density(counts: Vec<u32>, distinct_signed: u32, q: usize, floor: bool) -> u32 {
+    let qth = qth_largest(counts, q);
+    if floor { qth.max(distinct_signed) } else { qth }
 }
 
 /// Nombre de fautes au-delà duquel on coupe le son d'un pair (réputation). Chaque
@@ -783,11 +810,27 @@ impl NetLink {
         if density_corrob_mode() {
             // Étape C-sécu-1a (8.3★) : densité = Σ sur cellules du Q-ième plus grand count parmi les
             // signataires DISTINCTS → borné contre l'inflation (< Q menteurs ⇒ estimation ≤ max honnête).
-            let mut by_cell: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+            // Étape C-sécu-1b (`FLOOR=1`) : on ajoute le PLANCHER d'union signée par cellule (anti-omission,
+            // remonte les cellules peu corroborées que `qth_largest` sous-compte). Voir `density_floor_mode`.
+            let floor = density_floor_mode();
+            let mut counts_by_cell: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+            let mut ids_by_cell: HashMap<(i32, i32), HashSet<PeerId>> = HashMap::new();
             for (&(cell, _signer), claim) in &self.cell_claims {
-                by_cell.entry(cell).or_default().push(claim.count);
+                counts_by_cell.entry(cell).or_default().push(claim.count);
+                if floor {
+                    let set = ids_by_cell.entry(cell).or_default();
+                    for &(id, _x, _z) in &claim.samples {
+                        set.insert(id);
+                    }
+                }
             }
-            by_cell.into_values().map(|v| qth_largest(v, CORROB_QUORUM)).sum()
+            counts_by_cell
+                .into_iter()
+                .map(|(cell, counts)| {
+                    let distinct = ids_by_cell.get(&cell).map(|s| s.len() as u32).unwrap_or(0);
+                    corroborated_density(counts, distinct, CORROB_QUORUM, floor)
+                })
+                .sum()
         } else if union_mode() {
             // Étape B (8.3★) : perception = nombre de personnes DISTINCTES vues dans les échantillons.
             self.perceived.len() as u32
@@ -993,6 +1036,24 @@ mod tests {
         assert_eq!(qth_largest(vec![100], 3), 100);
         // Liste vide → 0 (aucune corroboration).
         assert_eq!(qth_largest(vec![], 3), 0);
+    }
+
+    /// C-sécu-1b — le PLANCHER d'union RELÈVE les cellules peu corroborées sans jamais les baisser, et
+    /// ne change RIEN là où `qth_largest` domine déjà (le plancher est borné par l'échantillonnage ≤16).
+    #[test]
+    fn plancher_union_remonte_les_cellules_peu_corroborees_sans_jamais_baisser() {
+        // Sans plancher (1a) = qth_largest pur, quel que soit le nombre d'IDs signés.
+        assert_eq!(corroborated_density(vec![50, 5], 18, 3, false), 5); // 2 signataires → conservateur = 5
+        // Avec plancher (1b) : 2 signataires sous-comptent (5), mais 18 personnes DISTINCTES signées vues
+        // → la cellule vaut au moins 18. Recovery SÛRE (chaque ID = une personne réelle).
+        assert_eq!(corroborated_density(vec![50, 5], 18, 3, true), 18);
+        // Cellule bien corroborée : qth_largest (98) domine le plancher borné par l'échantillon (16) → inchangé.
+        assert_eq!(corroborated_density(vec![100, 100, 98, 50], 16, 3, true), 98);
+        // Le plancher ne baisse JAMAIS : si qth ≥ plancher, on garde qth.
+        assert_eq!(corroborated_density(vec![40], 10, 3, true), 40); // 1 signataire honnête, count 40 > 10 IDs
+        // Cellule jamais corroborée par count (0 signataire) mais des IDs signés vus → le plancher porte seul.
+        assert_eq!(corroborated_density(vec![], 7, 3, true), 7);
+        assert_eq!(corroborated_density(vec![], 7, 3, false), 0); // sans plancher, rien.
     }
 
     /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la

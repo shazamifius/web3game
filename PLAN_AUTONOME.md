@@ -118,6 +118,25 @@
   → re-mesurer ; puis comparer corroboration vs taxe à **2000/5000** (la corroboration ne vaut QUE si elle SCALE
   mieux que la taxe — à 1000 elle perd, mais la taxe explose à 68 % à 5000 : c'est là que ça se jouera).
 
+- **ÉTAPE C-sécu-1b (8.3★, 21 juin, supervisé) — PLANCHER d'union signée : récupération 63 %→78 % à débit PLAT,
+  ADDITIF sans toucher le wire.** *Fait :* drapeau `FLOOR=1` (n'a de sens que sous `CORROB`) ; densité d'une cellule
+  = `max(qth_largest, |union des IDs signés vus dans la cellule|)` (`corroborated_density`, **fonction PURE + test
+  unitaire** ; le plancher RELÈVE les cellules peu corroborées que `qth_largest` sous-compte, ne baisse JAMAIS). Les
+  échantillons portent DÉJÀ l'ID → **zéro changement de wire** (vrai additif). **79 tests, 0 warning, défaut intact.**
+  *Mesure N=1000 (même périmètre que 1a) :* CORROB seul = 563 (63 % de DENSITY_MAX 895) ; **CORROB+PLANCHER = 699
+  (78 %)** → **+24 %**, à **débit IDENTIQUE** (↑54,8/↓55,9 vs ↑54,3/↓55,5 = le plancher ne coûte RIEN au wire). Max 1000.
+  *Lecture honnête (Règle 2) :* **78 % < 80 % (cible pré-enregistrée NON franchie)**, MAIS la courbe montait encore à
+  t=60 (671) → run convergé à mesurer, sans extrapoler. Le plancher comble l'essentiel du trou (63→78). ⚠ **DETTE ÉCRITE
+  (code + ici) :** échantillons pas encore AUTO-signés par chaque personne → un menteur seul peut injecter ≤16 faux
+  IDs/cellule dans le plancher. **1b ferme l'anti-OMISSION, PAS l'anti-INFLATION** (différé à C-sécu-2 red-team +
+  échantillons auto-certifiants + cap /24, comme le cap /24 de `qth_largest`). *VERDICT 5000 (run du 21 juin, CORROB
+  sans plancher) :* perception moy **706 / max 2874**, vs défaut-taxe ~650 (~1,1×) et DENSITY_MAX ~2450 (**29 %**) —
+  **NON concluant** : le run montait encore (non convergé) et le **mur n°2 (bootstrap « tous à t=0 »)** domine le duel
+  corroboration-vs-taxe → per Règle 3, on NE conclut PAS « scale à 5000 ». *Recadrage acté (utilisateur, 21 juin) :*
+  « tous à t=0 sur bus parfait » = stress d'INSTRUMENT, pas un déploiement → viser **~3000 en arrivée PROGRESSIVE**.
+  **PROCHAIN proposé = manche d'ARRIVÉE ÉCHELONNÉE** (bots étalés sur T s) pour PROUVER (pas supposer) que le mur n°2
+  ne mord pas en arrivée réelle ; puis re-run 1000 long (convergence vs 80 %) ; puis C-sécu-2 (red-team anti-inflation).
+
 - **ÉTAPE C-diag (8.3★, 20 juin, supervisé) — RETIRER LE CHEF RESTAURE LA DENSITÉ ; le seul plafond
   restant de la perception à grande échelle est la DÉCOUVERTE (mur n°2).** *Fait :* drapeau additif
   `DENSITY_MAX=1` (link.rs) — count/cellule = **MAX vu** (monotone, non-thrashant ; hôte relâché), perception
