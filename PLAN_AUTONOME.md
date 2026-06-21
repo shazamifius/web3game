@@ -553,6 +553,26 @@ vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; 
     non-régression est mesurée à **N=100 seulement** (peu d'occupants/cellule). À N=1000 (cellules denses) la rotation
     `K_PROOF=4` doit couvrir plus d'IDs/cellule → la récupération pourrait être plus lente à converger que 1b. C'est
     l'objet de l'étape 5 (run N=1000/130 s en cours).
-- ▶️ **RESTE étape 5** : confirmer à **N=1000/130 s** (et 2000) que la récupération reste **≥ 1b (~87 %)** et le débit
-  **≤ +30 %** avec le plancher vérifié ; mesurer le surcoût CPU réel. Si la rotation sous-couvre à 1000 → régler
-  `K_PROOF` (compromis débit↔convergence, un RÉGLAGE à mesurer) ou REPLIER (plancher anti-omission documenté).
+- ✅ **Étape 5 FAITE (re-mesure N=1000/130 s, head-to-head même harnais `POW_BITS=8`)** :
+  | Métrique | 1b (CORROB+FLOOR) | étape-4 (+ plancher vérifié) | Δ |
+  |---|---|---|---|
+  | Pairs connus | 856,9 | 849,9 | ~égal (découverte identique) |
+  | Perception moy | 756 (75,6 %) | 705 (70,5 %) | **−51 (−6,7 %)** |
+  | Débit ↓ | 56,0 Ko/s | 56,4 Ko/s | **+0,7 %** |
+  - **VERDICT du critère pré-enregistré :** (a) red-team 66→50 ✅ (unitaire) ; (c) débit ≤ +30 % ✅✅ **+0,7 %** (le
+    plancher vérifié est quasi-GRATUIT en wire — seul mon propre claim porte des preuves, dilué dans les relais v1) ;
+    (d) CPU < 1 %/cœur ✅ (wall ≈ identique aux deux runs, la vérif avec cache ne se voit pas) ; **(b) récup ≥ 1b ⚠
+    NON tenu à 130 s** (705 < 756). **MAIS** l'écart est purement de la **VITESSE de convergence** (il fond de façon
+    monotone : −130 → −91 → −69 → −51 aux t=30/60/90/130) et les DEUX sont plafonnés par la découverte (mur n°2,
+    ~850 pairs connus → perception/découvert = 83 % des deux côtés). Pas un plafond plus bas : un LAG.
+  - **⚠ SUBTILITÉ DE BANC RÉVÉLÉE (honnêteté) :** le `87 %` enregistré pour 1b @1000 ne se RE-MESURE PAS dans ce
+    harnais (POW8/130 s → 1b = 75,6 %, plafonné par la découverte à 850). Le `87 %` venait d'un run à convergence plus
+    longue / autres conditions. **Ne pas re-citer `87 %` comme la cible 1b @1000** ; la vraie référence comparable est
+    le 1b RE-MESURÉ côte à côte (756).
+  - **DÉCISION (utilisateur, Section G) :** le REPLI prévu (« si le débit explose ») n'a PAS sauté (+0,7 %) → on a
+    **29 % de marge débit inutilisée** alors que le seul coût est la convergence. La variable, c'est `K_PROOF`, **plafonné
+    par le MTU** (16 samples + 4 preuves ≈ 1488 o, frôle 1500). → **on RÈGLE `K_PROOF` en touchant au MTU (étape 6).**
+- ▶️ **ÉTAPE 6 (wire = sécurité critique, SUPERVISÉ, papier d'abord)** : porter PLUS de preuves/émission dans la marge
+  de débit pour fermer le lag de convergence. Piste = option 3 du papier (preuve par RÉFÉRENCE `(id,seq)` ~40 o au lieu
+  de 182 o inline ; le receveur retrouve le sceau qu'il DÉTIENT déjà en `signed_states`, ne compte que les références
+  résolues+vérifiées) → ~4× plus d'occupants couverts/émission au MÊME wire. Re-mesure N=1000. **Voir papier étape 6.**

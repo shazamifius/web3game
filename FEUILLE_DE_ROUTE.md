@@ -78,11 +78,14 @@
 >     ét.1 = `signed_states` (gaté, ré-embarquement verbatim) ; ét.2 = format wire `KIND_CELL_SUMMARY_V2` (résumé v1
 >     verbatim + trailer de preuves HORS corps signé ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact) ;
 >     ét.3 = émission+réception v2 (mon propre claim joint `K_PROOF=4` preuves tournantes) ;
->     **ét.4 = ingestion VÉRIFIANTE** (`verify_proof` : sceau + cache `(id,seq)` ; plancher = Σ |IDs vérifiés ∈ cellule|
->     sous `SIGNED_SAMPLES`, sinon 1b intact). **89 tests, 0 warning.** ✅ **Inflation FERMÉE** : red-team INVERSÉ en
->     unitaire (50 vraies preuves auto-signées + 16 fantômes FORGÉS → plancher vérifié = **50, PAS 66**) ; non-régression
->     headless N=100 (perception 98→99, débit +0,8 %). ⚠ **Reste l'étape 5** = confirmer à **N=1000/130 s** (récup ≥ ~87 %,
->     débit ≤ +30 %) — la rotation `K_PROOF=4` doit couvrir les cellules denses ; **run en cours → voir PROCHAINE ACTION.**
+>     ét.4 = ingestion VÉRIFIANTE (`verify_proof` : sceau + cache `(id,seq)` ; plancher = Σ |IDs vérifiés ∈ cellule|
+>     sous `SIGNED_SAMPLES`, sinon 1b intact) ; **ét.5 = re-mesure N=1000/130 s head-to-head**. **89 tests, 0 warning.**
+>     ✅ **Inflation FERMÉE** (red-team inversé unitaire **50, pas 66**) **à débit quasi-GRATUIT** (+0,7 % vs 1b, ≪ +30 %),
+>     CPU non visible. ⚠ **MAIS récup à 130 s** = 705 vs 1b 756 (**−6,7 %**) : un LAG de CONVERGENCE (l'écart FOND :
+>     −130→−91→−69→−51), pas un plafond ; les deux plafonnés par la découverte (mur n°2, ~850 connus). *(NB : le « 87 % »
+>     1b @1000 ne se re-mesure pas dans ce harnais POW8 → ne plus le citer ; référence = le 1b re-mesuré côte à côte.)*
+>     **DÉCISION (utilisateur) :** REPLI débit pas déclenché → 29 % de marge → **ét.6 = régler `K_PROOF` en touchant au MTU**
+>     (preuve par RÉFÉRENCE `(id,seq)` au lieu d'inline 182 o → ~4× plus de couverture/émission). **→ PROCHAINE ACTION.**
 >   - *Caveat permanent : `qth`/plancher prouvés en LOGIQUE + récupération headless ; l'anti-inflation /24 RÉEL
 >     attend le harnais NAT (vraies IP, réutilise 9.4b). Détail : §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu » ;
 >     papier complet : `PLAN_AUTONOME.md` § PAPIER C-sécu-2.*
@@ -107,25 +110,27 @@
 > - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
 > - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = C-sécu-2 ÉTAPE 5 (re-mesure N=1000/2000 du plancher vérifié), en session FOCALISÉE.**
-> *Étapes 1-2-3-4/5 faites (états signés + format wire v2 + émission/réception + ingestion vérifiante). L'inflation est
-> FERMÉE (red-team inversé 50≠66, unitaire) ; reste à PROUVER que la récupération ne régresse pas à grande densité.*
+> **PROCHAINE ACTION = C-sécu-2 ÉTAPE 6 (régler `K_PROOF` via le MTU : preuve par RÉFÉRENCE), en session FOCALISÉE.**
+> *Étapes 1-5 faites (wire v2 + ingestion vérifiante + re-mesure N=1000). L'inflation est FERMÉE à débit quasi-gratuit ;
+> reste à fermer le LAG de convergence (récup 705 vs 1b 756 à 130 s) en couvrant plus d'occupants/émission dans la marge.*
 >
-> 🚀 **DÉMARRAGE PROCHAINE SESSION — l'étape 5 (mesure, démarrage immédiat) :**
-> - **But :** confirmer headless que le plancher VÉRIFIÉ (étape 4) tient le critère pré-enregistré à N=1000/2000.
->   Papier complet (coût CPU/débit chiffré, mitigations) = `PLAN_AUTONOME.md` § « PAPIER C-sécu-2 ».
-> - **Acquis (étapes 1-4) :** wire v2 `KIND_CELL_SUMMARY_V2` (nouveau KIND, défaut byte-intact) ; émission = claim propre
->   + `K_PROOF=4` preuves tournantes ; **ingestion VÉRIFIANTE** (`verify_proof` : cache `(id,seq)` puis `sig_ok` ;
->   `verified_proofs` : id → seq max + cellule) ; **plancher = Σ |IDs vérifiés ∈ cellule| sous `SIGNED_SAMPLES`**.
->   **89 tests, 0 warning.** ✅ Red-team INVERSÉ unitaire (**50, pas 66**) ; non-régression N=100 (perception 98→99,
->   débit +0,8 %).
-> - **▶️ Étape 5 — re-mesure :** `CORROB=1 FLOOR=1 SIGNED_SAMPLES=1 ./target/release/jeu coopsim-bus 1000 130` (puis 2000),
->   comparer perception à la baseline 1b (~87 % @1000, déjà enregistrée) et débit (≤ +30 %). Mesurer le surcoût CPU réel
->   (wall). Si la rotation `K_PROOF=4` sous-couvre les cellules denses → régler `K_PROOF` (compromis débit↔convergence) ou
->   REPLIER (plancher « anti-omission seulement », documenté). **Lancer `tools/sim-cool.sh` avant le gros run.**
-> - **Critère pré-enregistré (Règle 2, écrit AVANT) — VALIDÉ si :** (a) red-team 66→50 ✅ (unitaire) ; (b) récup ≥ niveau 1b
->   (~87 % @1000) ; (c) débit ≤ ~+30 % vs 1b ; (d) CPU < 1 %/cœur. **Si le débit explose malgré les mitigations →
->   on REPLIE** (plancher « anti-omission seulement », documenté ; `qth` déjà incheatable porte la sécurité). On le saura mesuré.
+> ⚡ **PIÈGE DE BANC À RETENIR (sinon on perd 1 h) :** le minage PoW coûte **~3 s à N=1000 sous `POW_BITS=8`** mais
+> **~50 min au défaut 18 bits** (≈3 s/identité × 1000). TOUJOURS lancer les bancs `coopsim-bus N≥1000` avec `POW_BITS=8`
+> en tête (orthogonal à la mesure perception/débit). Et écrire la sortie DIRECTEMENT dans un fichier (`> f.txt`), JAMAIS
+> via `| grep > f` (grep bufferise par blocs → blackout des snapshots ; le binaire Rust, lui, line-buffer son stdout).
+>
+> 🚀 **DÉMARRAGE PROCHAINE SESSION — l'étape 6 (papier d'abord, wire = sécu critique SUPERVISÉ) :**
+> - **But :** fermer le lag de convergence sans casser le MTU. Le plafond actuel : 16 samples + `K_PROOF=4` preuves inline
+>   (182 o) ≈ 1488 o, frôle 1500. **Piste retenue (option 3 du papier) :** preuve par RÉFÉRENCE `(id,seq)` ~40 o au lieu
+>   de 182 o inline → ~4× plus d'occupants couverts/émission au MÊME wire ; le receveur RETROUVE le sceau qu'il détient
+>   DÉJÀ en `signed_states` (gossip), ne compte au plancher que les références RÉSOLUES + vérifiées (sinon ignore = sûr).
+> - **Acquis (étapes 1-5) :** `verify_proof` (cache `(id,seq)`), `verified_proofs` (id→seq,cellule), plancher vérifié sous
+>   `SIGNED_SAMPLES`. **89 tests, 0 warning.** Mesure N=1000 : inflation fermée, débit +0,7 %, récup 705 vs 1b 756.
+> - **▶️ Étape 6 — petits pas :** (1) PAPIER : format de la référence + résolution receveur + repli si sceau absent ;
+>   (2) wire (nouveau sous-format ou champ) gaté, défaut byte-intact ; (3) émission référence ; (4) réception résout +
+>   vérifie ; (5) re-mesure N=1000 (récup doit rejoindre ~756 à débit ≤ +30 %).
+> - **Critère pré-enregistré (inchangé) :** (a) red-team 66→50 ✅ ; (b) récup ≥ 1b re-mesuré (756 @1000) ; (c) débit ≤ +30 %
+>   vs 1b ; (d) CPU < 1 %/cœur. **Si le débit explose → REPLI** (plancher anti-omission documenté ; `qth` porte la sécurité).
 >
 > **APRÈS C-sécu-2 :** attaquer le **mur n°2** (bootstrap symétrique — touche le protocole → supervisé), ou Phase B
 > inclusivité, ou ch.10.2 chiffrement. *Petit pas, preuve d'abord.*
