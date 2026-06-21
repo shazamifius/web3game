@@ -427,3 +427,61 @@
   fixe la vitesse réelle du perso, donne-moi un profil de perte cible, et je code + prouve par `attack`
   (un bot « soutenu » muet, la marche normale passe). C'est un raffinement « à surveiller » (🟡), pas un bloqueur.
 - _(ce que j'ajouterai si je dois stopper un pas)_
+
+---
+
+## 📄 PAPIER C-sécu-2 — échantillons AUTO-SIGNÉS pour fermer l'inflation du plancher (écrit le 21 juin, AVANT de coder)
+
+> *Le make-or-break que la roadmap exige avant tout code (coût CPU/débit). Zéro octet de wire touché ici :
+> c'est de la réflexion. But : décider si l'idée FERME, et sinon l'abandonner « gratis ».*
+
+**LE TROU (mesuré par le red-team) :** le plancher 1b compte `|union des IDs vus dans les échantillons|`,
+mais les échantillons `(id, x, z)` sont signés par le SEUL agrégateur, pas par chaque personne. Un menteur
+seul peut donc bourrer ≤ `MAX_CELL_SAMPLES` (=16) faux IDs/cellule → inflation +16 (test : 50→66).
+
+**LE FIX :** chaque échantillon devient **AUTO-CERTIFIANT** : `(id, x, z, seq, sig)` où `sig` est la signature
+de **la personne elle-même** (exactement un état joueur miniature). Le plancher ne compte alors que les IDs
+dont l'auto-signature VÉRIFIE → un menteur ne peut pas forger les autres → **plus de fantômes**. Le red-team
+retombe de 66 à 50 (on inversera l'assertion).
+
+**L'ASTUCE QUI REND LE COÛT TENABLE :** l'agrégateur **ne signe RIEN de neuf**. Les états joueurs portent DÉJÀ
+leur sceau (`encode_signed` = corps 118 o + sig 64). Il suffit que chaque nœud **retienne le dernier état SIGNÉ
+reçu par pair** (id, x, z, seq, **sig**) et **recopie** ces octets dans l'échantillon. Aucun travail crypto à
+l'émission pour les honnêtes ; juste de la recopie.
+
+**COÛT WIRE (le vrai point dur) — chiffré :**
+- Échantillon : **40 o → 112 o** (id 32 + x 4 + z 4 + seq 8 + sig 64) = **×2,8**.
+- Résumé complet : `HEADER 55 + 16×40 + sig 64 = 759 o` **→** `55 + 16×112 + 64 = 1911 o` = **×2,52**.
+- Les résumés DOMINENT les ~55 Ko/s mesurés (émis toutes les 2 s, fanout 4, + relais). Donc le naïf
+  « tout auto-signer » pousserait le débit vers **~110-130 Ko/s** = ×2-2,5. **C'EST le risque à borner.**
+
+**COÛT CPU (le make-or-break nommé par la roadmap) — chiffré : ÇA FERME.**
+- Vérifs = `K × (résumés ingérés frais)`. Ed25519 verify ≈ 30-50 µs.
+- Sans cache : 16 × 40 µs = **640 µs/résumé accepté** ; à ~2,7 acceptés/s/nœud (mesuré au run 1000/130 s) →
+  **~1,7 ms/s ≈ 0,17 %/cœur**. Déjà négligeable.
+- Avec **cache de vérif par `(id, seq)`** (le même état signé arrive via N relais → on ne le vérifie qu'UNE
+  fois) : coût = O(personnes-MAJ DISTINCTES perçues), pas O(résumés reçus). **Effondré.** → CPU NON bloquant.
+
+**VERDICT PAPIER :** **CPU ferme largement. Le débit est le seul vrai coût.** Donc on ne code PAS le naïf ;
+on code avec UNE des mitigations de débit, et la mesure tranche :
+1. **Sous-ensemble TOURNANT auto-signé** (recommandé) : ne mettre `seq+sig` que sur **k_proof < 16** échantillons
+   par émission (ex. 4), tournants. L'union de preuves grossit quand même dans le temps (rotation) → le plancher
+   remonte sûrement, mais le résumé reste proche de l'actuel. Compromis vitesse-de-convergence ↔ débit = un RÉGLAGE
+   à mesurer, pas à deviner.
+2. **Auto-signature SEULEMENT dans les cellules sparse** (où `qth` sous-compte) : les cellules denses (où `qth`
+   domine déjà) gardent l'échantillon léger. Borne les octets en trop là où ils PAIENT.
+3. **Référence au lieu d'inline** : porter `(id, seq)` seul et laisser le receveur retrouver le sceau qu'il
+   détient DÉJÀ par gossip ; n'inliner la `sig` que s'il lui manque. Quasi zéro surcoût en maillage dense, mais
+   plus complexe — option 2e temps.
+
+**CRITÈRE PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT de coder) — l'idée est VALIDÉE si, à N=1000/2000, derrière un
+drapeau (défaut intact) :** (a) le red-team passe de **66 → 50** (inflation fermée) ; (b) la récupération reste
+**≥ le niveau 1b** (≈87 % à 1000) ; (c) le débit reste **≤ ~+30 %** vs 1b (sinon escalader la mitigation) ;
+(d) CPU **< 1 %/cœur** mesuré. Si le débit explose malgré les mitigations → on REPLIE : le plancher reste
+« anti-omission seulement », documenté, et `qth` (déjà incheatable) porte la sécurité. **On le saura mesuré.**
+
+**ÉTAPES DE CODE (petits pas, derrière `SIGNED_SAMPLES=1`, wire v2 ou nouveau KIND, chemin défaut byte-intact) :**
+(1) retenir le dernier état signé par pair (id, x, z, seq, sig) ; (2) format d'échantillon v2 + encode/decode +
+PROTO bump derrière le drapeau ; (3) ingestion : vérifier `k_proof` échantillons, ne compter au plancher que les
+vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; (5) inverser l'assertion du red-team.
+**Estimé : ~½ journée + mesure.** À faire reposé (wire = sécurité critique).
