@@ -444,6 +444,10 @@
 
 > *Le make-or-break que la roadmap exige avant tout code (coût CPU/débit). Zéro octet de wire touché ici :
 > c'est de la réflexion. But : décider si l'idée FERME, et sinon l'abandonner « gratis ».*
+>
+> ⚠ **CADRE — ce bloc est du travail SUPERVISÉ, pas autonome.** Le « wire » de C-sécu-2 (`KIND_CELL_SUMMARY_V2`,
+> prouvable HEADLESS) n'est PAS le wire interdit en autonomie plus haut (= ch.10.2 chiffrement, invisible sans le
+> 3D). Ce papier est la RÉFÉRENCE VIVANTE du rush wire ; le point de reprise est l'⏱️ ANCRE §0 de `FEUILLE_DE_ROUTE.md`.
 
 **LE TROU (mesuré par le red-team) :** le plancher 1b compte `|union des IDs vus dans les échantillons|`,
 mais les échantillons `(id, x, z)` sont signés par le SEUL agrégateur, pas par chaque personne. Un menteur
@@ -501,7 +505,21 @@ vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; 
 - ✅ **Subtilité RÉSOLUE** : `sig_ok` normalise l'octet de transport à `KIND_STATE` avant de vérifier, et `KIND_RELAY`
   = même corps/sceau (182 o). Donc un état stocké (direct OU relayé) se vérifie identiquement → **ré-embarquement
   VERBATIM en v2 possible, zéro canonicalisation.** Embarquer un état signé = `STATE_SIZE` (182 o).
-- ▶️ **RESTE étapes 2→5** (le gros morceau wire) : nouveau `KIND_CELL_SUMMARY_V2` (append `nproof` + k_proof×182 o
-  d'états verbatim APRÈS le sceau, hors corps signé → relais libre d'ajouter/retirer, monotone-sûr) ; émission v2
-  sous le drapeau ; ingestion vérifie les proofs ; plancher = Σ |IDs proofs vérifiés ∈ cellule| ; re-mesure ;
-  inverser le red-team. **De-risqué, prêt à exécuter en bloc focalisé.**
+- ✅ **Étape 2 FAITE** (format wire v2, 86 tests, 0 warning, défaut byte-intact) : `KIND_CELL_SUMMARY_V2 = 10` +
+  `encode_cell_summary_v2`/`decode_cell_summary_v2` dans `cell.rs`. Forme = résumé v1 **verbatim** (seul le byte de
+  transport passe à 10) suivi du trailer `[nproof][nproof×182 o]` d'états signés bruts, **HORS du corps signé**.
+  - **DÉCISION DE FORMAT (tranchée AVANT de coder, 2 forks soumis à l'utilisateur) :** (a) **PAS de bump de
+    `PROTO_VERSION`** — bumper la const globale jetterait tout le chemin défaut (`bot.rs:277` filtre `byte[1]≠PROTO`),
+    viol Règle 1 ; le « PROTO bump » du papier = **le nouveau KIND** (byte[1] reste = 1, vieux nœud ignore KIND 10).
+    (b) **Corps v1 gardé verbatim** (échantillons légers conservés) → réutilise le ré-embarquement de l'étape 1, sceau
+    intact, zéro canonicalisation. Léger doublon `(id,x,z)` assumé.
+  - **Prouvé headless (6 tests v2)** : aller-retour identique + sceau tient + preuves rendues VERBATIM et chacune
+    auto-vérifiable (`sig_ok`) ; zéro preuve OK ; **relais peut RETIRER des preuves sans casser le sceau** (le point
+    « hors corps signé ») ; preuve malformée ignorée à l'émission ; v1/v2 ne se croisent jamais (KIND 9 ≠ 10) ;
+    trailer non canonique rejeté. ⚠ **MTU à surveiller** : 16 samples + k_proof=4 ≈ 1488 o (frôle 1500) → l'émission
+    (étape 3) tient k_proof bas ; le format supporte ≤ 16.
+  - ⚠ **Dette de l'étape 2** : 3 `#[allow(dead_code)]` TEMPORAIRES (les 2 fns + la const) — le code n'est pas encore
+    appelé ; les `allow` **sautent dès l'étape 3** (émission) / **4** (ingestion). C'est un marqueur, pas une rustine.
+- ▶️ **RESTE étapes 3→5** : émission v2 sous le drapeau (sous-ensemble TOURNANT k_proof<16, ex. 4) ; ingestion vérifie
+  les proofs (cache `(id,seq)`) → plancher = Σ |IDs proofs vérifiés ∈ cellule| ; re-mesure débit/CPU/récup à 1000/2000 ;
+  inverser le red-team (66→50). **Prêt à exécuter en bloc focalisé.**

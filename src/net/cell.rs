@@ -33,7 +33,8 @@
 //! dans `bot.rs` (et `NetLink::build_my_cell_summary` / `ingest_summary`). Preuve d'échelle = 8.3d.
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::wire::{KIND_CELL_SUMMARY, PROTO_VERSION};
+use super::message::SIGNED_STATE_SIZE;
+use super::wire::{KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, PROTO_VERSION};
 
 /// Nombre MAX de positions représentatives dans un résumé. 16 × 40 o (id+pos) = 640 o de samples,
 /// + l'en-tête + la signature reste sous un datagramme. Borne le coût d'un résumé quelle que soit
@@ -199,6 +200,86 @@ pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
     Some(CellSummary { cell: (cx, cz), host, count, seq, samples, sig })
 }
 
+// ----------------------------------------------------------------------------
+// RÉSUMÉ v2 — TRAILER de preuves AUTO-SIGNÉES (chap. 8.3★ C-sécu-2).
+// ----------------------------------------------------------------------------
+// Le trou (red-team) : les échantillons `(id,x,z)` du corps sont signés par le SEUL hôte,
+// pas par chaque personne → un menteur seul bourre ≤ `MAX_CELL_SAMPLES` faux IDs au plancher
+// d'union (1b). Le fix : joindre des PREUVES = des états joueurs SIGNÉS verbatim (182 o chacun,
+// `SIGNED_STATE_SIZE`), chacune scellée par la personne ELLE-MÊME. L'ingestion (étape 4) ne
+// comptera au plancher que les IDs dont la preuve VÉRIFIE → plus de fantômes.
+//
+// Format wire (un nouveau KIND, byte[1] = PROTO_VERSION inchangé → défaut byte-intact ; vieux
+// nœud : `kind()` rend Some(10), aucun bras ne matche → ignoré) :
+//   [encode_cell_summary v1 VERBATIM, mais byte[0] = KIND_CELL_SUMMARY_V2]   (corps signé + sceau)
+//   [nproof: u8][proof_0: 182]…[proof_{nproof-1}: 182]                       (trailer HORS corps signé)
+// Le trailer étant HORS du corps signé, un relais est libre d'en ajouter/retirer (sous-ensemble
+// tournant, étape 3) sans casser le sceau du résumé. Le corps interne reste re-sérialisable au
+// MÊME octet (le sceau se revérifie en rebâtissant le corps depuis la struct, qui réécrit toujours
+// `KIND_CELL_SUMMARY` — comme le tour `KIND_RELAY` des états), donc on RÉUTILISE tout le v1.
+
+/// Sérialise un résumé v2 : le résumé v1 (corps signé + sceau) suivi du trailer de preuves
+/// verbatim. `proofs` = des états SIGNÉS bruts (182 o chacun) ; on les recopie tels quels (zéro
+/// re-signature). Tronque à `MAX_CELL_SAMPLES` (borne de coût, jumelle de celle des échantillons).
+/// Une preuve de longueur ≠ `SIGNED_STATE_SIZE` est IGNORÉE (on n'émet jamais un trailer malformé).
+#[allow(dead_code)] // C-sécu-2 étape 2 : prêt ; appelé à l'émission v2 en étape 3 (l'allow saute alors)
+pub(crate) fn encode_cell_summary_v2(s: &CellSummary, proofs: &[Vec<u8>]) -> Vec<u8> {
+    let mut buf = encode_cell_summary(s);
+    buf[0] = KIND_CELL_SUMMARY_V2; // seul le byte de TRANSPORT change ; le corps signé reste v1
+    let kept: Vec<&Vec<u8>> = proofs
+        .iter()
+        .filter(|p| p.len() == SIGNED_STATE_SIZE)
+        .take(MAX_CELL_SAMPLES)
+        .collect();
+    buf.push(kept.len() as u8);
+    for p in kept {
+        buf.extend_from_slice(p);
+    }
+    buf
+}
+
+/// Désérialise un résumé v2 → `(résumé, preuves brutes)`. `None` si type/version/taille non
+/// canonique. Les preuves sont rendues VERBATIM (non vérifiées ici : l'étape 4 fait `sig_ok` +
+/// `decode_canonical`). On EXIGE la longueur exacte (`v1 + 1 + nproof×182`) : toute forme autre
+/// est rejetée, comme en v1, pour qu'un relais re-sérialise des octets identiques.
+#[allow(dead_code)] // C-sécu-2 étape 2 : prêt ; appelé à l'ingestion v2 en étape 4 (l'allow saute alors)
+pub(crate) fn decode_cell_summary_v2(buf: &[u8]) -> Option<(CellSummary, Vec<Vec<u8>>)> {
+    if buf.len() < HEADER + SIG_LEN + 1 || buf[0] != KIND_CELL_SUMMARY_V2 || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    // On décode le résumé interne en réutilisant le décodeur v1 : il exige `buf[0] == KIND_CELL_SUMMARY`
+    // et la longueur EXACTE du résumé, donc on lui passe une copie du préfixe résumé avec byte[0] remis
+    // à KIND_CELL_SUMMARY (le corps signé, lui, n'a jamais porté autre chose). On retrouve d'abord la
+    // borne du résumé v1 = HEADER + n×SAMPLE_SIZE + SIG_LEN à partir du compteur d'échantillons.
+    let n = buf[OFF_NSAMP] as usize;
+    if n > MAX_CELL_SAMPLES {
+        return None;
+    }
+    let summary_len = HEADER + n * SAMPLE_SIZE + SIG_LEN;
+    if buf.len() < summary_len + 1 {
+        return None; // pas même la place pour le compteur de preuves
+    }
+    let mut head = buf[..summary_len].to_vec();
+    head[0] = KIND_CELL_SUMMARY; // re-normalise le byte de transport pour le décodeur v1
+    let s = decode_cell_summary(&head)?;
+    // Trailer : [nproof][nproof × SIGNED_STATE_SIZE], longueur TOTALE exigée exacte.
+    let nproof = buf[summary_len] as usize;
+    if nproof > MAX_CELL_SAMPLES {
+        return None;
+    }
+    let expected = summary_len + 1 + nproof * SIGNED_STATE_SIZE;
+    if buf.len() != expected {
+        return None; // forme non canonique
+    }
+    let mut proofs = Vec::with_capacity(nproof);
+    let mut o = summary_len + 1;
+    for _ in 0..nproof {
+        proofs.push(buf[o..o + SIGNED_STATE_SIZE].to_vec());
+        o += SIGNED_STATE_SIZE;
+    }
+    Some((s, proofs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +380,109 @@ mod tests {
         let mut bytes = encode_cell_summary(&s);
         bytes[0] = 0xFF; // mauvais KIND
         assert_eq!(decode_cell_summary(&bytes), None);
+    }
+
+    // --- RÉSUMÉ v2 (C-sécu-2, étape 2 : format seul) -------------------------
+
+    use super::super::message::{encode_signed, PlayerState};
+
+    /// Fabrique une PREUVE = un état joueur SIGNÉ verbatim (182 o) à la position `(x,z)`, scellé
+    /// par sa PROPRE identité (auto-certifiant).
+    fn signed_proof(x: f32, z: f32, seq: u64) -> Vec<u8> {
+        let id = Identity::generate();
+        let p = PlayerState {
+            id: id.id(), x, y: 0.0, z, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: None, seq,
+        };
+        encode_signed(&p, &id).to_vec()
+    }
+
+    /// Aller-retour v2 : le résumé revient identique, son sceau tient, et les preuves sont rendues
+    /// VERBATIM (chaque preuve se revérifie par son propre sceau → auto-certifiante).
+    #[test]
+    fn resume_v2_survit_a_l_aller_retour() {
+        use super::super::message::sig_ok;
+        let host = Identity::generate();
+        let mut s = build_cell_summary((2, -1), host.id(), &[(pid(1), 1.0, 2.0), (pid(2), 3.0, 4.0)], 7);
+        s.count = 9;
+        sign_summary(&mut s, &host);
+        let pa = signed_proof(1.0, 2.0, 1);
+        let pb = signed_proof(3.0, 4.0, 1);
+        let proofs = vec![pa.clone(), pb.clone()];
+        let bytes = encode_cell_summary_v2(&s, &proofs);
+        let (recu, recu_proofs) = decode_cell_summary_v2(&bytes).expect("doit se décoder");
+        assert_eq!(recu, s); // résumé interne intact
+        assert!(summary_sig_ok(&recu)); // sceau du résumé tient
+        assert_eq!(recu_proofs, proofs); // preuves verbatim
+        assert!(recu_proofs.iter().all(|p| sig_ok(p))); // chaque preuve est auto-certifiante
+    }
+
+    /// Zéro preuve : un résumé v2 sans trailer de preuves fait quand même l'aller-retour.
+    #[test]
+    fn resume_v2_sans_preuves_ok() {
+        let host = Identity::generate();
+        let mut s = build_cell_summary((0, 0), host.id(), &[(pid(1), 0.0, 0.0)], 1);
+        sign_summary(&mut s, &host);
+        let bytes = encode_cell_summary_v2(&s, &[]);
+        let (recu, proofs) = decode_cell_summary_v2(&bytes).expect("se décode");
+        assert_eq!(recu, s);
+        assert!(proofs.is_empty());
+    }
+
+    /// LE POINT « hors corps signé » : un relais peut RETIRER des preuves (sous-ensemble tournant,
+    /// étape 3) sans casser le sceau du résumé — il re-sérialise depuis la struct + un sous-ensemble.
+    #[test]
+    fn relais_peut_retirer_des_preuves_sans_casser_le_sceau() {
+        let host = Identity::generate();
+        let mut s = build_cell_summary((1, 1), host.id(), &[(pid(1), 1.0, 1.0)], 3);
+        sign_summary(&mut s, &host);
+        let pa = signed_proof(1.0, 1.0, 1);
+        let pb = signed_proof(2.0, 2.0, 1);
+        let plein = encode_cell_summary_v2(&s, &[pa.clone(), pb]);
+        let (recu, _) = decode_cell_summary_v2(&plein).expect("plein se décode");
+        // le relais ré-émet avec UNE seule preuve, à partir du résumé décodé
+        let allege = encode_cell_summary_v2(&recu, &[pa.clone()]);
+        let (recu2, proofs2) = decode_cell_summary_v2(&allege).expect("allégé se décode");
+        assert_eq!(recu2, s); // même résumé
+        assert!(summary_sig_ok(&recu2)); // sceau toujours valide malgré le trailer modifié
+        assert_eq!(proofs2, vec![pa]); // sous-ensemble conservé verbatim
+    }
+
+    /// Une preuve de longueur ≠ 182 o est IGNORÉE à l'émission (jamais de trailer malformé sur le fil).
+    #[test]
+    fn encode_v2_ignore_les_preuves_malformees() {
+        let host = Identity::generate();
+        let mut s = build_cell_summary((0, 0), host.id(), &[], 0);
+        sign_summary(&mut s, &host);
+        let bonne = signed_proof(0.0, 0.0, 1);
+        let mauvaise = vec![0u8; 10]; // trop courte
+        let bytes = encode_cell_summary_v2(&s, &[mauvaise, bonne.clone()]);
+        let (_recu, proofs) = decode_cell_summary_v2(&bytes).expect("se décode");
+        assert_eq!(proofs, vec![bonne]); // seule la preuve bien formée survit
+    }
+
+    /// CHEMIN DÉFAUT INTACT : un paquet v2 (KIND 10) est REJETÉ par le décodeur v1 (KIND 9), et
+    /// réciproquement un paquet v1 est rejeté par le décodeur v2 → aucun croisement de format.
+    #[test]
+    fn v1_et_v2_ne_se_croisent_pas() {
+        let host = Identity::generate();
+        let mut s = build_cell_summary((0, 0), host.id(), &[(pid(1), 0.0, 0.0)], 1);
+        sign_summary(&mut s, &host);
+        let v1 = encode_cell_summary(&s);
+        let v2 = encode_cell_summary_v2(&s, &[]);
+        assert_eq!(decode_cell_summary(&v2), None); // v1 refuse le KIND 10
+        assert_eq!(decode_cell_summary_v2(&v1), None); // v2 refuse le KIND 9
+    }
+
+    /// Trailer tronqué (longueur non canonique : nproof annonce plus de preuves qu'il n'y en a) → rejet.
+    #[test]
+    fn v2_trailer_non_canonique_rejete() {
+        let host = Identity::generate();
+        let mut s = build_cell_summary((0, 0), host.id(), &[], 0);
+        sign_summary(&mut s, &host);
+        let pa = signed_proof(0.0, 0.0, 1);
+        let mut bytes = encode_cell_summary_v2(&s, &[pa]);
+        bytes.truncate(bytes.len() - 5); // coupe dans la preuve → longueur ≠ attendue
+        assert_eq!(decode_cell_summary_v2(&bytes), None);
     }
 }

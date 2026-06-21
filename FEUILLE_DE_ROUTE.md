@@ -55,7 +55,7 @@
 > (D14 fermé). **Investigation 8.3★ EN COURS** (perception à grande échelle) : un **banc bus mémoire** (D25,
 > dette de harnais levée) mesure désormais jusqu'à 5000+ nœuds sur un PC. Il a **séparé DEUX murs**, et le
 > redesign **« perception auto-certifiante » RETIRE le chef de cellule** (l'élection d'hôte de D26 couche 1
-> était le mur dominant — mesuré, pas supposé). **78 tests, 0 warning, cœur + chemin UDP byte-pour-byte intacts.**
+> était le mur dominant — mesuré, pas supposé). **80 tests, 0 warning, cœur + chemin UDP byte-pour-byte intacts.**
 >
 > **⚙ 8.3★ — LES DEUX MURS DE LA PERCEPTION (mesurés au banc bus, 20-21 juin) :**
 > - **MUR n°1 — la taxe `émetteur≠hôte` (D26 couche 1) = DISSOUS.** L'ingestion n'acceptait un résumé que si
@@ -66,11 +66,23 @@
 > - **MUR n°2 — bootstrap LENT de la découverte** (~45 s à 5000 puis cascade ; robuste au jitter = propriété
 >   RÉELLE du protocole). C'est désormais **LE plafond restant** de la perception à l'échelle : la densité SUIT
 >   la découverte (N=2000 → 52 %, N=5000 → 49 % et MONTAIT encore en fin de fenêtre). **Orthogonal au 8.3★.**
-> - **Sécurité (étape C-sécu, EN COURS) :** `DENSITY_MAX` est un INSTRUMENT (le MAX est gonflable). La version
->   SÛRE = **densité MOLLE CORROBORÉE** (`CORROB` : Q-ième plus grand count par /24 distinct = `qth_largest` ;
->   prouvé : inflation bornée au max honnête tant que < Q menteurs, contrôle à k≥Q = limite botnet). **C-sécu-1a
->   CODÉ + testé** ; récupération en cours de mesure ; anti-inflation /24 = harnais NAT (réutilise 9.4b). Détail :
->   §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu ».
+> - **Sécurité — chantier C-sécu (densité molle CORROBORÉE, remplace l'instrument gonflable `DENSITY_MAX`) :**
+>   - ✅ **C-sécu-1a** — corroboration multi-signataire (`CORROB` : Q-ième plus grand count par /24 distinct =
+>     `qth_largest`, Q=3 ; fonction PURE testée : inflation bornée au max honnête tant que < Q menteurs, contrôle
+>     à k≥Q = limite botnet).
+>   - ✅ **C-sécu-1b** — plancher d'union signée → **récupération 87 % à convergence @1000 (cible ≥80 % FRANCHIE)**,
+>     débit PLAT, ADDITIF (zéro octet de wire). ⚠ Dette laissée : échantillons pas auto-signés → un menteur seul
+>     peut injecter ≤16 faux IDs/cellule (ferme l'anti-OMISSION, pas l'anti-INFLATION).
+>   - 🔧 **C-sécu-2 EN COURS** — échantillons AUTO-SIGNÉS pour fermer cette inflation. Papier make-or-break écrit
+>     (CPU ferme largement ; le DÉBIT est le seul vrai coût → mitigations prévues). **Étapes 1-2/5 FAITES** :
+>     étape 1 = `signed_states`/`remember_signed_state` (gaté, ré-embarquement verbatim) ; **étape 2 = format wire
+>     `KIND_CELL_SUMMARY_V2`** = résumé v1 verbatim + trailer `[nproof][n×182 o]` de preuves auto-signées HORS du
+>     corps signé (relais libre d'en retirer, sceau intact). **PAS de bump `PROTO_VERSION`** (= nouveau KIND, vieux
+>     nœud ignore KIND 10) → **défaut byte-intact, 86 tests, 0 warning**. **Reste étapes 3→5 (émission / ingestion+
+>     plancher vérifié / re-mesure+red-team) → voir PROCHAINE ACTION.**
+>   - *Caveat permanent : `qth`/plancher prouvés en LOGIQUE + récupération headless ; l'anti-inflation /24 RÉEL
+>     attend le harnais NAT (vraies IP, réutilise 9.4b). Détail : §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu » ;
+>     papier complet : `PLAN_AUTONOME.md` § PAPIER C-sécu-2.*
 >
 > **3 MESURES « TROP GENTILLES » à ne pas se mentir (détail au 🧾 registre) :** (a) « couverture » = pairs
 > CONNUS, pas ENTENDUS (optimiste) ; (b) la FRAÎCHEUR (âge de perception d'un lointain) jamais mesurée en direct ;
@@ -92,262 +104,41 @@
 > - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
 > - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = finir l'étape C-sécu.** (1) mesurer la RÉCUPÉRATION de `CORROB` vs `DENSITY_MAX` (cible
-> ≥ ~80 %, en cours) ; (2) C-sécu-1b : plancher vérifié anti-omission (union signée) ; (3) C-sécu-2 : red-team
-> inflation/omission sous harnais NAT (vraies IP). **Puis** : attaquer le **mur n°2** (bootstrap symétrique — touche
-> le protocole → supervisé), ou Phase B inclusivité, ou ch.10.2 chiffrement. *Petit pas, preuve d'abord.*
+> **PROCHAINE ACTION = C-sécu-2 étapes 3→5 (émission / ingestion+plancher / re-mesure), en session FOCALISÉE.**
+> *Étapes 1-2/5 faites (états signés retenus + format wire v2 prouvé). Le reste est du WIRE = sécurité critique → on
+> le reprend reposé, d'un seul tenant, JAMAIS en bout de longue session (c'est là qu'on casse des choses).*
+>
+> 🚀 **DÉMARRAGE PROCHAINE SESSION — le rush wire (tout est balisé, démarrage immédiat) :**
+> - **But :** échantillons AUTO-SIGNÉS pour fermer l'inflation du plancher → le red-team doit retomber de **66 → 50**.
+>   Papier complet (coût CPU/débit chiffré, mitigations) = `PLAN_AUTONOME.md` § « PAPIER C-sécu-2 ».
+> - **Acquis (étapes 1-2) :** `signed_states`/`remember_signed_state` gaté (ré-embarquement VERBATIM 182 o) ; **format
+>   wire `KIND_CELL_SUMMARY_V2`** = résumé v1 verbatim + trailer `[nproof][n×182 o]` HORS corps signé (encode/decode +
+>   6 tests v2 ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact ; 86 tests, 0 warning). ⚠ 3
+>   `#[allow(dead_code)]` temporaires (les fns v2 pas encore appelées) → **sautent au câblage des étapes 3/4**.
+> - **▶️ Étape 3 — émission v2** sous le drapeau (mitigation débit = sous-ensemble TOURNANT `k_proof < 16`, ex. 4 ;
+>   recopier les `signed_states` retenus comme preuves). ⚠ **MTU** : 16 samples + 4 proofs ≈ 1488 o → garder k_proof bas.
+> - **Étape 4 — ingestion :** vérifier les `k_proof` proofs (cache `(id, seq)` : un état vu via N relais = 1 vérif) ;
+>   plancher = Σ |IDs de proofs VÉRIFIÉS ∈ cellule|.
+> - **Étape 5 — re-mesure + red-team :** débit/CPU/récup à 1000/2000 ; inverser l'assertion du red-team (66 → 50).
+> - **Critère pré-enregistré (Règle 2, écrit AVANT) — VALIDÉ si :** (a) red-team 66→50 ; (b) récup ≥ niveau 1b
+>   (~87 % @1000) ; (c) débit ≤ ~+30 % vs 1b ; (d) CPU < 1 %/cœur. **Si le débit explose malgré les mitigations →
+>   on REPLIE** (plancher « anti-omission seulement », documenté ; `qth` déjà incheatable porte la sécurité). On le saura mesuré.
+>
+> **APRÈS C-sécu-2 :** attaquer le **mur n°2** (bootstrap symétrique — touche le protocole → supervisé), ou Phase B
+> inclusivité, ou ch.10.2 chiffrement. *Petit pas, preuve d'abord.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
-**Où on en est :** le **chapitre 6 (refonte BÉTON) est TERMINÉ** — les 10 trous de
-l'audit fermés/bornés (0.0→6.8), **35 tests, 0 warning**, et **le jeu 3D réel
-fonctionne** (avatars + pseudos `0000…` + badge OWN BALLE visibles à l'écran). Tout
-est poussé sur GitHub (`shazamifius/web3game`, branche `main`).
-
-**Les 4 décisions de direction sont prises** (détail section G) : ① **on chiffre
-tout** (ch. 10) ; ② **PoW anti-Sybil réglable** (on durcit si les tests l'exigent) ;
-③ **ordre normal** 7→8→9→10 (pas de priorité forcée au 0-connexion) ; ④ **identité
-persistante = clé sauvée dans un fichier** (ch. 10).
-
-**On est dans le CHAPITRE 7 (confrontation au réel). 7.1, 7.2 et 7.3 sont FAITS.**
-**7.1 ✓** — `tools/sim-netem.sh` (3 profils) applique `tc netem` sur `lo`, retire toujours
-le netem (`trap`). Piège : sur `lo` le délai compte double → profils en ping, `delay/2`.
-**7.2 ✓** — mesuré (`sim 50 5 30`). Sécurité INTACTE partout (orbe 0/50, attaques
-neutralisées même à 250 ms + reorder). Débit honnête : `bon` ~22,7k/s, `mauvais` ~6,8k/s
-(−70 %). Diagnostic initial (anti-rejeu strict) → **s'est révélé FAUX au 7.3.**
-**7.3 ✓** — anti-rejeu à fenêtre glissante (64, masque `u64`) dans `accept_seq` ; tolère
-le ré-ordo, refuse rejeu + trop-vieux ; 36 tests, 0 warning. Re-mesuré : `mauvais` remonte
-de ~6,8k à ~7,9k/s (**+15 % seulement**) → l'anti-rejeu n'était PAS le goulot. Vraie cause
-identifiée : le `limit 1000` par défaut de netem plafonne à ~limit/délai ≈ 8 000/s à
-125 ms (= pile la mesure). Le fix reste correct (vrais réseaux ré-ordonnent).
-
-**7.3b ✓** — `limit 100000` dans le harnais : sous `mauvais`, débit honnête ~7,9k → **~21,3k/s**
-(`bon` ~23,3k) → **−9 % seulement**. PROUVÉ : le −70 % était l'artefact `limit 1000`, PAS le
-protocole. **Le protocole tient sous réseau réel.** Le cœur du chapitre 7 est atteint.
-
-**7.4 ✓** — `sim` chiffre le coût RÉEL par nœud (nouveau `src/net/probe.rs`) : bande passante
-(compteurs d'octets dans la prise) + CPU du thread (`/proc/thread-self/stat`), réels ; RAM
-crête **globale** du process (pas de RAM/nœud factice — un seul tas partagé).
-
-**7.4b ✓ — fidélité + densité (révision de feuille de route faite avec la vision du code) :**
-le 1er chiffre de 7.4 (↑89 Ko/s) était mesuré sur le **mauvais chemin** — le bot émettait
-naïvement à tous, pas via l'AoI water-filling du vrai client. Corrigé : le bot appelle
-maintenant les mêmes fonctions qu'[aoi.rs]. Re-mesuré : **↑34/↓31 Ko/s/nœud, CPU ~0,7 %/cœur,
-38 Mo** (~0,27 Mbit/s ↑/joueur → très tenable). SURTOUT, le rapport AVOUE désormais le vrai
-mur : **D22 — en foule dense, on est aveugle au-delà de 32 voisins** (plafond dur du
-rendez-vous ; le water-filling ne peut rien car il n'apprend jamais le 33e). **Ferme D19,
-ouvre D22.** 36 tests, 0 warning.
-
-**7.5 ✓ (PREUVE NAT RÉELLE FAITE)** — `tools/test-nat.sh` généralisé au MULTI-joueurs (N
-maisons `p1..pN` derrière `nat1..natN`, résumé du mesh). A révélé + corrigé un **bug
-d'instrumentation** dans [natdemo.rs] (trou ouvert en silence si données reçues avant le
-punch). Puis **preuve réelle sous `sudo` (namespaces + vrais NAT), en ~16 s chacun** :
-`sudo ./tools/test-nat.sh 3 --cone` → **6/6 → MESH COMPLET** (full-cone : punch direct
-deux-à-deux) ; `sudo ./tools/test-nat.sh 3` (symétrique) → **0/6** (punch échoue → c'est le
-rôle du relais ch.5). En cours de route, **deux bugs du script** corrigés (exposés par le run
-réel) : `wait` nu attendait le rendez-vous sans fin (test « durait 25 min ») → on n'attend que
-les joueurs ; et `set -e` + code 124 de `timeout` coupait avant le résumé → absorbé par
-`|| true`. Le hole punching multi-joueurs est donc prouvé pour de vrai, pas juste sur localhost.
-
-**PLAN DU CHAPITRE 8 (densité, D22) ÉCRIT — prochaine action = CODER 8.0.** Le chapitre 7
-(« confrontation au réel ») est bouclé : le lien tient sous mauvais réseau (7.1→7.3b), le
-coût/nœud est chiffré honnêtement (7.4/7.4b), le NAT multi-joueurs marche (7.5). Le gros
-morceau d'archi — **D22 : en foule dense, aveugle au-delà de 32** — a maintenant son chapitre
-dédié, écrit AVANT de coder (règle d'or). Voir **§D, Chapitre 8 — La foule dense & l'inclusivité**.
-Le diagnostic est net : le plafond est au rendez-vous ([rendezvous.rs](src/net/rendezvous.rs) :
-`keep_nearest(…, 32)`) et le client écrase `link.peers` avec ce roster ([receive.rs](src/net/netcode/receive.rs))
-→ le 33e n'est jamais appris. La réponse (architecture, pas réglage) : **séparer FOCUS (lien plein,
-borné ~32) de CONSCIENCE (perception LOD, non plafonnée)**, découverte par **gossip** (le rendez-vous
-démoté à l'amorçage), **cellules + hôte agrégateur** pour tenir l'invariant *réception = O(K + cellules),
-indépendant de N*. **8.0 ✓ FAIT (le mur est chiffré) :** mode `cargo run -- crowd <N>` + métrique de
-**couverture de perception** + tiers focus/conscience. Mesuré : `crowd 200` → couverture **16 %**
-(FOCUS 32 + CONSCIENCE 0), **aveugle à 167** ; débit de référence à BATTRE **↓ 24,8 Ko/s** (doit
-rester PLAT quand la couverture montera). NB : l'ancien « Chapitre 8 — Inclusivité » a été FUSIONNÉ
-dans ce chapitre densité (même problème vu des deux bouts : « je ne vois pas la foule » ↔ « je ne
-peux pas tout recevoir de la foule ») — D3/D4/D5 y deviennent la Phase B.
-**8.1 ✓ FAIT (19 juin) — LE MUR DE D22 TOMBE.** Découverte par GOSSIP : nouveau `src/net/gossip.rs`
-(cartes de visite `KIND_GOSSIP`), le WELCOME **amorce** `link.peers` au lieu de l'écraser, et chaque
-nœud s'échange à bas débit un sous-ensemble divers de pairs connus. Logique d'apprentissage mise dans
-`NetLink` (`learn_peer`/`note_pos`, borne `MAX_KNOWN`) → partagée bot+jeu (pas de re-D2). **Mesuré :
-couverture 16 % → 98 % à `crowd 200`, et l'INVARIANT est prouvé** — le débit ↓ ne grandit PAS de 200
-à 500 nœuds (↓35→↓27 Ko/s, ↑ plat ~40 Ko/s, CPU ~0,7 %, orbe 0 volée). 42 tests, 0 warning. *Découverte
-clé en lisant le code : le coût de réception était DÉJÀ borné par le budget d'émission fixe ; le seul
-vrai mur était la DÉCOUVERTE (le plafond 32). Le gossip l'enlève.*
-
-**Jeu 3D VALIDÉ à 2 joueurs (capture utilisateur, 19 juin) :** deux fenêtres, chacune voit l'avatar
-de l'autre (pseudos `0000…`, badge OWN BALLE, membres/ombres/néon OK) — le gossip n'a rien cassé en
-3D. *Ne prouve PAS la foule dense en 3D* (2 ≠ 200 ; le plafond `MAX_AVATARS = 64` n'est pas stressé → D24).
-
-**8.1b ✓ FAIT (19 juin) — la porte DoS du gossip est FERMÉE (D23 fermé).** Quatre défenses en
-profondeur : (a) PoW exigée sur chaque carte apprise, (b) le gossip n'écrase jamais l'adresse d'un
-pair connu (anti-redirection), (c) abandon du perçage spéculatif après ~10 s (avant : à vie → flot
-réfléchi infini), (d) rate-limit d'apprentissage par source. Logique centralisée dans `NetLink`
-(`learn_from_gossip`) + fonction pure partagée `punch_abandoned` (bot ET jeu). **PROUVÉ par un VRAI
-attaquant** `attack gossip-flood` : **0 perçage réfléchi** reçu par la cible, tables non polluées ;
-découverte honnête intacte (`crowd 60` → couverture 100 %), essaim TENU avec l'attaquant actif
-(`sim 40 6 20`, orbe 0/40). **47 tests, 0 warning.** **Doute #1 fermé bout-en-bout (8.1b-preuve) :**
-même avec de vraies identités PoW minées pointées sur une victime, la réflexion est BORNÉE — mesuré
-**96 perçages/2 s pendant ~10 s puis 0** (l'abandon mord), au lieu du flot infini d'avant.
-
-**8.2 (netcode) ✓ FAIT (19 juin) — AoI à DEUX TIERS, focus COLLANT, invariant TENU.** 8.2a (alloc deux
-tiers) → 8.2b (métrique « entendus » qui a DÉMASQUÉ un churn du focus) → 8.2a-bis (focus collant par
-hystérésis, churn tué). **Prouvé :** `crowd 160` FOCUS 0,2 → 9,4 ; pair 80↔160 → FOCUS borné (8,8→10,5),
-CONSCIENCE scale (68→134 = foule en LOD), **débit ↓ PLAT (43,8→40,4 Ko/s) quand N double**. 51 tests, 0 warning.
-
-**8.2c ✓ FAIT & CONFIRMÉ À L'ÉCRAN (19 juin) — D24 FERMÉ.** Rendu 3D à deux tiers (focus détaillé /
-conscience imposteur LOD) + `tools/foule-3d.sh` + spawn éparpillé dans la salle. Capture utilisateur à
-`foule-3d.sh 80` : ~8 avatars détaillés (pseudos) + foule d'imposteurs, > 64 visibles, sans lag. **Le
-chapitre 8 « VOIR la foule » (Phase A, D22+D24) est bouclé** — sauf 8.3 (scaler à 5000).
-*Observé en passant : l'orbe saute en foule 80-fenêtres → diagnostiqué ARTEFACT mono-PC (cf. panneau dans
-le registre), NON corrigé ; résidus réels R1 (orbe non interpolée) / R2 (migration split-brain = D11) logués.*
-
-**8.3a ⏸ POSÉ MAIS EN PAUSE (19 juin) — grille de cellules + élection d'hôte, testé, PAS câblé.** Premières
-briques de 8.3 écrites et prouvées : `aoi::cell_of` (grille infinie, `floor` pour gérer les négatifs) et
-`NetLink::cell_host`/`am_i_cell_host` (hôte = plus petit id connu dans la cellule, même règle que la migration
-de l'orbe, mais NON autoritaire → un double hôte ne corrompt rien, juste un résumé redondant). 53 tests, 0
-warning (`#[allow(dead_code)]` documenté : pas encore d'émission `KIND_CELL_SUMMARY`). **8.3b/c/d restent.**
-
-**🔀 PIVOT DÉCIDÉ (19 juin) : on attaque le CHAPITRE 9 (confiance dure) AVANT de finir le chapitre 8.**
-*Pourquoi (re-think assumé, pas une rustine) :* 8.3 (hôte de cellule) et toute la Phase B (parent agrégateur,
-8.4→8.8) bâtissent une couche d'**agrégateurs** où un hôte/parent **résume la foule pour les autres**. Un
-agrégateur **malveillant qui ment sur sa région** (cache/invente des gens) = **D5/D9** ; la feuille elle-même
-renvoie la corroboration anti-éclipse au ch.9 (note 8.3 doute (b), étape 8.8). Bâtir l'agrégateur sur une
-confiance non durcie = béton sur du sable. **De plus, un trou VIVANT avant le ch.9 :** la réputation partagée
-(6.7) est *frameable* aujourd'hui — `ACCUSE_QUORUM = 3` + PoW jouet 16 bits (D6) → **3 Sybils bon marché font
-taire n'importe quel honnête** (D6/D7/D20). Le ch.9 (9.1 anti-Sybil dur/réglable, 9.2 quorum pondéré, 9.4
-anti-éclipse + corroboration des positions, 9.5 rendez-vous résilient) referme ça AVANT qu'on s'appuie dessus.
-**Reprise de 8.3** (câblage `KIND_CELL_SUMMARY` + Phase B inclusivité) : APRÈS le ch.9, sur une confiance solide.
-
-**9.1 EN COURS — le trou est PROUVÉ (19 juin), harnais de régression en place.** Nouvelle attaque rouge
-`cargo run -- attack sybil-frame` (autonome, auto-mesurée comme `gossip-flood`) : un SEUL attaquant mine
-`ACCUSE_QUORUM = 3` identités Sybil (**~2,1 s ici, ≈0,7 s/identité** — PoW 16 bits = jouet, D6), signe 3
-accusations contre un INNOCENT, les livre par le VRAI chemin (signer → `encode_accuse` → `decode_accuse` →
-garde du récepteur recopiée de [bot.rs] → `record_accusation`) à un témoin honnête → **le témoin met
-l'innocent en SOURDINE** (« FRAMING RÉUSSI »). Trou **D6/D7/D20 prouvé bout-en-bout**. L'attaque est sa
-PROPRE preuve : après le correctif, le même binaire devra imprimer « framing ÉCHOUÉ ». **53 tests, 0 warning.**
-
-**9.2 (1re couche) ✓ FAIT (19 juin) — le framing BON MARCHÉ est FERMÉ et PROUVÉ.** On a remplacé le quorum
-qui comptait des TÊTES par un **quorum PONDÉRÉ par crédibilité** (`record_accusation` + `accusation_weight`
-dans [link.rs]) : un accusateur ne pèse que s'il a du **standing** (il m'a déjà envoyé un état signé accepté
-→ entrée `replay`) ET selon sa **co-localisation** avec l'accusé (`WITNESS_RADIUS`). Un Sybil conjuré (jamais
-entendu) pèse **0**. *Preuve :* `attack sybil-frame` est passée de « FRAMING RÉUSSI » à **« framing ÉCHOUÉ »**
-(même binaire = harnais de régression) ; +2 tests unitaires (témoins crédibles → sourdine ; 100 Sybils sans
-standing → innocent intact). *Non-régression :* `sim 40 3 15` → **40 sourdines** (vrais tricheurs toujours
-neutralisés), orbe 0/40, couverture 100 %, débit plat. **54 tests, 0 warning.**
-
-**9.1 (couche a — socle réglable) ✓ FAIT (19 juin) — la PoW n'est plus figée, et le socle est choisi PAR LA
-MESURE.** `POW_BITS` n'est plus une constante de compilation : nouvelle fonction `crypto::pow_bits()` résolue
-une fois par processus, **surchargée par la variable d'env `POW_BITS`** (plafonnée à 28 ; comme `RENDEZVOUS_ADDR`).
-Tous les sites (minage `generate_pow`, vérif `has_pow`) passent par elle. En `#[cfg(test)]`, `NetLink::new` n'utilise
-PAS de minage (sinon `cargo test` minerait à pleine difficulté à chaque lien). **Courbe coût/difficulté MESURÉE**
-(ce PC, ×4 par +2 bits) : 16 b ≈ 0,3 s · **18 b ≈ 3 s** · 20 b ≈ 14 s · 22 b ≈ 55 s *par identité*. **Socle par
-défaut = 18** (et plus 16) : choix MESURÉ — (1) inclusivité (~25-30 s sur vieux téléphone = coût d'entrée unique
-acceptable ; 20+ exclurait les faibles) ; (2) depuis 9.2 la PoW n'a plus à être punitive (le framing est fermé par
-la CRÉDIBILITÉ, pas par le prix de l'identité) → 4× le jouet suffit. **54 tests, 0 warning.** *Insight tracé
-(challenge de la feuille) : « difficulté bien plus haute » était la mauvaise cible — la data montre que cogner haut
-taxe surtout les honnêtes/faibles pour un gain marginal post-9.2. La vraie défense de MASSE dynamique = la couche
-(b) ADAPTATIVE (relève la barre LOCALEMENT sous pression), pas un gros nombre fixe.*
-
-**9.4a (corroboration des positions) ✓ FAIT (19 juin) — la fausse co-localisation par gossip est MORTE.**
-Champ séparé `confirmed_pos` (écrit seulement par `note_pos`, donc depuis un état SIGNÉ) ; la crédibilité 9.2
-le lit au lieu de `peer_pos` (que le gossip peut polluer). Un attaquant ne peut plus gossiper « mon témoin est
-collé sur la victime » pour framer. Test dédié + non-régression simu. **55 tests, 0 warning.** *Ferme le levier
-GRATUIT du résidu patient de 9.2 ; reste le coûteux (déplacer pour de vrai ses Sybils près de la victime) → 9.4b.*
-
-**9.4b (diversité de RÉSEAU, anti-éclipse) ✓ FAIT (19 juin) — ⚠ avec CHALLENGE assumé.** `record_accusation`
-cape la crédibilité par SOUS-RÉSEAU /24 (`subnet_key`) → des Sybils derrière une seule IP = 1 voix, même
-co-localisés pour de vrai. *Challenge :* la « diversité d'id façon Kademlia » du plan était inadaptée à notre
-modèle (ids PoW aléatoires → buckets non discriminants) ; le vrai levier est l'IP (rare), pas l'id (gratuit).
-Loopback distingué par port → simu intacte. Test dédié + non-régression `sim 40 3 15` → 40 sourdines, orbe 0/40.
-**56 tests, 0 warning.** *Le résidu patient/co-localisé de 9.2 est fermé pour un attaquant à IP rares.*
-
-> ### 🤖 PLAN DE RUSH AUTONOME (établi le 19 juin, l'utilisateur s'absente)
-> *Ordre choisi du MOINS risqué au FORK. Règle absolue : je m'ARRÊTE net au premier vrai doute, mesure qui
-> contredit, ou décision qui t'appartient — je ne pose JAMAIS de rustine pour avancer. Chaque étape = design
-> (+ challenge si besoin) → code → PREUVE (test unitaire + non-régression `sim`) → commit → push → maj de ce doc.
-> Ce plan n'est PAS gravé : si une étape révèle qu'il faut le changer, je le change et je le note.*
-> 1. **9.5a — Rendez-vous BORNÉ (anti-DoS mémoire, D21). ✓ FAIT (19 juin).** `MAX_CLIENTS = 8192` + `should_admit`
->    (un connu est toujours rafraîchi ; un nouveau seulement s'il reste de la place) dans [rendezvous.rs] → un
->    flood de HELLO usurpés ne fait plus enfler la table sans fin (au pire elle sature, l'éviction 5 s la draine).
->    57 tests, 0 warning ; non-régression sim 40/40, orbe 0/40. *Résidu ASSUMÉ : table pleine → un honnête peut
->    être refusé ; vraie parade = routabilité (handshake anti-spoofing) → étape ultérieure. Ici on borne la RAM.*
-> 2. **9.3 — Réhabilitation (D8). ✓ FAIT (19 juin).** `strikes` est passé d'un compteur `u32` permanent à un
->    `Strike { score, last }` qui DÉCROÎT (`decayed_score`, pure/testée ; `STRIKE_DECAY_SECS = 60 s`/faute) →
->    une faute transitoire se dissipe (réhabilitation après ~5 min sans récidive), un récidiviste ré-accumule et
->    reste muet. `is_muted`/`add_strike`/`muted_count` réécrits ; [bot.rs] `muted()` passe par `muted_count()`.
->    Preuve : tests `score_de_fautes_decroit_avec_le_temps` + `rehabilitation_apres_decroissance_mais_pas_le_recidiviste`
->    (injection de `now` → pas de `sleep`). 59 tests, 0 warning ; non-régression sim → 30 sourdines, orbe 0/40.
-> 3. **9.2c — Standing par DURÉE. ⏸ RE-ÉVALUÉ → PAS FAIT (arrêt volontaire au doute, 19 juin).** En le concevant,
->    constat : **9.4b (cap par sous-réseau /24) ferme DÉJÀ l'essentiel du résidu patient** — des Sybils même
->    établis ET co-localisés pour de vrai partagent les IP de l'attaquant → comptés comme UNE voix. 9.2c n'ajouterait
->    qu'un gain marginal, contre une vraie complexité + un tradeoff (métrique durée/quantité ; risque de freiner la
->    propagation de réputation en fenêtre courte). Le faire en autonomie = gold-plating (rustine pour cocher une
->    case). **Décision : on s'arrête, à TRANCHER avec l'utilisateur** (le faire quand même ? le supprimer du plan ?).
-> 4. **⛔ STOP — je NE fais PAS en autonomie (forks qui t'appartiennent) :** **9.1(b) PoW adaptative** (comment
->    les nœuds s'accordent sur la difficulté = vraie décision, cf. 🧭 carrefour) et **9.5 fédération** (plusieurs
->    rendez-vous). 
->
-> **▶ Rush autonome TERMINÉ : 9.5a ✓ + 9.3 ✓ faits et poussés ; arrêt propre au doute sur 9.2c.**
-
-> ### 🧭 CAP REPRIS (19 juin, soir) — décidé avec l'utilisateur
-> Le **chapitre 9 est tenu** (cœur dur Sybil/éclipse/framing/réputation) ; les durcissements avancés sont
-> **rangés en ANNEXE H** (optionnels). **Audit des doutes FAIT** → tableau d'état D1→D26 en tête de §C (maj 20 juin) :
-> **9 fermés, 7 bornés, 10 ouverts** (sur 26 ; D22 fermé au 8.3d, D14 fermé au 10.1, + D25 banc d'essai et D26
-> agrégateur menteur nommés le 20 juin), regroupés en chantiers (inclusivité / vie privée / autorité / longévité). **Plan validé : finir le chapitre 8 (8.3 échelle → Phase B inclusivité), puis le
-> chapitre 10 (vie privée + identité) — ça ferme à soi seul 6 des 10 doutes ouverts, les plus proches de la
-> vision.** Le portage moteur (Unreal/VRChat, ch.14) reste APRÈS : on contrôle tout, moteur compris, jusque-là.
->
-> **8.3 EN COURS (reprise) :** ✅ 8.3a (grille `cell_of` + élection d'hôte `cell_host`, posé/testé) · ✅ **8.3b
-> (19 juin) : le RÉSUMÉ de cellule** — nouveau `src/net/cell.rs` (`CellSummary` : cellule + count + échantillon
-> RÉPARTI de positions ; `build_cell_summary` + `encode/decode`, purs et testés, sur le modèle de `gossip.rs` ;
-> `KIND_CELL_SUMMARY = 9`). 65 tests, 0 warning (`#[allow(dead_code)]` documenté tant que non câblé, comme 8.3a).
-> ✅ **8.3c (19 juin) : émission/ingestion CÂBLÉES (épidémique, fanout borné).** L'hôte de cellule émet son
-> résumé ; chacun le RELAIE (échantillon tournant, comme le gossip) → propagation en log(N) SANS que l'hôte
-> n'inonde personne (O(fanout), pas O(N) : ferme le piège « hôte qui fond », relie D4). Réception → `ingest_summary`
-> (dernier par cellule, borné `MAX_CELLS`). Métrique simu `summary_perceived` (somme des cellules suivies). **Mesuré
-> `crowd 200` (30 s) : perception par résumé moy 112 / max 154 occupants (sur 199) via O(cellules) flux, débit ↓
-> ~46 Ko/s borné (+6 vs pré-8.3 = coût des résumés), orbe 0/200, essaim tenu. 65 tests, 0 warning.** *(Les `#[allow(dead_code)]`
-> de 8.3a/8.3b sont levés : cell_of/cell_host/CellSummary sont désormais utilisés.)*
-> ✅ **8.3d (20 juin) — UN VRAI BUG DE CONCEPTION TROUVÉ ET FERMÉ : les résumés n'avaient pas d'ordre de
-> FRAÎCHEUR.** Le diagnostic (foule centrée dans une cellule + fenêtre longue) a révélé que la perception
-> EMPIRAIT avec le temps (`crowd 200` : 112→77 ; `crowd 500` : 18→11 entre 30 s et 60 s). Cause : `ingest_summary`
-> faisait « dernier arrivé gagne » → une VIEILLE copie partielle (count faible, d'avant que l'hôte connaisse toute
-> la foule) qui circule encore via les relais ÉCRASAIT la fraîche et complète. Plus la fenêtre est longue, plus il
-> y a de vieilles copies en vol → pire. **Fix (pas une rustine) :** chaque résumé porte un `ts` (horodatage), les
-> relais le portent VERBATIM, et `ingest_summary` ne garde que le PLUS FRAIS par cellule (`ts` strictement
-> supérieur) — c'est l'anti-rejeu `accept_seq` des états, appliqué aux résumés. **PROUVÉ par le même diagnostic
-> rejoué :** la perception ne s'effondre plus, elle CONVERGE vers N — `crowd 200` 160→**191/200**, `crowd 500`
-> 88→**477/500** (30 s→60 s) ; et l'INVARIANT tient : N×2,5 (200→500) garde le débit ↓ **PLAT (~45 Ko/s)**. Orbe
-> 0, essaim tenu. **66 tests, 0 warning.** *(Doute #1 levé : foule centrée → un hôte → count ≈ N.)*
-> **⚠ DOUTES RESTANTS (écrits noir sur blanc) :**
-> 1. **Convergence non instantanée à l'échelle.** À 30 s / 500 nœuds, la moyenne n'est qu'à 88 (max 328) ; il faut
->    ~60 s pour atteindre 477. Pas un bug — temps de propagation épidémique en log(N), constante non négligeable.
->    À surveiller en poussant vers 2000+ (la fenêtre de preuve doit grandir avec N).
-> 2. **FRAÎCHEUR pas encore CHIFFRÉE en propre.** La perception ≈ N à débit plat le démontre INDIRECTEMENT (les
->    résumés sont assez frais pour couvrir la foule), mais l'âge moyen de perception d'un lointain AVEC vs SANS
->    résumés n'est pas encore une métrique dédiée. *À faire si on veut la preuve directe du « 1/N tué ».*
-> 3. ✅ **INVARIANT À L'ÉCHELLE COURU (20 juin) — prouvé jusqu'à la LIMITE DU BANC.** `crowd 1000` (90 s) :
->    ↑ émis **39,8 Ko/s (cap budget, max 47)**, ↓ reçu 39,4 Ko/s — la réception NE GRANDIT PAS avec N (200→1000
->    restent ~40-47 Ko/s) → O(budget), indépendant de N ; perception moy **775 / max 839 sur 999** ; couverture
->    80 %. **À `crowd 2000` (90 s) le débit CHUTE (22,7 Ko/s, couverture 22 %) — ARTEFACT MONO-PC CONFIRMÉ PAR
->    L'ARITHMÉTIQUE, pas une limite du protocole :** la mesure dit **1 nœud ≈ 1 % d'un cœur**, et la machine a
->    **12 cœurs** (`nproc`) → 2000 nœuds = ~20 cœurs demandés sur 12 → sur-souscription ×1,7 → threads affamés →
->    ils tiquent au ralenti → émettent/reçoivent moins. Le mur du banc est ~**1200-1500 nœuds** ici. **La perception
->    MAX suit quand même N partout (200→500→903→1805).** *(challenge de la feuille :* le « échelle 5000 » littéral
->    de D22 est bloqué par le BANC — un OS-thread par bot — PAS par le protocole. Pour prouver 5000+ sur UN PC il
->    faudrait un simulateur léger (ordonnancement coopératif, N bots/thread) → dette de HARNAIS, voir registre. Le
->    protocole, lui, est démontré : budget capé, perception ∝ N.)*
->
-> **▶ 8.3d FERMÉ → le chapitre 8 « foule dense » (Phase A) est BOUCLÉ. PROCHAINE ACTION = Phase B (inclusivité,
-> D3/D4/D5) OU chapitre 10 (vie privée + identité) — à arbitrer (les deux ferment des doutes proches de la vision).**
->
-> ### 🔬 APRÈS le ch.8/9 — PASSE DE VALIDATION par simulation (proposée par l'utilisateur, avant le ch.10)
-> *Finir au PROPRE les chapitres 8 et 9, puis — AVANT d'attaquer le ch.10 — une passe dédiée qui POSE DE VRAIS
-> RÉSULTATS MESURÉS sur chaque doute du tableau d'audit (§C) : on ne se contente pas de DÉCLARER « fermé », on
-> rejoue l'attaque/la simu et on colle le chiffre. Objectif : que chaque ✅ de l'audit soit adossé à une preuve
-> reproductible (orbe 0, sourdines, framing ÉCHOUÉ, débit plat, perception ∝ N…), pas à une affirmation.*
-
-**Le cœur dur de D9 (Sybil + éclipse + framing) est tenu.** Détail du chapitre en §D, Chapitre 9.
+**Historique des chapitres (archive élaguée le 21 juin — détail intact ailleurs).**
+- **Chapitres 6→9 (faits, ✅) :** ch.6 refonte béton ; ch.7 confrontation au réel (mauvais réseau,
+  coût/nœud chiffré, NAT multi-joueurs prouvé sous namespaces) ; ch.8 « foule dense » Phase A (gossip,
+  AoI deux tiers, résumés de cellule frais) ; ch.9 confiance dure (anti-Sybil réglable, quorum pondéré,
+  anti-éclipse /24, réhabilitation). **État détaillé → §B (lieux) et §D (programme) ; audit D1→D26 → tête de §C.**
+- **Journal autonome 20-21 juin (C-diag, C-sécu, banc bus, redesign 8.3★) :** vit dans `PLAN_AUTONOME.md`
+  (JOURNAL + § PAPIER C-sécu-2). On ne le re-duplique plus ici (hygiène anti-collapse).
+- **Passe de VALIDATION par simulation** (proposée par l'utilisateur : rejouer chaque attaque/simu et coller
+  le chiffre avant le ch.10) : **à faire** — non encore tenue en tant que passe dédiée.
+- **Le cœur dur de D9 (Sybil + éclipse + framing) est tenu** (détail §D, ch.9).
 
 > ### 🧾 REGISTRE DE DETTES OUVERTES (lis-moi — l'antidote à l'enfermement)
 > *Les choses qu'on SAIT incomplètes mais qu'on a laissées passer. Quand je coche « ✓ FAIT »,
@@ -1323,8 +1114,9 @@ débit** — et que le 0-connexion comme le 2 Gb/s aient chacun LA meilleure exp
 >
 > **▶ ÉTAT (21 juin) — le papier est devenu de la MESURE :** **C-diag FAIT** (`DENSITY_MAX` — retirer le chef
 > RESTAURE la densité : N=1000 → 89 %, taxe 0 %, débit plat ; à 5000 bridé par la découverte = mur n°2).
-> **C-sécu-1a CODÉ + testé** (`CORROB` : densité molle corroborée /24, `qth_largest` prouvé), récupération en
-> cours de mesure. Détail/plan de la sécurité : bloc **« ÉTAPE C-sécu »** plus bas. Journal des mesures : `PLAN_AUTONOME.md`.
+> **C-sécu-1a + 1b FAITS** (`CORROB` densité molle corroborée /24 + plancher d'union signée → récup **87 % @1000**,
+> cible ≥80 % franchie) ; **C-sécu-2 EN COURS** (échantillons auto-signés, étape 1/5 faite, bloc wire à venir).
+> État à jour + plan = l'⏱️ ANCRE en tête de §0. Détail sécurité : bloc **« ÉTAPE C-sécu »** plus bas. Journal mesures : `PLAN_AUTONOME.md`.
 >
 > **CE QUE LA MESURE A ÉTABLI (banc bus, 20 juin).** Deux murs DISTINCTS de la perception à l'échelle :
 > - **Mur n°1 (DOMINANT) — la taxe `émetteur≠hôte` de D26 couche 1.** `ingest_summary` n'accepte un résumé que

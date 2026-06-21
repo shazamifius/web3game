@@ -22,6 +22,8 @@ pub(crate) const KIND_RELAY: u8 = 6; // faible → parent : « recopie mon état
 pub(crate) const KIND_ACCUSE: u8 = 7; // témoin → pairs : « j'ai banni ce tricheur » (réputation partagée, 6.7)
 pub(crate) const KIND_GOSSIP: u8 = 8; // pair → pairs : « cartes de visite » d'autres pairs (découverte décentralisée, 8.1)
 pub(crate) const KIND_CELL_SUMMARY: u8 = 9; // hôte de cellule → observateurs : RÉSUMÉ d'une région (foule en LOD, 8.3)
+#[allow(dead_code)] // C-sécu-2 étape 2 : format prêt ; câblé à l'émission/ingestion en étapes 3/4 (l'allow saute alors)
+pub(crate) const KIND_CELL_SUMMARY_V2: u8 = 10; // idem + TRAILER de preuves auto-signées (8.3★ C-sécu-2, gaté SIGNED_SAMPLES)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {
