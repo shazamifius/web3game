@@ -495,3 +495,13 @@ drapeau (défaut intact) :** (a) le red-team passe de **66 → 50** (inflation f
 PROTO bump derrière le drapeau ; (3) ingestion : vérifier `k_proof` échantillons, ne compter au plancher que les
 vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; (5) inverser l'assertion du red-team.
 **Estimé : ~½ journée + mesure.** À faire reposé (wire = sécurité critique).
+
+**PROGRÈS (21 juin) :**
+- ✅ **Étape 1 FAITE** (`signed_states` + `remember_signed_state`, gaté `SIGNED_SAMPLES`, défaut intact, 80 tests).
+- ✅ **Subtilité RÉSOLUE** : `sig_ok` normalise l'octet de transport à `KIND_STATE` avant de vérifier, et `KIND_RELAY`
+  = même corps/sceau (182 o). Donc un état stocké (direct OU relayé) se vérifie identiquement → **ré-embarquement
+  VERBATIM en v2 possible, zéro canonicalisation.** Embarquer un état signé = `STATE_SIZE` (182 o).
+- ▶️ **RESTE étapes 2→5** (le gros morceau wire) : nouveau `KIND_CELL_SUMMARY_V2` (append `nproof` + k_proof×182 o
+  d'états verbatim APRÈS le sceau, hors corps signé → relais libre d'ajouter/retirer, monotone-sûr) ; émission v2
+  sous le drapeau ; ingestion vérifie les proofs ; plancher = Σ |IDs proofs vérifiés ∈ cellule| ; re-mesure ;
+  inverser le red-team. **De-risqué, prêt à exécuter en bloc focalisé.**
