@@ -130,8 +130,9 @@ pub fn setup_player(
                 Transform::from_xyz(0.0, EYE_HEIGHT, 0.0),
                 // HDR + bloom : le néon « glow ». Tonemapping pour de belles couleurs.
                 Hdr,
+                // Bloom plus marqué → les néons (salle, hub, cristaux) « glow » davantage.
                 Bloom {
-                    intensity: 0.20,
+                    intensity: 0.40,
                     ..Bloom::NATURAL
                 },
                 Tonemapping::TonyMcMapface,

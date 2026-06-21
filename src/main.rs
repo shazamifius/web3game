@@ -152,6 +152,7 @@ fn main() {
         (
             meteorites::spawn_meteors,
             meteorites::fall_meteors,
+            meteorites::twinkle,
             meteorites::fade_trails,
             meteorites::pickup_prompt,
             meteorites::collect_meteors,

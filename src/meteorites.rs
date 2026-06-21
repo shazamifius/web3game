@@ -17,10 +17,12 @@ use crate::scenes::WorldGeometry;
 use bevy::prelude::*;
 
 const ISLAND_RADIUS: f32 = 8.0; // rayon de la zone où les météorites tombent
-const FALL_SPEED: f32 = 22.0; // vitesse de chute (m/s)
-const GROUND_HIT: f32 = 0.35; // hauteur (y) à laquelle un météore « atterrit »
+const FALL_SPEED: f32 = 11.0; // vitesse de chute (m/s) — lente : on les voit venir de loin
+const GROUND_HIT: f32 = 0.30; // hauteur (y) à laquelle un météore « atterrit »
 const PICKUP_RADIUS: f32 = 1.6; // distance (m) pour ramasser un cristal posé
-const TRAIL_EVERY: f32 = 0.03; // période de dépôt d'un segment de traînée (s)
+const TRAIL_EVERY: f32 = 0.02; // période de dépôt d'un segment de traînée (s) — traînée fine
+const TWINKLE_FREQ: f32 = 13.0; // vitesse du scintillement
+const TWINKLE_AMP: f32 = 0.40; // amplitude du scintillement (±40 % de taille)
 
 /// Les 4 raretés, du plus commun au plus rare.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -53,33 +55,34 @@ impl Rarity {
         }
     }
 
-    /// Couleur ÉMISSIVE du cristal (sert au cristal, au météore ET à sa traînée).
+    /// Couleur ÉMISSIVE du cristal (sert au cristal, au météore ET à sa traînée). Très
+    /// lumineuse → avec le bloom, les petits météores deviennent de vifs points scintillants.
     fn emissive(self) -> (f32, f32, f32) {
         match self {
-            Rarity::Orange => (7.0, 2.2, 0.25),
-            Rarity::Green => (0.5, 6.5, 1.0),
-            Rarity::Yellow => (6.8, 5.6, 0.5),
-            Rarity::White => (6.2, 6.4, 7.2),
+            Rarity::Orange => (10.0, 3.0, 0.3),
+            Rarity::Green => (0.6, 9.5, 1.4),
+            Rarity::Yellow => (9.5, 7.8, 0.6),
+            Rarity::White => (8.5, 8.8, 10.0),
         }
     }
 
-    /// Taille de base d'un segment de traînée : MAGISTRALE pour le blanc, dégressive.
+    /// Taille de base d'un segment de traînée : la plus longue/large pour le blanc, dégressive.
     fn trail_size(self) -> f32 {
         match self {
-            Rarity::Orange => 0.30,
-            Rarity::Green => 0.42,
-            Rarity::Yellow => 0.60,
-            Rarity::White => 0.95,
+            Rarity::Orange => 0.12,
+            Rarity::Green => 0.16,
+            Rarity::Yellow => 0.24,
+            Rarity::White => 0.38,
         }
     }
 
-    /// Taille du météore/cristal lui-même (les rares sont plus gros).
+    /// Taille du météore/cristal lui-même — PETIT (les rares à peine plus gros).
     fn body_size(self) -> f32 {
         match self {
-            Rarity::Orange => 0.45,
-            Rarity::Green => 0.52,
-            Rarity::Yellow => 0.62,
-            Rarity::White => 0.78,
+            Rarity::Orange => 0.16,
+            Rarity::Green => 0.20,
+            Rarity::Yellow => 0.26,
+            Rarity::White => 0.38,
         }
     }
 
@@ -124,6 +127,14 @@ pub struct Meteor {
 #[derive(Component)]
 pub struct Collectible {
     rarity: Rarity,
+}
+
+/// Fait SCINTILLER une entité (météore en vol ou cristal posé) : sa taille pulse autour de
+/// `base` à une phase propre (désynchronisée). Conservé à l'atterrissage → le cristal scintille.
+#[derive(Component)]
+pub struct Twinkle {
+    base: f32,
+    phase: f32,
 }
 
 /// Un segment de traînée qui rétrécit puis disparaît (`base` = sa taille de départ).
@@ -218,23 +229,26 @@ pub fn spawn_meteors(
     if clock.timer > 0.0 {
         return;
     }
-    clock.timer = 0.5 + next_rand(&mut clock.rng) * 1.0; // prochaine : 0,5–1,5 s
+    clock.timer = 1.0 + next_rand(&mut clock.rng) * 1.5; // prochaine : 1,0–2,5 s (plus espacé)
 
     let rarity = Rarity::roll(next_rand(&mut clock.rng));
     let ang = next_rand(&mut clock.rng) * std::f32::consts::TAU;
     let rad = next_rand(&mut clock.rng).sqrt() * ISLAND_RADIUS;
     let target = Vec3::new(ang.cos() * rad, GROUND_HIT, ang.sin() * rad);
+    // Départ TRÈS HAUT (70–105 m) et un peu décalé → on les voit arriver longtemps.
     let off = Vec3::new(
-        (next_rand(&mut clock.rng) - 0.5) * 50.0,
-        55.0 + next_rand(&mut clock.rng) * 15.0,
-        (next_rand(&mut clock.rng) - 0.5) * 50.0,
+        (next_rand(&mut clock.rng) - 0.5) * 45.0,
+        70.0 + next_rand(&mut clock.rng) * 35.0,
+        (next_rand(&mut clock.rng) - 0.5) * 45.0,
     );
     let start = target + off;
     let vel = (target - start).normalize() * FALL_SPEED;
+    let phase = next_rand(&mut clock.rng) * std::f32::consts::TAU;
 
     commands.spawn((
         WorldGeometry,
         Meteor { vel, trail_acc: 0.0, rarity },
+        Twinkle { base: rarity.body_size(), phase },
         Mesh3d(assets.ball.clone()),
         MeshMaterial3d(assets.mats[rarity.idx()].clone()),
         Transform::from_translation(start).with_scale(Vec3::splat(rarity.body_size())),
@@ -268,9 +282,18 @@ pub fn fall_meteors(
 
         if tf.translation.y <= GROUND_HIT {
             tf.translation.y = GROUND_HIT;
-            tf.scale = Vec3::splat(m.rarity.body_size());
+            // On garde `Twinkle` → le cristal posé continue de scintiller (il gère la taille).
             commands.entity(e).remove::<Meteor>().insert(Collectible { rarity: m.rarity });
         }
+    }
+}
+
+/// Fait SCINTILLER météores en vol et cristaux posés : la taille pulse autour de `base`.
+pub fn twinkle(time: Res<Time>, mut q: Query<(&Twinkle, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (tw, mut tf) in &mut q {
+        let f = 1.0 + TWINKLE_AMP * (t * TWINKLE_FREQ + tw.phase).sin();
+        tf.scale = Vec3::splat(tw.base * f);
     }
 }
 
