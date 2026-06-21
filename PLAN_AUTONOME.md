@@ -125,8 +125,9 @@
   échantillons portent DÉJÀ l'ID → **zéro changement de wire** (vrai additif). **79 tests, 0 warning, défaut intact.**
   *Mesure N=1000 (même périmètre que 1a) :* CORROB seul = 563 (63 % de DENSITY_MAX 895) ; **CORROB+PLANCHER = 699
   (78 %)** → **+24 %**, à **débit IDENTIQUE** (↑54,8/↓55,9 vs ↑54,3/↓55,5 = le plancher ne coûte RIEN au wire). Max 1000.
-  *Lecture honnête (Règle 2) :* **78 % < 80 % (cible pré-enregistrée NON franchie)**, MAIS la courbe montait encore à
-  t=60 (671) → run convergé à mesurer, sans extrapoler. Le plancher comble l'essentiel du trou (63→78). ⚠ **DETTE ÉCRITE
+  *Lecture honnête (Règle 2) :* à 70 s, 78 % (non convergé, courbe montait encore). **Run de CONVERGENCE (130 s) :
+  perception 777 = 87 % de DENSITY_MAX (895), max 1000, débit plat (↑54,9/↓56,0) → CIBLE ≥80 % FRANCHIE.** Découverte
+  plafonnée à 861 pairs → on perçoit 90 % du découvrable. Le 78 % n'était qu'un instantané court ; le plancher tient. ⚠ **DETTE ÉCRITE
   (code + ici) :** échantillons pas encore AUTO-signés par chaque personne → un menteur seul peut injecter ≤16 faux
   IDs/cellule dans le plancher. **1b ferme l'anti-OMISSION, PAS l'anti-INFLATION** (différé à C-sécu-2 red-team +
   échantillons auto-certifiants + cap /24, comme le cap /24 de `qth_largest`). *VERDICT 5000 (run du 21 juin, CORROB
