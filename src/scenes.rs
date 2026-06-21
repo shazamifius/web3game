@@ -44,7 +44,18 @@ pub struct Portal {
     target: Scene,
 }
 
+/// Étiquette UI (texte) d'un portail : suit la position 3D du portail à l'écran
+/// (même technique que les pseudos des avatars). `world` = point monde à projeter.
+#[derive(Component)]
+pub struct PortalLabel {
+    world: Vec3,
+}
+
 const PORTAL_RADIUS: f32 = 1.1; // rayon (m) pour « entrer » dans un portail
+
+// Couleurs de fond (ciel) par scène : sombre en hub/arcade, ciel bleu sur l'île.
+const SKY_DARK: Color = Color::srgb(0.02, 0.01, 0.05);
+const SKY_ISLAND: Color = Color::srgb(0.45, 0.70, 0.95);
 
 /// Dé-spawn toute la géométrie de la scène qu'on quitte (branché sur chaque `OnExit`).
 pub fn despawn_world(mut commands: Commands, q: Query<Entity, With<WorldGeometry>>) {
@@ -98,8 +109,8 @@ pub fn setup_hub(
     }
 
     // Les 2 portails, devant le point d'apparition (le joueur regarde vers -Z).
-    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(-2.6, 1.3, -3.5), (2.5, 0.3, 0.9), Scene::Arcade);
-    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(2.6, 1.3, -3.5), (0.2, 1.0, 0.4), Scene::Island);
+    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(-2.6, 1.3, -3.5), (2.5, 0.3, 0.9), Scene::Arcade, "ARCADE");
+    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(2.6, 1.3, -3.5), (0.2, 1.0, 0.4), Scene::Island, "ÎLE");
 
     // Lumière douce du hub.
     commands.spawn((
@@ -115,7 +126,9 @@ pub fn setup_hub(
     ));
 }
 
-/// Un portail = un panneau émissif vertical (couleur distincte) + son volume d'entrée.
+/// Un portail = un panneau émissif vertical (couleur distincte) + son volume d'entrée,
+/// + une étiquette UI flottante (son nom) au-dessus.
+#[allow(clippy::too_many_arguments)]
 fn spawn_portal(
     commands: &mut Commands,
     cube: &Handle<Mesh>,
@@ -123,6 +136,7 @@ fn spawn_portal(
     pos: Vec3,
     color: (f32, f32, f32),
     target: Scene,
+    name: &str,
 ) {
     let glow = materials.add(emissive(color.0 * 2.0, color.1 * 2.0, color.2 * 2.0));
     // Le panneau lumineux (large, fin), qu'on traverse.
@@ -140,6 +154,37 @@ fn spawn_portal(
         MeshMaterial3d(glow),
         Transform::from_xyz(pos.x, 0.02, pos.z).with_scale(Vec3::new(2.0, 0.02, 1.4)),
     ));
+    // Le nom, en texte UI flottant juste au-dessus du panneau.
+    commands.spawn((
+        WorldGeometry,
+        PortalLabel { world: pos + Vec3::Y * 1.7 },
+        Text::new(name),
+        TextFont { font_size: 26.0, ..default() },
+        TextColor(Color::WHITE),
+        Node { position_type: PositionType::Absolute, ..default() },
+    ));
+}
+
+/// Dans le hub : projette chaque étiquette de portail (sa position monde) sur l'écran
+/// et l'y positionne (cachée si hors champ / derrière la caméra). Même procédé que les
+/// pseudos d'avatars.
+pub fn update_portal_labels(
+    camera: Query<(&Camera, &GlobalTransform)>,
+    mut labels: Query<(&PortalLabel, &mut Node, &mut Visibility)>,
+) {
+    let Ok((cam, cam_tf)) = camera.single() else {
+        return;
+    };
+    for (label, mut node, mut vis) in &mut labels {
+        match cam.world_to_viewport(cam_tf, label.world) {
+            Ok(screen) => {
+                *vis = Visibility::Visible;
+                node.left = Val::Px(screen.x);
+                node.top = Val::Px(screen.y);
+            }
+            Err(_) => *vis = Visibility::Hidden,
+        }
+    }
 }
 
 /// Dans le hub uniquement : si le joueur entre dans le volume d'un portail, on bascule.
@@ -169,72 +214,132 @@ pub fn return_to_hub(keyboard: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextS
 // ----------------------------------------------------------------------------
 // ÎLE (minimale pour l'instant — météorites & ramassage = pas suivants)
 // ----------------------------------------------------------------------------
-/// Monte une petite île : un sol d'herbe rond-ish (carré pour l'instant) sous un ciel
-/// ouvert, avec un « soleil ». Pas encore de météorites — juste de quoi voir qu'on est
-/// AILLEURS qu'en arcade quand on passe le portail vert.
+/// Monte une petite île ACCUEILLANTE (plus de « backrooms ») : une île ronde d'herbe
+/// posée sur une grande MER bleue, sous un ciel ouvert, avec un soleil, du RELIEF (une
+/// colline + des rochers) et quelques NUAGES qui flottent. Pas encore de météorites —
+/// c'est le pas suivant ; ici on rend juste l'endroit agréable.
 pub fn setup_island(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let disc = meshes.add(Cylinder::new(1.0, 1.0)); // rayon 1, hauteur 1 (mis à l'échelle)
+    let ball = meshes.add(Sphere::new(1.0));
 
-    // Sol de l'île (vert sombre), 11×11 pour rester dans le bornage actuel du joueur.
+    // --- La MER : un grand disque bleu translucide, autour et sous l'île. ---
+    let sea = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.45, 0.75),
+        perceptual_roughness: 0.2, // un peu brillante (eau)
+        ..default()
+    });
+    commands.spawn((
+        WorldGeometry,
+        Mesh3d(disc.clone()),
+        MeshMaterial3d(sea),
+        Transform::from_xyz(0.0, -0.6, 0.0).with_scale(Vec3::new(120.0, 0.2, 120.0)),
+    ));
+
+    // --- L'ÎLE : un disque d'herbe (rayon ~6), bordé de sable clair. ---
+    let sand = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.80, 0.74, 0.50),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    commands.spawn((
+        WorldGeometry,
+        Mesh3d(disc.clone()),
+        MeshMaterial3d(sand),
+        Transform::from_xyz(0.0, -0.2, 0.0).with_scale(Vec3::new(13.0, 0.5, 13.0)), // plage
+    ));
     let grass = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.28, 0.12),
+        base_color: Color::srgb(0.18, 0.50, 0.20),
         perceptual_roughness: 0.95,
         ..default()
     });
     commands.spawn((
         WorldGeometry,
-        Mesh3d(cube.clone()),
-        MeshMaterial3d(grass),
-        Transform::from_xyz(0.0, -0.25, 0.0).with_scale(Vec3::new(11.0, 0.5, 11.0)),
+        Mesh3d(disc.clone()),
+        MeshMaterial3d(grass.clone()),
+        Transform::from_xyz(0.0, -0.1, 0.0).with_scale(Vec3::new(11.0, 0.5, 11.0)), // herbe
     ));
 
-    // Une bordure de plage claire autour (juste un anneau de 4 barres sableuses).
-    let sand = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.55, 0.5, 0.32),
+    // --- RELIEF : une colline douce (sphère aplatie) au fond, + quelques rochers. ---
+    commands.spawn((
+        WorldGeometry,
+        Mesh3d(ball.clone()),
+        MeshMaterial3d(grass.clone()),
+        Transform::from_xyz(0.0, 0.0, -3.5).with_scale(Vec3::new(4.0, 1.6, 4.0)),
+    ));
+    let rock = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 0.35, 0.38),
         perceptual_roughness: 1.0,
         ..default()
     });
-    for (pos, size) in [
-        (Vec3::new(0.0, -0.2, 5.5), Vec3::new(12.0, 0.45, 1.0)),
-        (Vec3::new(0.0, -0.2, -5.5), Vec3::new(12.0, 0.45, 1.0)),
-        (Vec3::new(5.5, -0.2, 0.0), Vec3::new(1.0, 0.45, 12.0)),
-        (Vec3::new(-5.5, -0.2, 0.0), Vec3::new(1.0, 0.45, 12.0)),
-    ] {
+    for (x, z, s) in [(3.2_f32, 1.5_f32, 0.5_f32), (-3.0, 2.2, 0.7), (2.0, -2.8, 0.4)] {
         commands.spawn((
             WorldGeometry,
-            Mesh3d(cube.clone()),
-            MeshMaterial3d(sand.clone()),
-            Transform::from_translation(pos).with_scale(size),
+            Mesh3d(ball.clone()),
+            MeshMaterial3d(rock.clone()),
+            Transform::from_xyz(x, 0.0, z).with_scale(Vec3::splat(s)),
         ));
     }
 
-    // Le « soleil » : une lumière directionnelle chaude qui projette des ombres.
+    // --- NUAGES : quelques boules blanches douces qui flottent haut et loin. ---
+    let cloud = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.96, 1.0),
+        emissive: LinearRgba::rgb(0.25, 0.27, 0.32), // légèrement lumineux → pas grisâtre
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    for (x, y, z, s) in [
+        (-14.0_f32, 9.0_f32, -10.0_f32, 3.0_f32),
+        (12.0, 11.0, -16.0, 4.0),
+        (18.0, 8.0, 6.0, 3.5),
+        (-10.0, 10.0, 14.0, 3.0),
+    ] {
+        commands.spawn((
+            WorldGeometry,
+            Mesh3d(ball.clone()),
+            MeshMaterial3d(cloud.clone()),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::new(s * 1.6, s * 0.7, s)),
+        ));
+    }
+
+    // --- Le SOLEIL : lumière directionnelle chaude, avec ombres. ---
     commands.spawn((
         WorldGeometry,
         DirectionalLight {
-            color: Color::srgb(1.0, 0.95, 0.85),
-            illuminance: 12_000.0,
+            color: Color::srgb(1.0, 0.96, 0.88),
+            illuminance: 11_000.0,
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(6.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(8.0, 12.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
 // ----------------------------------------------------------------------------
 // Téléportation du joueur au point d'apparition de chaque scène
 // ----------------------------------------------------------------------------
-pub fn enter_hub_player(q: Query<(&mut Transform, &mut Vertical), With<Player>>) {
+pub fn enter_hub_player(
+    mut clear: ResMut<ClearColor>,
+    q: Query<(&mut Transform, &mut Vertical), With<Player>>,
+) {
+    clear.0 = SKY_DARK;
     place_player(q, Vec3::new(0.0, GROUND_Y, 2.5));
 }
-pub fn enter_arcade_player(q: Query<(&mut Transform, &mut Vertical), With<Player>>) {
+pub fn enter_arcade_player(
+    mut clear: ResMut<ClearColor>,
+    q: Query<(&mut Transform, &mut Vertical), With<Player>>,
+) {
+    clear.0 = SKY_DARK;
     place_player(q, Vec3::new(0.0, GROUND_Y, 0.0));
 }
-pub fn enter_island_player(q: Query<(&mut Transform, &mut Vertical), With<Player>>) {
+pub fn enter_island_player(
+    mut clear: ResMut<ClearColor>,
+    q: Query<(&mut Transform, &mut Vertical), With<Player>>,
+) {
+    clear.0 = SKY_ISLAND;
     place_player(q, Vec3::new(0.0, GROUND_Y, 0.0));
 }
 

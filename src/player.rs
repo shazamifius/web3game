@@ -77,10 +77,14 @@ pub fn setup_player(
     let magenta = materials.add(body_mat(r * 1.3, g * 1.3, b * 1.3)); // tête (plus vive)
     let violet = materials.add(body_mat(r * 0.55, g * 0.55, b * 0.55)); // jambes (plus sombres)
 
-    // Position de départ ÉPARPILLÉE dans la salle (chap. 8.2c) : sans ça, tous les clients
-    // lancés par `tools/foule-3d.sh` apparaissent au même point → on ne peut pas distinguer
-    // le focus (proches, détaillés) de la conscience (lointains, imposteurs).
-    let (sx, sz) = random_spawn_xz();
+    // Point de départ. Au HUB (et sur l'île), spawn FIXE et déterministe — sinon on
+    // apparaît parfois DANS un portail (qui nous téléporte aussitôt). On n'éparpille (8.2c)
+    // que si on démarre DIRECTEMENT en arcade (`SCENE=arcade`, cas `tools/foule-3d.sh`) :
+    // là, éparpiller distingue le focus (proches détaillés) de la conscience (lointains LOD).
+    let (sx, sz) = match crate::scenes::initial_scene() {
+        crate::scenes::Scene::Arcade => random_spawn_xz(),
+        _ => (0.0, 2.5), // face aux 2 portails du hub, à bonne distance
+    };
 
     commands
         .spawn((

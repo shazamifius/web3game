@@ -146,6 +146,7 @@ fn main() {
             player::toggle_cursor,
             // Portails : actifs dans le hub ; retour au hub (H) : actif ailleurs.
             scenes::portal_enter.run_if(in_state(Scene::Hub)),
+            scenes::update_portal_labels.run_if(in_state(Scene::Hub)),
             scenes::return_to_hub.run_if(not(in_state(Scene::Hub))),
         ),
     );
