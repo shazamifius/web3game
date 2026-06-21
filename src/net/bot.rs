@@ -336,13 +336,20 @@ impl Bot {
                     }
                 }
                 // 8.3★ C-sécu-2 : résumé v2 (KIND 10) = même résumé + un trailer de preuves auto-signées.
-                // Étape 3 : on ingère le RÉSUMÉ comme un v1 (preuves IGNORÉES ici → non-régression : sous le
-                // drapeau, la perception reste celle de 1b). Étape 4 : vérifier les preuves et en tirer le
-                // plancher. Hors `SIGNED_SAMPLES`, personne n'émet de v2 → ce bras dort (défaut intact).
+                // Étape 4 : sous `SIGNED_SAMPLES`, on VÉRIFIE chaque preuve (sceau + cache (id,seq)) et on en
+                // tire le plancher (IDs vérifiés ∈ cellule → `summary_perceived`). Le résumé lui-même reste
+                // ingéré comme un v1 (corroboration des counts inchangée). Le gating au site d'appel garde le
+                // défaut byte-intact : hors `SIGNED_SAMPLES` personne n'émet de v2 ET on n'appelle pas
+                // `verify_proof` (zéro mémoire même si un attaquant nous pousse un KIND 10).
                 Some(KIND_CELL_SUMMARY_V2) => {
-                    if let (Some((s, _proofs)), Some(my_id)) =
+                    if let (Some((s, proofs)), Some(my_id)) =
                         (decode_cell_summary_v2(&bytes), self.link.my_id)
                     {
+                        if crate::net::link::signed_samples_mode() {
+                            for proof in &proofs {
+                                self.link.verify_proof(proof);
+                            }
+                        }
                         self.link.ingest_summary(s, (pos.x, pos.z), my_id);
                     }
                 }

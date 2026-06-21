@@ -534,5 +534,25 @@ vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; 
     red-team reste à 66, AUCUNE sécurité gagnée encore**. C'est l'étape 4 (vérifier les preuves, plancher = Σ |IDs
     vérifiés|) qui ferme l'inflation. Le débit +1,2 % est mesuré à N=100 (peu d'occupants/cellule) → à re-mesurer à
     1000 où les claims portent plus de preuves.
-- ▶️ **RESTE étapes 4-5** : (4) ingestion vérifie les proofs (cache `(id,seq)`), plancher = Σ |IDs proofs vérifiés ∈
-  cellule| ; (5) re-mesure débit/CPU/récup à 1000/2000 + inverser le red-team (66→50). **Prêt à exécuter.**
+- ✅ **Étape 4 FAITE** (ingestion VÉRIFIANTE → plancher vérifié, 89 tests, 0 warning, défaut byte-intact) :
+  - **`verify_proof` (link.rs, PUR comme `proofs_for`)** : à la réception d'un trailer v2 (gaté au site d'appel
+    `bot.rs`), chaque preuve auto-signée est vérifiée — lecture bon marché de `(id,seq)` pour le **cache** (un même
+    état vu via N relais = 1 seule vérif crypto), puis `sig_ok` SEULEMENT en cache manqué, puis on retient
+    `id → (seq max, cellule de sa position auto-déclarée)` dans `verified_proofs` (borné `MAX_KNOWN`). Un buffer forgé
+    (corps prétendant une victime, signé par le menteur) échoue au `sig_ok` → n'entre NI au plancher NI au cache.
+  - **Plancher (`summary_perceived`)** : sous `SIGNED_SAMPLES`, le plancher d'union compte les IDs **vérifiés par
+    cellule** (`verified_proofs`) au lieu des sample-ids BRUTS forgeables. Sans le drapeau → comportement 1b INTACT.
+  - **RED-TEAM INVERSÉ (unitaire, la fermeture)** : `verify_proof_ferme_l_inflation_du_plancher_redteam_inverse` —
+    50 vraies preuves auto-signées + 16 fantômes forgés (sceau qui ne colle pas) → plancher vérifié = **50, PAS 66**.
+    C'est l'inversion exacte de `redteam_le_plancher_1b_est_gonflable…`. + test du cache `(id,seq)` et du suivi de
+    cellule (un seq plus frais déplace la personne, pas de double comptage).
+  - **Non-régression headless (banc bus, N=100/45 s, CORROB+FLOOR)** : perception **98 → 99** (à plat), débit **↓59,3
+    → 59,8 Ko/s = +0,8 %** (≪ budget +30 %), résumés reçus/acceptés équivalents (~67 k, 19 %). Le plancher vérifié
+    ne fait PAS chuter la récupération à faible densité (la rotation `K_PROOF=4` couvre les petites cellules).
+  - ⚠ **Ce que l'étape 4 NE prouve PAS encore** : la fermeture red-team 66→50 est prouvée en LOGIQUE/unitaire ; la
+    non-régression est mesurée à **N=100 seulement** (peu d'occupants/cellule). À N=1000 (cellules denses) la rotation
+    `K_PROOF=4` doit couvrir plus d'IDs/cellule → la récupération pourrait être plus lente à converger que 1b. C'est
+    l'objet de l'étape 5 (run N=1000/130 s en cours).
+- ▶️ **RESTE étape 5** : confirmer à **N=1000/130 s** (et 2000) que la récupération reste **≥ 1b (~87 %)** et le débit
+  **≤ +30 %** avec le plancher vérifié ; mesurer le surcoût CPU réel. Si la rotation sous-couvre à 1000 → régler
+  `K_PROOF` (compromis débit↔convergence, un RÉGLAGE à mesurer) ou REPLIER (plancher anti-omission documenté).

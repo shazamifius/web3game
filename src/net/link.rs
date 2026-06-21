@@ -8,6 +8,7 @@ use super::accuse::encode_accuse;
 use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
 use super::cell::{build_cell_summary, sign_summary, summary_sig_ok, CellSummary};
 use super::crypto::{load_or_create_identity, Identity, PeerId, pow_bits};
+use super::message::{decode_canonical, sig_ok};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
 use bevy::prelude::Resource;
@@ -103,6 +104,14 @@ pub struct NetLink {
     /// → pas de mur n°1. `seq` par signataire = anti-rejeu. Sur le banc, un nœud = un /24 (port) → signataire
     /// ≡ /24 ; le vrai cap /24 + le plancher vérifié anti-omission = étapes suivantes (NAT, 9.4b). Borné `MAX_CELL_CLAIMS`.
     pub(crate) cell_claims: HashMap<((i32, i32), PeerId), CellSummary>,
+    /// PLANCHER VÉRIFIÉ (chap. 8.3★ C-sécu-2 étape 4, rempli SEULEMENT quand on reçoit des preuves
+    /// auto-signées d'un trailer v2 — donc sous `signed_samples_mode()`). Pour chaque pair dont une
+    /// PREUVE (état joueur signé, 182 o) a passé `sig_ok` : son `seq` max vu + la CELLULE de sa
+    /// position auto-déclarée. Le plancher d'union (`FLOOR`) compte alors ces IDs PAR CELLULE au lieu
+    /// des sample-ids bruts forgeables → un menteur seul ne peut plus injecter de fantômes (red-team
+    /// 66→50). Le `seq` sert de CACHE de vérif : un même état vu via N relais = 1 seule vérif crypto.
+    /// Borné par `MAX_KNOWN`. Vide quand le drapeau est absent (défaut byte-intact, zéro mémoire).
+    pub(crate) verified_proofs: HashMap<PeerId, (u64, (i32, i32))>,
     /// INSTRUMENTATION (D25, banc — lecture seule, ne change AUCUNE décision). Compte POURQUOI les
     /// résumés de cellule sont acceptés/rejetés à l'ingestion, pour disambiguer « la découverte ne
     /// livre pas les résumés » (reçus ≈ 0) de « les résumés arrivent mais sont rejetés » (D26 couche 1
@@ -450,6 +459,7 @@ impl NetLink {
             summary_seq: 0,
             perceived: HashSet::new(),
             cell_claims: HashMap::new(),
+            verified_proofs: HashMap::new(),
             summary_stats: SummaryStats::default(),
             weak,
         }
@@ -615,6 +625,44 @@ impl NetLink {
         }
         let n = cands.len();
         (0..k.min(n)).map(|i| self.signed_states[&cands[(start + i) % n]].clone()).collect()
+    }
+
+    /// VÉRIFIE une PREUVE auto-signée (état joueur signé, 182 o) reçue dans le trailer d'un résumé v2
+    /// (chap. 8.3★ C-sécu-2 étape 4) et la retient pour le plancher si elle tient. C'est CE pas qui
+    /// ferme l'inflation : seuls les IDs dont le sceau de LA PERSONNE elle-même vérifie entrent au
+    /// plancher → un agrégateur menteur ne peut plus bourrer de fantômes (red-team 66→50).
+    ///
+    /// CACHE par `(id, seq)` (le papier : « un état vu via N relais = 1 vérif ») : on lit d'abord
+    /// l'`(id, seq)` revendiqué SANS crypto (`decode_canonical` ne fait que parser, il ne signe rien) ;
+    /// si on a déjà retenu cet id à un `seq` ≥, on s'arrête AVANT le `sig_ok` coûteux. La valeur n'est
+    /// STOCKÉE qu'après un `sig_ok` positif → un buffer forgé ne peut ni entrer ni empoisonner le cache
+    /// (un faux à `seq` plus grand échoue au `sig_ok` et ne remplace rien). On retient la CELLULE de la
+    /// position auto-déclarée : le plancher ne comptera l'id que dans CETTE cellule.
+    ///
+    /// PUR (pas de lecture d'env, comme `proofs_for`) : `verified_proofs` n'est peuplé que par les
+    /// preuves d'un trailer v2, et le site d'appel (réception KIND_CELL_SUMMARY_V2) garde déjà le
+    /// drapeau → défaut byte-intact sans garde redondant. Renvoie `true` si une vérif a retenu un
+    /// état nouveau ou plus frais. Borné par `MAX_KNOWN`.
+    pub(crate) fn verify_proof(&mut self, proof: &[u8]) -> bool {
+        // (a) lecture bon marché de (id, seq) pour le cache — AUCUNE crypto ici.
+        let p = match decode_canonical(proof) {
+            Some(p) => p,
+            None => return false, // malformé / non fini
+        };
+        if let Some(&(seen_seq, _)) = self.verified_proofs.get(&p.id) {
+            if p.seq <= seen_seq {
+                return false; // déjà vu cet id à ce seq (ou plus frais) → pas de re-vérif crypto
+            }
+        }
+        // (b) crypto SEULEMENT maintenant (cache manqué).
+        if !sig_ok(proof) {
+            return false; // sceau invalide : un fantôme forgé n'entre pas au plancher
+        }
+        if !self.verified_proofs.contains_key(&p.id) && self.verified_proofs.len() >= MAX_KNOWN {
+            return false; // borne mémoire (cohérent avec signed_states / peer_pos)
+        }
+        self.verified_proofs.insert(p.id, (p.seq, cell_of(p.x, p.z)));
+        true
     }
 
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
@@ -867,21 +915,37 @@ impl NetLink {
             // Étape C-sécu-1b (`FLOOR=1`) : on ajoute le PLANCHER d'union signée par cellule (anti-omission,
             // remonte les cellules peu corroborées que `qth_largest` sous-compte). Voir `density_floor_mode`.
             let floor = density_floor_mode();
+            // ÉTAPE C-sécu-2 (4) : sous `SIGNED_SAMPLES`, le plancher d'union ne compte plus les
+            // sample-ids BRUTS (forgeables par l'agrégateur) mais les IDs auto-VÉRIFIÉS par cellule
+            // (`verified_proofs`, peuplé à la réception des preuves v2) → l'inflation du red-team est
+            // fermée. Sans le drapeau, comportement 1b INTACT (union des sample-ids bruts).
+            let signed = signed_samples_mode();
             let mut counts_by_cell: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
             let mut ids_by_cell: HashMap<(i32, i32), HashSet<PeerId>> = HashMap::new();
             for (&(cell, _signer), claim) in &self.cell_claims {
                 counts_by_cell.entry(cell).or_default().push(claim.count);
-                if floor {
+                if floor && !signed {
                     let set = ids_by_cell.entry(cell).or_default();
                     for &(id, _x, _z) in &claim.samples {
                         set.insert(id);
                     }
                 }
             }
+            // Plancher vérifié : nombre d'IDs auto-vérifiés dont la position ∈ chaque cellule.
+            let mut verified_by_cell: HashMap<(i32, i32), u32> = HashMap::new();
+            if floor && signed {
+                for &(_seq, cell) in self.verified_proofs.values() {
+                    *verified_by_cell.entry(cell).or_default() += 1;
+                }
+            }
             counts_by_cell
                 .into_iter()
                 .map(|(cell, counts)| {
-                    let distinct = ids_by_cell.get(&cell).map(|s| s.len() as u32).unwrap_or(0);
+                    let distinct = if signed {
+                        verified_by_cell.get(&cell).copied().unwrap_or(0)
+                    } else {
+                        ids_by_cell.get(&cell).map(|s| s.len() as u32).unwrap_or(0)
+                    };
                     corroborated_density(counts, distinct, CORROB_QUORUM, floor)
                 })
                 .sum()
@@ -1131,6 +1195,65 @@ mod tests {
         // 1b (floor=true) AUJOURD'HUI : le plancher gobe les 16 fantômes → 66 > 50 = INFLATION par un menteur seul.
         // (borne du trou = MAX_CELL_SAMPLES/cellule/menteur ; à fermer par échantillons auto-signés + cap /24).
         assert_eq!(corroborated_density(counts_avec_menteur, plancher_pollue, CORROB_QUORUM, true), 66);
+    }
+
+    fn etat_signe(id: &Identity, x: f32, z: f32, seq: u64) -> Vec<u8> {
+        use super::super::message::{encode_signed, PlayerState};
+        let p = PlayerState {
+            id: id.id(), x, y: 0.0, z, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: None, seq,
+        };
+        encode_signed(&p, id).to_vec()
+    }
+
+    /// C-sécu-2 étape 4 (RED-TEAM INVERSÉ, le pas qui FERME l'inflation) : `verify_proof` ne retient au
+    /// plancher QUE les preuves dont LA PERSONNE elle-même a scellé l'état. Un agrégateur menteur qui
+    /// bourre 16 fantômes (corps prétendant un id de victime, mais signés par SA clé → sceau qui ne colle
+    /// pas) ne les fait PAS entrer. Là où 1b comptait 50 réels + 16 fantômes = 66, le plancher VÉRIFIÉ
+    /// ne voit que les 50 réels. C'est l'inversion de `redteam_le_plancher_1b_est_gonflable…`.
+    #[test]
+    fn verify_proof_ferme_l_inflation_du_plancher_redteam_inverse() {
+        let mut link = link_de_test();
+        let cellule = cell_of(1.0, 1.0); // (0,0)
+        // 50 personnes RÉELLES : chacune AUTO-signe son état à la position (1,1).
+        for _ in 0..50 {
+            let vraie = Identity::generate();
+            assert!(link.verify_proof(&etat_signe(&vraie, 1.0, 1.0, 1))); // sceau valide → retenue
+        }
+        // Le menteur forge 16 fantômes : corps avec une clé de victime inventée, mais SIGNÉ PAR LUI →
+        // le sceau ne colle pas à la clé embarquée (usurpation impossible). Tous REJETÉS.
+        let menteur = Identity::generate();
+        for _ in 0..16 {
+            let victime = Identity::generate().id(); // une clé qu'il ne possède PAS
+            use super::super::message::{encode_signed, PlayerState};
+            let corps = PlayerState {
+                id: victime, x: 1.0, y: 0.0, z: 1.0, vx: 0.0, vy: 0.0, vz: 0.0,
+                yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: None, seq: 1,
+            };
+            let fantome = encode_signed(&corps, &menteur).to_vec(); // signé par le MAUVAIS
+            assert!(!link.verify_proof(&fantome)); // sceau invalide → n'entre pas au plancher
+        }
+        // Plancher vérifié de (0,0) = 50, PAS 66. L'inflation d'un menteur seul est fermée.
+        let n = link.verified_proofs.values().filter(|&&(_s, c)| c == cellule).count();
+        assert_eq!(n, 50);
+    }
+
+    /// C-sécu-2 étape 4 — le CACHE `(id, seq)` (« un état vu via N relais = 1 vérif ») et le suivi de
+    /// CELLULE : un même état rejoué ne double-compte pas ; un `seq` plus VIEUX (retardataire) est
+    /// ignoré ; un `seq` plus FRAIS suit la personne qui a BOUGÉ (toujours 1 entrée, nouvelle cellule).
+    #[test]
+    fn verify_proof_cache_par_id_seq_et_suit_la_cellule() {
+        let mut link = link_de_test();
+        let alice = Identity::generate();
+        assert!(link.verify_proof(&etat_signe(&alice, 1.0, 1.0, 5))); // 1re vérif (cellule (0,0))
+        assert!(!link.verify_proof(&etat_signe(&alice, 1.0, 1.0, 5))); // même (id,seq) → cache, pas recompté
+        assert_eq!(link.verified_proofs.len(), 1);
+        assert_eq!(link.verified_proofs[&alice.id()].1, cell_of(1.0, 1.0));
+        assert!(!link.verify_proof(&etat_signe(&alice, 1.0, 1.0, 4))); // seq plus VIEUX → ignoré
+        // seq plus FRAIS, alice est partie loin → la cellule suit, toujours 1 personne (pas de fantôme).
+        assert!(link.verify_proof(&etat_signe(&alice, 300.0, 300.0, 6)));
+        assert_eq!(link.verified_proofs.len(), 1);
+        assert_eq!(link.verified_proofs[&alice.id()].1, cell_of(300.0, 300.0));
     }
 
     /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la

@@ -74,13 +74,15 @@
 >     débit PLAT, ADDITIF (zéro octet de wire). ⚠ Dette laissée : échantillons pas auto-signés → un menteur seul
 >     peut injecter ≤16 faux IDs/cellule (ferme l'anti-OMISSION, pas l'anti-INFLATION).
 >   - 🔧 **C-sécu-2 EN COURS** — échantillons AUTO-SIGNÉS pour fermer cette inflation. Papier make-or-break écrit
->     (CPU ferme largement ; le DÉBIT est le seul vrai coût → mitigations prévues). **Étapes 1-2-3/5 FAITES** :
+>     (CPU ferme largement ; le DÉBIT est le seul vrai coût → mitigations prévues). **Étapes 1-2-3-4/5 FAITES** :
 >     ét.1 = `signed_states` (gaté, ré-embarquement verbatim) ; ét.2 = format wire `KIND_CELL_SUMMARY_V2` (résumé v1
 >     verbatim + trailer de preuves HORS corps signé ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact) ;
->     **ét.3 = émission+réception v2** (mon propre claim joint `K_PROOF=4` preuves tournantes ; preuve headless de
->     **NON-RÉGRESSION** : perception 98→99 à plat, débit +1,2 % ≪ +30 %). **87 tests, 0 warning.** ⚠ **Aucune sécurité
->     gagnée ENCORE** (preuves inertes → red-team toujours 66) ; c'est l'**étape 4** (vérif preuves → plancher) qui
->     ferme l'inflation. **Reste étapes 4-5 → voir PROCHAINE ACTION.**
+>     ét.3 = émission+réception v2 (mon propre claim joint `K_PROOF=4` preuves tournantes) ;
+>     **ét.4 = ingestion VÉRIFIANTE** (`verify_proof` : sceau + cache `(id,seq)` ; plancher = Σ |IDs vérifiés ∈ cellule|
+>     sous `SIGNED_SAMPLES`, sinon 1b intact). **89 tests, 0 warning.** ✅ **Inflation FERMÉE** : red-team INVERSÉ en
+>     unitaire (50 vraies preuves auto-signées + 16 fantômes FORGÉS → plancher vérifié = **50, PAS 66**) ; non-régression
+>     headless N=100 (perception 98→99, débit +0,8 %). ⚠ **Reste l'étape 5** = confirmer à **N=1000/130 s** (récup ≥ ~87 %,
+>     débit ≤ +30 %) — la rotation `K_PROOF=4` doit couvrir les cellules denses ; **run en cours → voir PROCHAINE ACTION.**
 >   - *Caveat permanent : `qth`/plancher prouvés en LOGIQUE + récupération headless ; l'anti-inflation /24 RÉEL
 >     attend le harnais NAT (vraies IP, réutilise 9.4b). Détail : §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu » ;
 >     papier complet : `PLAN_AUTONOME.md` § PAPIER C-sécu-2.*
@@ -105,26 +107,23 @@
 > - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
 > - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = C-sécu-2 étapes 4-5 (ingestion+plancher vérifié / re-mesure+red-team), en session FOCALISÉE.**
-> *Étapes 1-2-3/5 faites (états signés retenus + format wire v2 + émission/réception non-régressive). Le reste est du
-> WIRE = sécurité critique → on le reprend reposé, d'un seul tenant, JAMAIS en bout de longue session.*
+> **PROCHAINE ACTION = C-sécu-2 ÉTAPE 5 (re-mesure N=1000/2000 du plancher vérifié), en session FOCALISÉE.**
+> *Étapes 1-2-3-4/5 faites (états signés + format wire v2 + émission/réception + ingestion vérifiante). L'inflation est
+> FERMÉE (red-team inversé 50≠66, unitaire) ; reste à PROUVER que la récupération ne régresse pas à grande densité.*
 >
-> 🚀 **DÉMARRAGE PROCHAINE SESSION — le rush wire (tout est balisé, démarrage immédiat) :**
-> - **But :** échantillons AUTO-SIGNÉS pour fermer l'inflation du plancher → le red-team doit retomber de **66 → 50**.
+> 🚀 **DÉMARRAGE PROCHAINE SESSION — l'étape 5 (mesure, démarrage immédiat) :**
+> - **But :** confirmer headless que le plancher VÉRIFIÉ (étape 4) tient le critère pré-enregistré à N=1000/2000.
 >   Papier complet (coût CPU/débit chiffré, mitigations) = `PLAN_AUTONOME.md` § « PAPIER C-sécu-2 ».
-> - **Acquis (étapes 1-3) :** `signed_states` gaté (ré-embarquement VERBATIM 182 o) ; **format wire
->   `KIND_CELL_SUMMARY_V2`** (résumé v1 verbatim + trailer de preuves HORS corps signé ; nouveau KIND, pas de bump
->   PROTO → défaut byte-intact) ; **émission v2** = mon propre claim joint `K_PROOF=4` preuves tournantes (`proofs_for`,
->   recopie des signed_states) + **réception v2** (ingère le résumé) → **NON-RÉGRESSION mesurée** (perception à plat,
->   débit +1,2 %). 87 tests, 0 warning. **Mais red-team encore 66 = preuves INERTES, aucune sécu gagnée → étape 4.**
-> - **▶️ Étape 4 — ingestion VÉRIFIANTE :** au bras `KIND_CELL_SUMMARY_V2`, VÉRIFIER chaque preuve (`sig_ok` +
->   `decode_canonical`, cache `(id,seq)` : un état vu via N relais = 1 vérif) ; ne compter au plancher que les IDs
->   **vérifiés** dont la position ∈ cellule → plancher = Σ |IDs vérifiés ∈ cellule| (remplace le comptage des
->   sample-ids bruts dans `summary_perceived` sous `SIGNED_SAMPLES`). C'est CE pas qui fait retomber le red-team.
-> - **Étape 4 — ingestion :** vérifier les `k_proof` proofs (cache `(id, seq)` : un état vu via N relais = 1 vérif) ;
->   plancher = Σ |IDs de proofs VÉRIFIÉS ∈ cellule|.
-> - **Étape 5 — re-mesure + red-team :** débit/CPU/récup à 1000/2000 ; inverser l'assertion du red-team (66 → 50).
-> - **Critère pré-enregistré (Règle 2, écrit AVANT) — VALIDÉ si :** (a) red-team 66→50 ; (b) récup ≥ niveau 1b
+> - **Acquis (étapes 1-4) :** wire v2 `KIND_CELL_SUMMARY_V2` (nouveau KIND, défaut byte-intact) ; émission = claim propre
+>   + `K_PROOF=4` preuves tournantes ; **ingestion VÉRIFIANTE** (`verify_proof` : cache `(id,seq)` puis `sig_ok` ;
+>   `verified_proofs` : id → seq max + cellule) ; **plancher = Σ |IDs vérifiés ∈ cellule| sous `SIGNED_SAMPLES`**.
+>   **89 tests, 0 warning.** ✅ Red-team INVERSÉ unitaire (**50, pas 66**) ; non-régression N=100 (perception 98→99,
+>   débit +0,8 %).
+> - **▶️ Étape 5 — re-mesure :** `CORROB=1 FLOOR=1 SIGNED_SAMPLES=1 ./target/release/jeu coopsim-bus 1000 130` (puis 2000),
+>   comparer perception à la baseline 1b (~87 % @1000, déjà enregistrée) et débit (≤ +30 %). Mesurer le surcoût CPU réel
+>   (wall). Si la rotation `K_PROOF=4` sous-couvre les cellules denses → régler `K_PROOF` (compromis débit↔convergence) ou
+>   REPLIER (plancher « anti-omission seulement », documenté). **Lancer `tools/sim-cool.sh` avant le gros run.**
+> - **Critère pré-enregistré (Règle 2, écrit AVANT) — VALIDÉ si :** (a) red-team 66→50 ✅ (unitaire) ; (b) récup ≥ niveau 1b
 >   (~87 % @1000) ; (c) débit ≤ ~+30 % vs 1b ; (d) CPU < 1 %/cœur. **Si le débit explose malgré les mitigations →
 >   on REPLIE** (plancher « anti-omission seulement », documenté ; `qth` déjà incheatable porte la sécurité). On le saura mesuré.
 >
