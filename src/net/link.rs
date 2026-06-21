@@ -1056,6 +1056,29 @@ mod tests {
         assert_eq!(corroborated_density(vec![], 7, 3, false), 0); // sans plancher, rien.
     }
 
+    /// C-sécu-2 (RED-TEAM, headless) — DETTE MESURÉE NOIR SUR BLANC : tant que les échantillons ne sont
+    /// pas AUTO-signés par chaque personne, le PLANCHER (1b) est gonflable par un menteur SEUL qui bourre
+    /// de faux IDs, alors que `qth_largest` (1a) NE l'est PAS sous le quorum. Ce test n'est PAS une preuve
+    /// de défense : c'est la preuve HONNÊTE que le trou existe, et l'ancre de non-régression pour le jour
+    /// où l'auto-signature des échantillons le fermera (alors les faux IDs n'entreront plus dans le
+    /// plancher → la valeur gonflée retombera, et on inversera l'assertion).
+    #[test]
+    fn redteam_le_plancher_1b_est_gonflable_par_un_menteur_seul_pas_le_qth_1a() {
+        // 3 cellules honnêtes s'accordent : count réel 50, et 50 personnes RÉELLES distinctes vues.
+        let counts_honnetes = vec![50u32, 50, 50];
+        let reels = 50u32;
+        // Un MENTEUR seul (1 /24) ajoute son count gonflé + bourre ≤ MAX_CELL_SAMPLES faux IDs dans le plancher.
+        let mut counts_avec_menteur = counts_honnetes.clone();
+        counts_avec_menteur.push(9999); // count gonflé du menteur
+        let plancher_pollue = reels + 16; // 50 réels + MAX_CELL_SAMPLES(=16) fantômes signés par lui seul
+
+        // 1a (qth, floor=false) : le menteur seul ne bouge PAS le quantile → estimation = max honnête (50). SÛR.
+        assert_eq!(corroborated_density(counts_avec_menteur.clone(), plancher_pollue, CORROB_QUORUM, false), 50);
+        // 1b (floor=true) AUJOURD'HUI : le plancher gobe les 16 fantômes → 66 > 50 = INFLATION par un menteur seul.
+        // (borne du trou = MAX_CELL_SAMPLES/cellule/menteur ; à fermer par échantillons auto-signés + cap /24).
+        assert_eq!(corroborated_density(counts_avec_menteur, plancher_pollue, CORROB_QUORUM, true), 66);
+    }
+
     /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la
     /// cellule (moi inclus), DÉTERMINISTE, et qui ignore les pairs d'AUTRES cellules. Cellule
     /// vide → None.
