@@ -1,0 +1,22 @@
+name: tests
+
+# CI minimale et honnête : on rejoue exactement la suite de tests headless du projet
+# (logique réseau, crypto, anti-triche…) via le MÊME environnement reproductible que
+# en local (shell.nix). Aucun GPU, aucun test 3D ici — juste la preuve que la base
+# logique compile et que les tests passent.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer Nix
+        uses: cachix/install-nix-action@v27
+      - name: cargo test (dans nix-shell)
+        run: nix-shell --run "cargo test --release"
