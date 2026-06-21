@@ -18,5 +18,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Installer Nix
         uses: cachix/install-nix-action@v27
+        with:
+          # Fournit `<nixpkgs>` au runner (sinon `import <nixpkgs>` de shell.nix échoue).
+          nix_path: nixpkgs=channel:nixos-unstable
       - name: cargo test (dans nix-shell)
         run: nix-shell --run "cargo test --release"
