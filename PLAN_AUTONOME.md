@@ -426,6 +426,16 @@
   RÉEL** ; mal réglé, ça sourdine des honnêtes — invisible sans lancer le 3D (toi). *Quand tu reviens* :
   fixe la vitesse réelle du perso, donne-moi un profil de perte cible, et je code + prouve par `attack`
   (un bot « soutenu » muet, la marche normale passe). C'est un raffinement « à surveiller » (🟡), pas un bloqueur.
+- **ÉTAPE A (8.3★, 21 juin, supervisé) — arrivée PROGRESSIVE 3000 : le mur n°2 DISPARAÎT, mais le run ne
+  CONVERGE pas dans la fenêtre.** *Fait :* `RAMP_S=45` (3000 bots arrivent linéairement sur 45 s), CORROB+FLOOR,
+  130 s. *Résultat :* perception moy/arrivé t20=158→t120=691 (final/résumé 733, max 2462), **JAMAIS de plateau
+  mort** (vs 5000-tous-à-t=0 clouée à 0 jusqu'à t=40) ; débit ↓40,7 Ko/s (**borné, < 1000**). ✅ **Critère 1
+  (pas de mur de démarrage) MET** : l'arrivée progressive dissout le mur n°2 — mesuré, pas supposé. ⚠ **Critère 2
+  (convergence) NON met** (Règle 3) : pairs connus montait ENCORE à t=120 (1042, vs 861 plafonné à t=100 pour
+  1000) → fenêtre 130 s trop courte pour 3000 ; on NE conclut PAS « 3000 converge à X % ». *Claim honnête :*
+  « à 3000 en arrivée progressive, perception sans mur de démarrage + débit borné ; convergence complète = fenêtre
+  plus longue, non mesurée ». **Pour clore le chiffre : run 3000 à ~250 s (optionnel, ~1 h 15).**
+
 - _(ce que j'ajouterai si je dois stopper un pas)_
 
 ---

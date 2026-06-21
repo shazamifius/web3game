@@ -54,7 +54,9 @@ sans rien arrondir. Le détail vit dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE
 - **Hole-punching NAT réel** (full-cone, en _namespaces_ réseau).
 - Anti-triche : Sybil-framing échoue, gossip-flood absorbé, positions corroborées.
 - **Perception de foule à l'échelle** (headless, banc bus mémoire) : densité restaurée à
-  **~87 % à 1000 nœuds**, à débit reçu **plat**, **sans « chef » de cellule**.
+  **~87 % à 1000 nœuds**, à débit reçu **plat**, **sans « chef » de cellule**. À **3000 en
+  arrivée progressive**, la perception monte **sans mur de démarrage** et à **débit borné
+  (~40 Ko/s)** _(la convergence complète à 3000 demande une fenêtre de mesure plus longue, non close ici)_.
 - Identité persistante (clé locale, comme une clé SSH).
 
 **⚠️ Pas (encore) prouvé / limites assumées :**
