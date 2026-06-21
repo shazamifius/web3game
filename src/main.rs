@@ -147,8 +147,9 @@ fn main() {
             meteorites::spawn_meteors,
             meteorites::fall_meteors,
             meteorites::fade_trails,
+            meteorites::pickup_prompt,
             meteorites::collect_meteors,
-            meteorites::update_score_text,
+            meteorites::update_counters,
         )
             .run_if(in_state(Scene::Island)),
     )
