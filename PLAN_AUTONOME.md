@@ -520,6 +520,19 @@ vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; 
     (étape 3) tient k_proof bas ; le format supporte ≤ 16.
   - ⚠ **Dette de l'étape 2** : 3 `#[allow(dead_code)]` TEMPORAIRES (les 2 fns + la const) — le code n'est pas encore
     appelé ; les `allow` **sautent dès l'étape 3** (émission) / **4** (ingestion). C'est un marqueur, pas une rustine.
-- ▶️ **RESTE étapes 3→5** : émission v2 sous le drapeau (sous-ensemble TOURNANT k_proof<16, ex. 4) ; ingestion vérifie
-  les proofs (cache `(id,seq)`) → plancher = Σ |IDs proofs vérifiés ∈ cellule| ; re-mesure débit/CPU/récup à 1000/2000 ;
-  inverser le red-team (66→50). **Prêt à exécuter en bloc focalisé.**
+- ✅ **Étape 3 FAITE** (émission v2 + réception v2 non-régressive, 87 tests, 0 warning, défaut byte-intact) :
+  - **Émission** (`bot.rs`, gaté `SIGNED_SAMPLES`) : à MON propre claim de cellule (host == moi) je joins un
+    **sous-ensemble TOURNANT** (`K_PROOF=4`, curseur +1/période) de preuves = recopie des `signed_states` retenus dont
+    l'id ∈ samples (zéro re-signature). **Portée = mon propre claim seulement** (décision tranchée ; relais d'autrui
+    restent v1) → MTU borné, chacun atteste SES voisins, l'union grossit nœud-par-nœud. Helper PUR `proofs_for`
+    (filtre/borne/tourne) testé unitairement.
+  - **Réception** : nouveau bras `KIND_CELL_SUMMARY_V2` qui ingère le résumé (preuves IGNORÉES à l'étape 3) → **émettre
+    du v2 ne perd aucun résumé** (non-régression ; sinon le receveur jetterait le KIND 10).
+  - **Preuve headless (banc bus, N=100/45 s, CORROB+FLOOR)** : perception **98 → 99** (à plat), débit **↓59,3 → 60,0
+    Ko/s = +1,2 %** (≪ budget +30 %), résumés reçus/acceptés équivalents (66 k/68 k, 19 %). Le v2 circule, coût négligeable.
+  - ⚠ **Ce que l'étape 3 NE fait PAS** : le plancher compte ENCORE les sample-ids bruts (preuves inertes) → **le
+    red-team reste à 66, AUCUNE sécurité gagnée encore**. C'est l'étape 4 (vérifier les preuves, plancher = Σ |IDs
+    vérifiés|) qui ferme l'inflation. Le débit +1,2 % est mesuré à N=100 (peu d'occupants/cellule) → à re-mesurer à
+    1000 où les claims portent plus de preuves.
+- ▶️ **RESTE étapes 4-5** : (4) ingestion vérifie les proofs (cache `(id,seq)`), plancher = Σ |IDs proofs vérifiés ∈
+  cellule| ; (5) re-mesure débit/CPU/récup à 1000/2000 + inverser le red-team (66→50). **Prêt à exécuter.**

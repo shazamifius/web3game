@@ -74,12 +74,13 @@
 >     débit PLAT, ADDITIF (zéro octet de wire). ⚠ Dette laissée : échantillons pas auto-signés → un menteur seul
 >     peut injecter ≤16 faux IDs/cellule (ferme l'anti-OMISSION, pas l'anti-INFLATION).
 >   - 🔧 **C-sécu-2 EN COURS** — échantillons AUTO-SIGNÉS pour fermer cette inflation. Papier make-or-break écrit
->     (CPU ferme largement ; le DÉBIT est le seul vrai coût → mitigations prévues). **Étapes 1-2/5 FAITES** :
->     étape 1 = `signed_states`/`remember_signed_state` (gaté, ré-embarquement verbatim) ; **étape 2 = format wire
->     `KIND_CELL_SUMMARY_V2`** = résumé v1 verbatim + trailer `[nproof][n×182 o]` de preuves auto-signées HORS du
->     corps signé (relais libre d'en retirer, sceau intact). **PAS de bump `PROTO_VERSION`** (= nouveau KIND, vieux
->     nœud ignore KIND 10) → **défaut byte-intact, 86 tests, 0 warning**. **Reste étapes 3→5 (émission / ingestion+
->     plancher vérifié / re-mesure+red-team) → voir PROCHAINE ACTION.**
+>     (CPU ferme largement ; le DÉBIT est le seul vrai coût → mitigations prévues). **Étapes 1-2-3/5 FAITES** :
+>     ét.1 = `signed_states` (gaté, ré-embarquement verbatim) ; ét.2 = format wire `KIND_CELL_SUMMARY_V2` (résumé v1
+>     verbatim + trailer de preuves HORS corps signé ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact) ;
+>     **ét.3 = émission+réception v2** (mon propre claim joint `K_PROOF=4` preuves tournantes ; preuve headless de
+>     **NON-RÉGRESSION** : perception 98→99 à plat, débit +1,2 % ≪ +30 %). **87 tests, 0 warning.** ⚠ **Aucune sécurité
+>     gagnée ENCORE** (preuves inertes → red-team toujours 66) ; c'est l'**étape 4** (vérif preuves → plancher) qui
+>     ferme l'inflation. **Reste étapes 4-5 → voir PROCHAINE ACTION.**
 >   - *Caveat permanent : `qth`/plancher prouvés en LOGIQUE + récupération headless ; l'anti-inflation /24 RÉEL
 >     attend le harnais NAT (vraies IP, réutilise 9.4b). Détail : §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu » ;
 >     papier complet : `PLAN_AUTONOME.md` § PAPIER C-sécu-2.*
@@ -104,19 +105,22 @@
 > - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
 > - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = C-sécu-2 étapes 3→5 (émission / ingestion+plancher / re-mesure), en session FOCALISÉE.**
-> *Étapes 1-2/5 faites (états signés retenus + format wire v2 prouvé). Le reste est du WIRE = sécurité critique → on
-> le reprend reposé, d'un seul tenant, JAMAIS en bout de longue session (c'est là qu'on casse des choses).*
+> **PROCHAINE ACTION = C-sécu-2 étapes 4-5 (ingestion+plancher vérifié / re-mesure+red-team), en session FOCALISÉE.**
+> *Étapes 1-2-3/5 faites (états signés retenus + format wire v2 + émission/réception non-régressive). Le reste est du
+> WIRE = sécurité critique → on le reprend reposé, d'un seul tenant, JAMAIS en bout de longue session.*
 >
 > 🚀 **DÉMARRAGE PROCHAINE SESSION — le rush wire (tout est balisé, démarrage immédiat) :**
 > - **But :** échantillons AUTO-SIGNÉS pour fermer l'inflation du plancher → le red-team doit retomber de **66 → 50**.
 >   Papier complet (coût CPU/débit chiffré, mitigations) = `PLAN_AUTONOME.md` § « PAPIER C-sécu-2 ».
-> - **Acquis (étapes 1-2) :** `signed_states`/`remember_signed_state` gaté (ré-embarquement VERBATIM 182 o) ; **format
->   wire `KIND_CELL_SUMMARY_V2`** = résumé v1 verbatim + trailer `[nproof][n×182 o]` HORS corps signé (encode/decode +
->   6 tests v2 ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact ; 86 tests, 0 warning). ⚠ 3
->   `#[allow(dead_code)]` temporaires (les fns v2 pas encore appelées) → **sautent au câblage des étapes 3/4**.
-> - **▶️ Étape 3 — émission v2** sous le drapeau (mitigation débit = sous-ensemble TOURNANT `k_proof < 16`, ex. 4 ;
->   recopier les `signed_states` retenus comme preuves). ⚠ **MTU** : 16 samples + 4 proofs ≈ 1488 o → garder k_proof bas.
+> - **Acquis (étapes 1-3) :** `signed_states` gaté (ré-embarquement VERBATIM 182 o) ; **format wire
+>   `KIND_CELL_SUMMARY_V2`** (résumé v1 verbatim + trailer de preuves HORS corps signé ; nouveau KIND, pas de bump
+>   PROTO → défaut byte-intact) ; **émission v2** = mon propre claim joint `K_PROOF=4` preuves tournantes (`proofs_for`,
+>   recopie des signed_states) + **réception v2** (ingère le résumé) → **NON-RÉGRESSION mesurée** (perception à plat,
+>   débit +1,2 %). 87 tests, 0 warning. **Mais red-team encore 66 = preuves INERTES, aucune sécu gagnée → étape 4.**
+> - **▶️ Étape 4 — ingestion VÉRIFIANTE :** au bras `KIND_CELL_SUMMARY_V2`, VÉRIFIER chaque preuve (`sig_ok` +
+>   `decode_canonical`, cache `(id,seq)` : un état vu via N relais = 1 vérif) ; ne compter au plancher que les IDs
+>   **vérifiés** dont la position ∈ cellule → plancher = Σ |IDs vérifiés ∈ cellule| (remplace le comptage des
+>   sample-ids bruts dans `summary_perceived` sous `SIGNED_SAMPLES`). C'est CE pas qui fait retomber le red-team.
 > - **Étape 4 — ingestion :** vérifier les `k_proof` proofs (cache `(id, seq)` : un état vu via N relais = 1 vérif) ;
 >   plancher = Σ |IDs de proofs VÉRIFIÉS ∈ cellule|.
 > - **Étape 5 — re-mesure + red-team :** débit/CPU/récup à 1000/2000 ; inverser l'assertion du red-team (66 → 50).

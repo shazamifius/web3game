@@ -595,6 +595,28 @@ impl NetLink {
         self.signed_states.insert(id, bytes);
     }
 
+    /// Rassemble jusqu'à `k` PREUVES (états signés verbatim retenus, 182 o) pour les `ids` donnés, en
+    /// sous-ensemble TOURNANT à partir de `start` (chap. 8.3★ C-sécu-2 étape 3). Déterministe (ids triés)
+    /// → au fil des émissions la rotation finit par couvrir TOUS les ids prouvables d'une cellule, donc
+    /// l'union vérifiée chez le receveur remonte SÛREMENT sans gonfler un seul paquet (borne MTU = `k`).
+    /// Vide si `k = 0` ou aucun id connu en `signed_states` (recopie, zéro re-sign). PUR (pas de lecture
+    /// d'env → testable) : `signed_states` n'étant peuplé que sous `SIGNED_SAMPLES` (cf. `remember_signed_state`)
+    /// et le site d'appel gardant déjà le drapeau, le défaut reste intact sans garde redondant ici.
+    pub(crate) fn proofs_for(&self, ids: &[PeerId], start: usize, k: usize) -> Vec<Vec<u8>> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let mut cands: Vec<PeerId> =
+            ids.iter().copied().filter(|id| self.signed_states.contains_key(id)).collect();
+        cands.sort_unstable(); // ordre déterministe → la rotation est stable d'une émission à l'autre
+        cands.dedup();
+        if cands.is_empty() {
+            return Vec::new();
+        }
+        let n = cands.len();
+        (0..k.min(n)).map(|i| self.signed_states[&cands[(start + i) % n]].clone()).collect()
+    }
+
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
     /// Le focus = les pairs à qui on tient un lien plein débit ; on le STABILISE :
     ///   1. on retire les membres qui ont quitté la table ;
@@ -1542,6 +1564,33 @@ mod tests {
             link2.record_accusation(innocent, *s);
         }
         assert!(link2.is_muted(innocent)); // diversité réseau réelle → le quorum fonctionne
+    }
+
+    /// C-sécu-2 étape 3 : `proofs_for` ne rend que les ids RÉELLEMENT détenus (recopie), borne à `k`,
+    /// et TOURNE avec `start` → au fil des émissions l'union des sous-ensembles couvre TOUT le monde.
+    #[test]
+    fn proofs_for_filtre_borne_et_tourne() {
+        let mut link = link_de_test();
+        // 3 états « signés » retenus (contenu opaque ici : `proofs_for` ne fait que recopier des octets).
+        for s in [3u8, 1, 2] {
+            link.signed_states.insert(pid(s), vec![s; 182]);
+        }
+        // On demande des preuves pour 4 ids dont UN inconnu (pid(9)) → l'inconnu est filtré.
+        let ids = [pid(1), pid(2), pid(3), pid(9)];
+
+        // k=0 → rien. k borné par le nombre de candidats connus.
+        assert!(link.proofs_for(&ids, 0, 0).is_empty());
+        assert_eq!(link.proofs_for(&ids, 0, 10).len(), 3); // 3 connus seulement
+        // k=2 : sous-ensemble de 2, déterministe (ids triés : pid1, pid2, pid3).
+        assert_eq!(link.proofs_for(&ids, 0, 2), vec![vec![1u8; 182], vec![2u8; 182]]);
+        // Rotation : start=1 décale la fenêtre ; l'UNION sur tous les départs couvre les 3.
+        let mut vus = std::collections::HashSet::new();
+        for start in 0..3 {
+            for p in link.proofs_for(&ids, start, 2) {
+                vus.insert(p[0]); // l'octet marqueur = l'id
+            }
+        }
+        assert_eq!(vus, [1u8, 2, 3].into_iter().collect()); // tout le monde finit prouvé
     }
 }
 

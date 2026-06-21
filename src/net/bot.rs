@@ -21,10 +21,12 @@ use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, Player
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
-use super::cell::{decode_cell_summary, encode_cell_summary, CellSummary};
+use super::cell::{
+    decode_cell_summary, decode_cell_summary_v2, encode_cell_summary, encode_cell_summary_v2, CellSummary,
+};
 use super::wire::{
-    kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_GOSSIP, KIND_ORB, KIND_PUNCH, KIND_RELAY, KIND_STATE,
-    KIND_WELCOME, PROTO_VERSION,
+    kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_GOSSIP, KIND_ORB, KIND_PUNCH,
+    KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
 };
 use bevy::prelude::Vec3;
 use std::collections::HashMap;
@@ -54,6 +56,11 @@ const GOSSIP_FANOUT: usize = 4;
 const CELL_SUMMARY_PERIOD: f32 = 2.0;
 const CELL_SUMMARY_FANOUT: usize = 4;
 const MAX_RELAY_SUMMARIES: usize = 8;
+/// Nombre de PREUVES auto-signées (182 o) jointes à MON propre claim de cellule (chap. 8.3★ C-sécu-2,
+/// gaté `SIGNED_SAMPLES`). Sous-ensemble TOURNANT → l'union vérifiée chez le receveur remonte au fil du
+/// temps sans gonfler un paquet. Valeur de DÉPART du papier (réglable, mesuré étape 5) ; borne MTU :
+/// 16 samples + 4×182 ≈ 1488 o, sous le MTU Ethernet ~1500. Ne JAMAIS monter sans re-mesurer le débit.
+const K_PROOF: usize = 4;
 /// Seuil (Hz) au-delà duquel on a entendu un pair « au FOCUS » (plein débit) plutôt qu'en
 /// « conscience » (basse fidélité) — chap. 8.2b. Entre le plafond conscience (`CONSCIENCE_HZ` = 2)
 /// et le plein débit (`SEND_HZ` = 20) : tout seuil intermédiaire sépare nettement les deux tiers.
@@ -92,6 +99,7 @@ pub(crate) struct Bot {
     gossip_cursor: usize,
     cell_summary_acc: f32, // 8.3c : cadence d'émission/relais des résumés de cellule
     summary_cursor: usize, // 8.3c : curseur tournant pour relayer les résumés détenus
+    proof_cursor: usize,   // 8.3★ C-sécu-2 : curseur tournant des preuves auto-signées de MON claim
     wander: f32,
     last_pos: Option<Vec3>,
     warned_version: bool,
@@ -145,6 +153,7 @@ impl Bot {
             gossip_cursor: 0,
             cell_summary_acc: 0.0,
             summary_cursor: 0,
+            proof_cursor: 0,
             wander: phase,
             last_pos: None,
             warned_version: false,
@@ -323,6 +332,17 @@ impl Bot {
                 // sans seau dédié, le seau général `buckets` ci-dessus gatant déjà chaque paquet/source.
                 Some(KIND_CELL_SUMMARY) => {
                     if let (Some(s), Some(my_id)) = (decode_cell_summary(&bytes), self.link.my_id) {
+                        self.link.ingest_summary(s, (pos.x, pos.z), my_id);
+                    }
+                }
+                // 8.3★ C-sécu-2 : résumé v2 (KIND 10) = même résumé + un trailer de preuves auto-signées.
+                // Étape 3 : on ingère le RÉSUMÉ comme un v1 (preuves IGNORÉES ici → non-régression : sous le
+                // drapeau, la perception reste celle de 1b). Étape 4 : vérifier les preuves et en tirer le
+                // plancher. Hors `SIGNED_SAMPLES`, personne n'émet de v2 → ce bras dort (défaut intact).
+                Some(KIND_CELL_SUMMARY_V2) => {
+                    if let (Some((s, _proofs)), Some(my_id)) =
+                        (decode_cell_summary_v2(&bytes), self.link.my_id)
+                    {
                         self.link.ingest_summary(s, (pos.x, pos.z), my_id);
                     }
                 }
@@ -589,11 +609,24 @@ impl Bot {
                         let start = self.summary_cursor % summaries.len();
                         self.summary_cursor = self.summary_cursor.wrapping_add(1);
                         for k in 0..summaries.len().min(MAX_RELAY_SUMMARIES) {
-                            let pkt = encode_cell_summary(&summaries[(start + k) % summaries.len()]);
+                            let s = &summaries[(start + k) % summaries.len()];
+                            // 8.3★ C-sécu-2 étape 3 : à MON propre claim (host == moi), je JOINS un
+                            // sous-ensemble tournant de preuves auto-signées de mes occupants (recopie
+                            // des états déjà signés que j'ai entendus → zéro re-signature). Les relais
+                            // d'autrui restent légers (v1). Hors `SIGNED_SAMPLES` → v1 partout (défaut intact).
+                            let pkt = if crate::net::link::signed_samples_mode() && s.host == my_id {
+                                let ids: Vec<PeerId> = s.samples.iter().map(|&(id, _, _)| id).collect();
+                                let proofs = self.link.proofs_for(&ids, self.proof_cursor, K_PROOF);
+                                encode_cell_summary_v2(s, &proofs)
+                            } else {
+                                encode_cell_summary(s)
+                            };
                             for addr in &open {
                                 let _ = self.link.socket.send_to(*addr, &pkt);
                             }
                         }
+                        // la rotation des preuves avance d'un cran par période → couvre tous les ids au fil du temps
+                        self.proof_cursor = self.proof_cursor.wrapping_add(1);
                     }
                 }
             }

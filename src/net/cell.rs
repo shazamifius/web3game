@@ -222,7 +222,6 @@ pub(crate) fn decode_cell_summary(buf: &[u8]) -> Option<CellSummary> {
 /// verbatim. `proofs` = des états SIGNÉS bruts (182 o chacun) ; on les recopie tels quels (zéro
 /// re-signature). Tronque à `MAX_CELL_SAMPLES` (borne de coût, jumelle de celle des échantillons).
 /// Une preuve de longueur ≠ `SIGNED_STATE_SIZE` est IGNORÉE (on n'émet jamais un trailer malformé).
-#[allow(dead_code)] // C-sécu-2 étape 2 : prêt ; appelé à l'émission v2 en étape 3 (l'allow saute alors)
 pub(crate) fn encode_cell_summary_v2(s: &CellSummary, proofs: &[Vec<u8>]) -> Vec<u8> {
     let mut buf = encode_cell_summary(s);
     buf[0] = KIND_CELL_SUMMARY_V2; // seul le byte de TRANSPORT change ; le corps signé reste v1
@@ -242,7 +241,6 @@ pub(crate) fn encode_cell_summary_v2(s: &CellSummary, proofs: &[Vec<u8>]) -> Vec
 /// canonique. Les preuves sont rendues VERBATIM (non vérifiées ici : l'étape 4 fait `sig_ok` +
 /// `decode_canonical`). On EXIGE la longueur exacte (`v1 + 1 + nproof×182`) : toute forme autre
 /// est rejetée, comme en v1, pour qu'un relais re-sérialise des octets identiques.
-#[allow(dead_code)] // C-sécu-2 étape 2 : prêt ; appelé à l'ingestion v2 en étape 4 (l'allow saute alors)
 pub(crate) fn decode_cell_summary_v2(buf: &[u8]) -> Option<(CellSummary, Vec<Vec<u8>>)> {
     if buf.len() < HEADER + SIG_LEN + 1 || buf[0] != KIND_CELL_SUMMARY_V2 || buf[1] != PROTO_VERSION {
         return None;
