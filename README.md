@@ -1,4 +1,9 @@
-# web3game — un VRChat-like en pair-à-pair
+# web3game — une expérience vers un espace social en pair-à-pair
+
+[![tests](https://github.com/shazamifius/web3game/actions/workflows/tests.yml/badge.svg)](https://github.com/shazamifius/web3game/actions/workflows/tests.yml)
+
+> **Statut : R&D personnelle, solo, très expérimentale. Work in progress.**
+> Rien n'est prouvé à grande échelle — voir [« Ce qui est prouvé / pas prouvé / reste »](#ce-qui-est-prouvé-ce-qui-ne-lest-pas-ce-qui-reste) plus bas.
 
 Un petit univers social en **vue première personne** où l'on veut connecter des
 centaines de joueurs **sans aucun serveur de jeu central**, en pur pair-à-pair
@@ -36,6 +41,30 @@ réalisable, et déjà un exploit**, c'est la *présence par niveau de détail (
   débit plein).
 
 Si on tient ça, on aura montré que le P2P à cette échelle n'est pas *que* utopique.
+
+---
+
+## Ce qui est prouvé, ce qui ne l'est pas, ce qui reste
+
+Par honnêteté (c'est une règle du projet : la crédibilité vient de là), l'état réel —
+sans rien arrondir. Le détail vit dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md).
+
+**✅ Prouvé (mesuré, reproductible, tests à l'appui — 80 tests, 0 warning) :**
+- Cœur P2P : identité = clé cryptographique, états signés, anti-usurpation / anti-rejeu.
+- **Hole-punching NAT réel** (full-cone, en _namespaces_ réseau).
+- Anti-triche : Sybil-framing échoue, gossip-flood absorbé, positions corroborées.
+- **Perception de foule à l'échelle** (headless, banc bus mémoire) : densité restaurée à
+  **~87 % à 1000 nœuds**, à débit reçu **plat**, **sans « chef » de cellule**.
+- Identité persistante (clé locale, comme une clé SSH).
+
+**⚠️ Pas (encore) prouvé / limites assumées :**
+- **Pas « 55 000 prouvé »** : mesuré directement jusqu'à ~1000-2000 nœuds ; au-delà = architecture + extrapolation prudente.
+- **« Sans serveur » a un astérisque** : l'amorçage passe encore par un _rendez-vous_ (tout le reste est P2P).
+- **Positions en clair** : le chiffrement bout-à-bout n'est pas encore là.
+- **NAT symétrique non géré** : le hole-punching marche pour les NAT full-cone ; le symétrique demandera un relais.
+- **Perception corroborée : sûre contre l'_omission_, pas encore contre l'_inflation_** (un menteur seul peut sur-déclarer une poignée de présences ; la fermeture est identifiée et mesurée par un test).
+
+**🚧 Le prochain gros chantier :** l'inclusivité — pouvoir jouer même sur un lien réseau pauvre.
 
 ---
 
