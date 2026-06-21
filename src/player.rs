@@ -16,7 +16,9 @@ const BODY_RADIUS: f32 = 0.25; // demi-largeur du corps (pour rester dans la sal
 const EYE_HEIGHT: f32 = 0.7; // hauteur des yeux au-dessus du centre du corps (~niveau de la tête)
 
 // --- Saut & gravité (petit jeu île) ---
-const GROUND_Y: f32 = 0.7; // hauteur du CENTRE du corps quand les pieds touchent le sol
+/// Hauteur du CENTRE du corps quand les pieds touchent le sol (`pub` : l'aiguillage
+/// de scènes repositionne le joueur à cette hauteur en changeant de monde).
+pub const GROUND_Y: f32 = 0.7;
 const GRAVITY: f32 = 18.0; // m/s² (un peu plus que la vraie : plus « jeu », moins flottant)
 const JUMP_SPEED: f32 = 6.0; // impulsion verticale au décollage (m/s) → saut ~1 m de haut
 
@@ -25,10 +27,11 @@ const JUMP_SPEED: f32 = 6.0; // impulsion verticale au décollage (m/s) → saut
 pub struct Player;
 
 /// Vitesse VERTICALE du joueur (m/s) — saut + chute. À 0 quand on est au sol.
-/// Séparée du déplacement horizontal (ZQSD), qui reste « à plat ».
+/// Séparée du déplacement horizontal (ZQSD), qui reste « à plat ». `pub(crate)` pour
+/// que l'aiguillage de scènes puisse la remettre à 0 en téléportant le joueur.
 #[derive(Component)]
 pub struct Vertical {
-    vy: f32,
+    pub(crate) vy: f32,
 }
 
 /// Tête/caméra : porte la rotation haut/bas (tangage) et le head-bob.

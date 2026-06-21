@@ -1,21 +1,27 @@
-//! Salle arcade néon, en vue à la première personne — base minimaliste en Rust/Bevy.
+//! Monde P2P en vue première personne (Rust/Bevy) — esprit « VRChat sans serveur ».
+//! On spawn dans un HUB avec 2 portails ; on entre dans un portail pour choisir
+//! l'instance : la salle arcade, ou l'île. (H : revenir au hub.)
 //!
 //! Contrôles :
 //!   - ZQSD            : se déplacer (clavier AZERTY)
 //!   - Espace          : sauter
+//!   - H               : revenir au hub (depuis une instance)
 //!   - Souris          : regarder autour
 //!   - Échap           : libérer la souris
 //!   - Clic gauche     : recapturer la souris
 //!
 //! Organisation :
-//!   - `world`  : la salle (sol, murs, plafond, néon, lumière)
+//!   - `scenes` : le hub, les portails, l'aiguillage Hub/Arcade/Île
+//!   - `world`  : la salle arcade (sol, murs, plafond, néon, lumière)
 //!   - `player` : le personnage, la caméra et les contrôles
 
 mod net;
 mod player;
+mod scenes;
 mod world;
 
 use bevy::prelude::*;
+use scenes::Scene;
 
 fn main() {
     // Aiguillage en fonction des arguments de la ligne de commande.
@@ -118,10 +124,18 @@ fn main() {
     // Fond sombre violacé (cohérent avec l'ambiance néon).
     .insert_resource(ClearColor(Color::srgb(0.02, 0.01, 0.05)))
     .insert_resource(net::MyColor(my_color.0, my_color.1, my_color.2))
-    .add_systems(
-        Startup,
-        (world::setup_room, player::setup_player, player::grab_cursor),
-    )
+    // Aiguillage de scènes (hub / arcade / île). On démarre dans le hub, sauf si
+    // `SCENE=arcade|ile` (auto-test 3D / foule-3d qui veut sauter le hub).
+    .insert_state(scenes::initial_scene())
+    // Le joueur est créé UNE fois et survit aux changements de scène ; chaque scène
+    // est montée/démontée par OnEnter/OnExit et le joueur est téléporté à son spawn.
+    .add_systems(Startup, (player::setup_player, player::grab_cursor))
+    .add_systems(OnEnter(Scene::Hub), (scenes::setup_hub, scenes::enter_hub_player))
+    .add_systems(OnExit(Scene::Hub), scenes::despawn_world)
+    .add_systems(OnEnter(Scene::Arcade), (world::setup_room, scenes::enter_arcade_player))
+    .add_systems(OnExit(Scene::Arcade), scenes::despawn_world)
+    .add_systems(OnEnter(Scene::Island), (scenes::setup_island, scenes::enter_island_player))
+    .add_systems(OnExit(Scene::Island), scenes::despawn_world)
     .add_systems(
         Update,
         (
@@ -130,6 +144,9 @@ fn main() {
             player::look_around,
             player::head_bob,
             player::toggle_cursor,
+            // Portails : actifs dans le hub ; retour au hub (H) : actif ailleurs.
+            scenes::portal_enter.run_if(in_state(Scene::Hub)),
+            scenes::return_to_hub.run_if(not(in_state(Scene::Hub))),
         ),
     );
 
@@ -164,7 +181,9 @@ fn main() {
                             net::net_send,
                             net::net_receive,
                             net::net_interpolate,
-                            world::apply_world_color,
+                            // La recoloration n'a de sens qu'en arcade (où `WorldNeon` existe) :
+                            // garde anti-panique quand on est au hub / sur l'île.
+                            world::apply_world_color.run_if(resource_exists::<world::WorldNeon>),
                             // Les 4 systèmes de l'orbe s'enchaînent dans CET ordre
                             // (`.chain()`) : on saisit, puis on migre si besoin, puis
                             // on simule la physique, puis on émet — sinon Bevy les

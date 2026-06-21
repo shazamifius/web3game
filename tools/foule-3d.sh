@@ -45,7 +45,9 @@ sleep 1
 
 echo "[foule-3d] ouverture de $N fenêtres clientes…"
 for i in $(seq 1 "$N"); do
-    "$BIN" client >/tmp/foule-c"$i".log 2>&1 &
+    # SCENE=arcade : les fenêtres de foule entrent DIRECTEMENT dans la salle arcade
+    # (sautent le hub) → le test de perception/foule n'est pas gêné par l'aiguillage.
+    SCENE=arcade "$BIN" client >/tmp/foule-c"$i".log 2>&1 &
     PIDS+=($!)
     sleep 0.15   # petit décalage : on n'inonde pas le rendez-vous d'un coup
 done

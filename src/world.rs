@@ -1,6 +1,7 @@
 //! La salle : sol, murs, plafond, grille néon au sol, arêtes lumineuses,
 //! plafonnier visible et éclairage. Ambiance « arcade synthwave ».
 
+use crate::scenes::WorldGeometry;
 use bevy::prelude::*;
 
 // Dimensions de la salle (en mètres), partagées avec le module joueur.
@@ -136,6 +137,7 @@ pub fn setup_room(
 
     // --- Lumière ponctuelle (avec ombres) sous le plafonnier ---
     commands.spawn((
+        WorldGeometry,
         PointLight {
             color: Color::srgb(1.0, 0.85, 0.82), // blanc chaud (ambiance plus accueillante)
             intensity: 1_000_000.0,
@@ -256,6 +258,7 @@ fn spawn_box(
     size: Vec3,
 ) {
     commands.spawn((
+        WorldGeometry, // scène-scopée : dé-spawn quand on quitte l'arcade
         Mesh3d(cube.clone()),
         MeshMaterial3d(material.clone()),
         Transform::from_translation(position).with_scale(size),
