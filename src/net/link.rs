@@ -42,6 +42,12 @@ pub struct NetLink {
     /// ailleurs (ex. coller un témoin sur une victime pour fabriquer une fausse co-localisation et
     /// framer, D9). Les jugements de crédibilité (9.2) la lisent ; `peer_pos` reste l'indice ouvert.
     pub(crate) confirmed_pos: HashMap<PeerId, (f32, f32)>,
+    /// DERNIERS OCTETS SIGNÉS d'état par pair (chap. 8.3★ C-sécu-2, rempli SEULEMENT sous
+    /// `signed_samples_mode()`). On garde l'état joueur VERBATIM (corps + sceau, déjà vérifié à la
+    /// réception) pour pouvoir le RECOPIER tel quel dans un résumé v2 comme échantillon AUTO-CERTIFIANT
+    /// (zéro re-signature). Borné par `MAX_KNOWN` comme `peer_pos`. Vide quand le drapeau est absent
+    /// (défaut byte-intact, aucun surcoût mémoire).
+    pub(crate) signed_states: HashMap<PeerId, Vec<u8>>,
     /// DERNIÈRE PREUVE DE VIE par pair (chap. 12.1 / D16) : l'instant où on a eu un signe
     /// qu'il est vivant (état accepté, ou adresse corroborée). Sert à l'ÉVICTION par TTL :
     /// quand la table `peers` est pleine, on récupère le slot du pair le plus anciennement vu
@@ -185,6 +191,16 @@ pub(crate) fn density_corrob_mode() -> bool {
 pub(crate) fn density_floor_mode() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| matches!(std::env::var("FLOOR").as_deref(), Ok("1") | Ok("true")))
+}
+
+/// ÉCHANTILLONS AUTO-SIGNÉS (chap. 8.3★ C-sécu-2, env `SIGNED_SAMPLES=1`, n'a de sens que sous `CORROB`+`FLOOR`).
+/// Ferme l'inflation du plancher mesurée par le red-team : au lieu de compter tout ID vu dans un échantillon
+/// (forgeable par l'agrégateur), on ne compte au plancher que les personnes dont l'ÉTAT SIGNÉ vérifie — un
+/// menteur ne peut pas forger le sceau d'autrui. Implémenté en RECOPIANT verbatim les états déjà signés
+/// (zéro re-signature ; voir papier C-sécu-2 dans PLAN_AUTONOME). Quand absent → comportement 1b INTACT.
+pub(crate) fn signed_samples_mode() -> bool {
+    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *S.get_or_init(|| matches!(std::env::var("SIGNED_SAMPLES").as_deref(), Ok("1") | Ok("true")))
 }
 
 /// Le Q-ième plus grand d'une liste de counts (chap. 8.3★ C-sécu) — l'estimateur de densité robuste à
@@ -422,6 +438,7 @@ impl NetLink {
             peers: HashMap::new(),
             peer_pos: HashMap::new(),
             confirmed_pos: HashMap::new(),
+            signed_states: HashMap::new(),
             peer_seen: HashMap::new(),
             replay: HashMap::new(),
             strikes: HashMap::new(),
@@ -561,6 +578,21 @@ impl NetLink {
         self.peer_pos.insert(id, xz);
         self.confirmed_pos.insert(id, xz);
         self.peer_seen.insert(id, Instant::now()); // D16 : un état accepté = la plus forte preuve de vie
+    }
+
+    /// RETIENT les octets signés VERBATIM du dernier état accepté d'un pair (chap. 8.3★ C-sécu-2). Appelé
+    /// depuis la réception APRÈS `sig_ok` + acceptation, donc `bytes` est un état DÉJÀ vérifié. Ne fait rien
+    /// si `SIGNED_SAMPLES` est absent (défaut byte-intact, zéro mémoire). Borné par `MAX_KNOWN` : si plein et
+    /// pair inconnu de la table, on n'ajoute pas (anti-inondation, cohérent avec `peer_pos`). Sert plus tard à
+    /// RECOPIER ces octets comme échantillon auto-certifiant dans un résumé v2 (zéro re-signature).
+    pub(crate) fn remember_signed_state(&mut self, id: PeerId, bytes: Vec<u8>) {
+        if !signed_samples_mode() {
+            return;
+        }
+        if !self.signed_states.contains_key(&id) && self.signed_states.len() >= MAX_KNOWN {
+            return; // borne mémoire
+        }
+        self.signed_states.insert(id, bytes);
     }
 
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.

@@ -354,6 +354,7 @@ impl Bot {
                                 } else {
                                     self.last_state.insert(state.id, (np, now));
                                     self.link.note_pos(state.id, (np.x, np.z));
+                                    self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
                                     self.holes.insert(state.id, true);
                                     *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                                     self.accepted += 1;
@@ -388,6 +389,7 @@ impl Bot {
                             } else {
                                 self.last_state.insert(state.id, (np, now));
                                 self.link.note_pos(state.id, (np.x, np.z));
+                                self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
                                 let rc = self.relay_credits.entry(state.id).or_insert(RELAY_CAP);
                                 let mut n = 0u32;
                                 if *rc >= 1.0 {
