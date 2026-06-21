@@ -159,6 +159,7 @@ fn body_mat(r: f32, g: f32, b: f32) -> StandardMaterial {
 pub fn move_player(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    scene: Res<State<crate::scenes::Scene>>,
     mut player: Query<&mut Transform, With<Player>>,
 ) {
     let Ok(mut transform) = player.single_mut() else {
@@ -188,10 +189,14 @@ pub fn move_player(
     let direction = direction.normalize_or_zero();
     transform.translation += direction * MOVE_SPEED * time.delta_secs();
 
-    // Bornage simple pour rester dans la salle (pas de vraie collision).
-    let limit = ROOM_SIZE / 2.0 - BODY_RADIUS;
-    transform.translation.x = transform.translation.x.clamp(-limit, limit);
-    transform.translation.z = transform.translation.z.clamp(-limit, limit);
+    // Bornage simple UNIQUEMENT dans la salle arcade (boîte fermée). Le hub (glb) et l'île
+    // sont ouverts et plus grands → pas de mur invisible (sinon on ne pourrait PAS atteindre
+    // les portails du hub, à z≈16). La vraie collision (raycast sur mesh) viendra avec l'île .glb.
+    if *scene.get() == crate::scenes::Scene::Arcade {
+        let limit = ROOM_SIZE / 2.0 - BODY_RADIUS;
+        transform.translation.x = transform.translation.x.clamp(-limit, limit);
+        transform.translation.z = transform.translation.z.clamp(-limit, limit);
+    }
 }
 
 /// Saut + gravité (Espace pour sauter). On ne peut sauter QUE si on touche le sol
