@@ -2,6 +2,7 @@
 //!
 //! Contrôles :
 //!   - ZQSD            : se déplacer (clavier AZERTY)
+//!   - Espace          : sauter
 //!   - Souris          : regarder autour
 //!   - Échap           : libérer la souris
 //!   - Clic gauche     : recapturer la souris
@@ -125,6 +126,7 @@ fn main() {
         Update,
         (
             player::move_player,
+            player::jump_and_gravity,
             player::look_around,
             player::head_bob,
             player::toggle_cursor,

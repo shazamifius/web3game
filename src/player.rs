@@ -15,9 +15,21 @@ const MOUSE_SENSITIVITY: f32 = 0.0015;
 const BODY_RADIUS: f32 = 0.25; // demi-largeur du corps (pour rester dans la salle)
 const EYE_HEIGHT: f32 = 0.7; // hauteur des yeux au-dessus du centre du corps (~niveau de la tête)
 
+// --- Saut & gravité (petit jeu île) ---
+const GROUND_Y: f32 = 0.7; // hauteur du CENTRE du corps quand les pieds touchent le sol
+const GRAVITY: f32 = 18.0; // m/s² (un peu plus que la vraie : plus « jeu », moins flottant)
+const JUMP_SPEED: f32 = 6.0; // impulsion verticale au décollage (m/s) → saut ~1 m de haut
+
 /// Joueur : porte la position et la rotation gauche/droite (lacet).
 #[derive(Component)]
 pub struct Player;
+
+/// Vitesse VERTICALE du joueur (m/s) — saut + chute. À 0 quand on est au sol.
+/// Séparée du déplacement horizontal (ZQSD), qui reste « à plat ».
+#[derive(Component)]
+pub struct Vertical {
+    vy: f32,
+}
 
 /// Tête/caméra : porte la rotation haut/bas (tangage) et le head-bob.
 #[derive(Component)]
@@ -70,8 +82,9 @@ pub fn setup_player(
     commands
         .spawn((
             Player,
+            Vertical { vy: 0.0 }, // au sol au départ
             // Centre du corps à 0,7 m : les pieds arrivent ~au sol.
-            Transform::from_xyz(sx, 0.7, sz),
+            Transform::from_xyz(sx, GROUND_Y, sz),
             Visibility::default(),
         ))
         .with_children(|p| {
@@ -172,6 +185,36 @@ pub fn move_player(
     let limit = ROOM_SIZE / 2.0 - BODY_RADIUS;
     transform.translation.x = transform.translation.x.clamp(-limit, limit);
     transform.translation.z = transform.translation.z.clamp(-limit, limit);
+}
+
+/// Saut + gravité (Espace pour sauter). On ne peut sauter QUE si on touche le sol
+/// (pas de double-saut). Hors saut, on reste collé au sol → comportement inchangé.
+pub fn jump_and_gravity(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut player: Query<(&mut Transform, &mut Vertical), With<Player>>,
+) {
+    let Ok((mut transform, mut v)) = player.single_mut() else {
+        return;
+    };
+
+    let grounded = transform.translation.y <= GROUND_Y + 0.001 && v.vy <= 0.0;
+
+    // Décollage : seulement si on est au sol (anti double-saut).
+    if grounded && keyboard.just_pressed(KeyCode::Space) {
+        v.vy = JUMP_SPEED;
+    }
+
+    // Intégration verticale : la gravité tire vers le bas en continu.
+    let dt = time.delta_secs();
+    v.vy -= GRAVITY * dt;
+    transform.translation.y += v.vy * dt;
+
+    // Atterrissage : on ne passe pas sous le sol, et la vitesse retombe à 0.
+    if transform.translation.y <= GROUND_Y {
+        transform.translation.y = GROUND_Y;
+        v.vy = 0.0;
+    }
 }
 
 /// Vue à la souris : lacet sur le corps, tangage sur la tête (bloqué aux ~90°).
