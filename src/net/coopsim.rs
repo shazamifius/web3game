@@ -198,6 +198,19 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     //   phase (vs les threads naturellement décalés du vrai `crowd`), ce qui empêchait le bootstrap
     //   mutuel du perçage à grand N (deadlock N≥700). Décalage harnais-only, plus fidèle au réel.
     const JOIN_SPREAD: u64 = 20;
+    // ARRIVÉE PROGRESSIVE OPT-IN (étape A, env `RAMP_S` en secondes SIM). Le mur n°2 (bootstrap lent)
+    // a été mesuré dans le scénario IRRÉALISTE « tous à t=0 » (5000 simultanés sur un bus parfait). En
+    // déploiement réel, les pairs arrivent ÉTALÉS dans le temps. Sous `RAMP_S>0`, le bot `idx` ne rejoint
+    // qu'au tick `idx * ramp_ticks / N` → la foule entière entre LINÉAIREMENT sur `RAMP_S` s, donnant au
+    // réseau le temps de se stabiliser entre vagues. But : PROUVER (pas supposer) que la perception monte
+    // sans le plateau de bootstrap. Défaut (0) → on garde le `JOIN_SPREAD` ~1 s (binaire identique).
+    let ramp_s: f32 = std::env::var("RAMP_S").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let ramp_ticks = (ramp_s / dt) as u64;
+    let nb = bots.len().max(1) as u64;
+    let join_tick = |idx: usize| -> u64 {
+        if ramp_ticks > 0 { (idx as u64 * ramp_ticks) / nb } else { idx as u64 % JOIN_SPREAD }
+    };
+    println!("  (arrivée : {})", if ramp_ticks > 0 { format!("PROGRESSIVE sur {ramp_s:.0}s SIM (étape A)") } else { "quasi-simultanée (~1s, baseline)".to_string() });
     // JITTER CONTINU OPT-IN (D25, test (i) protocole vs (ii) lockstep — env `JITTER=1`). Donne à chaque
     // bot un DÉPHASAGE D'HORLOGE CONSTANT propre (réparti ~[0,1s) par un hash déterministe de l'index)
     // ajouté au `now` qu'il voit. Ses timers périodiques (gossip/émission) ne se ré-alignent JAMAIS,
@@ -218,7 +231,7 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
     for tick in 0..ticks {
         rv.step(); // le rendez-vous traite les HELLO du tick précédent, renvoie les WELCOME
         for (idx, bot) in bots.iter_mut().enumerate() {
-            if tick >= idx as u64 % JOIN_SPREAD {
+            if tick >= join_tick(idx) {
                 bot.step(dt, now + phase_off(idx));
             }
         }
@@ -229,7 +242,15 @@ pub fn run_coopsim_bus(n_bots: usize, secs: u64) {
             let ho = bots.iter().map(|b| b.open_holes().len() as f32).sum::<f32>() / nn;
             let pe = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / nn;
             let pmax = bots.iter().map(|b| b.summary_perceived()).max().unwrap_or(0);
-            println!("  [t={:>4.0}s] pairs connus {kn:>6.1} | trous ouverts {ho:>6.1} | perception moy {pe:>6.0} max {pmax}", now);
+            if ramp_ticks > 0 {
+                // Arrivée progressive : on imprime aussi les ARRIVÉS (déterministe via `join_tick`) et la
+                // perception/ARRIVÉ → honnête (les pas-encore-là perçoivent 0 et fausseraient la moyenne globale).
+                let arr = (0..bots.len()).filter(|&i| tick >= join_tick(i)).count().max(1);
+                let pe_arr = bots.iter().map(|b| b.summary_perceived() as f32).sum::<f32>() / arr as f32;
+                println!("  [t={:>4.0}s] arrivés {arr:>5} | pairs connus {kn:>6.1} | trous {ho:>6.1} | perception moy/tous {pe:>6.0} moy/arrivé {pe_arr:>6.0} max {pmax}", now);
+            } else {
+                println!("  [t={:>4.0}s] pairs connus {kn:>6.1} | trous ouverts {ho:>6.1} | perception moy {pe:>6.0} max {pmax}", now);
+            }
         }
     }
     let wall_s = wall.elapsed().as_secs_f32();
