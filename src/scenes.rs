@@ -38,20 +38,25 @@ pub fn initial_scene() -> Scene {
 #[derive(Component)]
 pub struct WorldGeometry;
 
+/// A-t-on déjà posé le joueur au marqueur `spawn` du glb POUR CETTE entrée dans le hub ?
+/// Remis à `false` à chaque `OnEnter(Hub)` (la scène glb se charge sur quelques frames).
+#[derive(Resource, Default)]
+pub struct HubSpawnDone(pub bool);
+
 /// Un portail du hub : marcher dedans bascule vers `target`.
 #[derive(Component)]
 pub struct Portal {
     target: Scene,
 }
 
-/// Étiquette UI (texte) d'un portail : suit la position 3D du portail à l'écran
-/// (même technique que les pseudos des avatars). `world` = point monde à projeter.
+/// Étiquette UI (texte) d'un portail : suit à l'écran la position 3D de l'entité-portail
+/// `portal` (même technique que les pseudos des avatars).
 #[derive(Component)]
 pub struct PortalLabel {
-    world: Vec3,
+    portal: Entity,
 }
 
-const PORTAL_RADIUS: f32 = 1.1; // rayon (m) pour « entrer » dans un portail
+const PORTAL_RADIUS: f32 = 1.6; // rayon (m) pour « entrer » dans un portail
 
 // Couleurs de fond (ciel) par scène : sombre en hub/arcade, NUIT bleutée sur l'île.
 const SKY_DARK: Color = Color::srgb(0.02, 0.01, 0.05);
@@ -67,97 +72,69 @@ pub fn despawn_world(mut commands: Commands, q: Query<Entity, With<WorldGeometry
 // ----------------------------------------------------------------------------
 // HUB
 // ----------------------------------------------------------------------------
-/// Monte le hub : une plateforme sombre + 2 portails néon (magenta = arcade, vert = île)
-/// + un peu de lumière. Volontairement minimaliste (esthétique d'abord).
-pub fn setup_hub(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-
-    // Plateforme du hub (disque sombre carré, 10×10).
-    let floor = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.03, 0.03, 0.06),
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+/// Monte le hub depuis le MODÈLE Blender `asset/HUB.glb` : on instancie la scène glTF
+/// (la plateforme, le pont, les portails, le panneau…) + une lumière. Les portails et le
+/// point d'apparition sont LIÉS ensuite par leur NOM (`bind_gltf_hub`).
+pub fn setup_hub(mut commands: Commands, assets: Res<AssetServer>) {
+    // `HUB.glb#Scene0` : le dossier d'assets est configuré sur `asset/` (cf. main.rs).
     commands.spawn((
         WorldGeometry,
-        Mesh3d(cube.clone()),
-        MeshMaterial3d(floor),
-        Transform::from_xyz(0.0, -0.05, 0.0).with_scale(Vec3::new(10.0, 0.1, 10.0)),
+        SceneRoot(assets.load("HUB.glb#Scene0")),
+        Transform::IDENTITY,
     ));
-
-    // Grille néon douce au sol (cyan) pour l'ambiance.
-    let neon = materials.add(emissive(0.0, 0.9, 1.0));
-    let mut g = -5.0;
-    while g <= 5.001 {
-        commands.spawn((
-            WorldGeometry,
-            Mesh3d(cube.clone()),
-            MeshMaterial3d(neon.clone()),
-            Transform::from_xyz(0.0, 0.012, g).with_scale(Vec3::new(10.0, 0.012, 0.03)),
-        ));
-        commands.spawn((
-            WorldGeometry,
-            Mesh3d(cube.clone()),
-            MeshMaterial3d(neon.clone()),
-            Transform::from_xyz(g, 0.012, 0.0).with_scale(Vec3::new(0.03, 0.012, 10.0)),
-        ));
-        g += 1.0;
-    }
-
-    // Les 2 portails, devant le point d'apparition (le joueur regarde vers -Z).
-    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(-2.6, 1.3, -3.5), (2.5, 0.3, 0.9), Scene::Arcade, "ARCADE");
-    spawn_portal(&mut commands, &cube, &mut materials, Vec3::new(2.6, 1.3, -3.5), (0.2, 1.0, 0.4), Scene::Island, "ÎLE");
-
-    // Lumière douce du hub.
+    // Lumière douce (le glb a des matériaux émissifs, mais ses surfaces mates ont besoin
+    // d'être éclairées) + un peu de directionnel pour le relief.
     commands.spawn((
         WorldGeometry,
-        PointLight {
-            color: Color::srgb(0.9, 0.9, 1.0),
-            intensity: 800_000.0,
-            range: 40.0,
-            shadows_enabled: false,
-            ..default()
-        },
-        Transform::from_xyz(0.0, 4.0, 0.0),
+        PointLight { color: Color::srgb(0.9, 0.9, 1.0), intensity: 900_000.0, range: 60.0, shadows_enabled: false, ..default() },
+        Transform::from_xyz(0.0, 6.0, 8.0),
+    ));
+    commands.spawn((
+        WorldGeometry,
+        DirectionalLight { color: Color::srgb(0.8, 0.85, 1.0), illuminance: 2500.0, shadows_enabled: false, ..default() },
+        Transform::from_xyz(4.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
-/// Un portail = un panneau émissif vertical (couleur distincte) + son volume d'entrée,
-/// + une étiquette UI flottante (son nom) au-dessus.
-#[allow(clippy::too_many_arguments)]
-fn spawn_portal(
-    commands: &mut Commands,
-    cube: &Handle<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    pos: Vec3,
-    color: (f32, f32, f32),
-    target: Scene,
-    name: &str,
+/// LIAISON par NOM des objets du glb (la scène glTF se peuple sur quelques frames, donc on
+/// réessaie chaque frame tant que ce n'est pas fait) :
+///   - `portal arcade` / `portal ile`  → on y greffe un `Portal` (+ une étiquette UI).
+///   - `spawn` (l'Empty)                → on y TÉLÉPORTE le joueur (une fois), face aux portails.
+/// Tolérant : on compare en minuscules par `contains` (« portal arcade », « Portal_Arcade »…).
+pub fn bind_gltf_hub(
+    mut commands: Commands,
+    mut spawn_done: ResMut<HubSpawnDone>,
+    // `Without<Portal>` : on ne (re)lie que les portails PAS ENCORE liés → marche aussi au
+    // RETOUR au hub (la scène glb est ré-instanciée avec de NOUVELLES entités).
+    named: Query<(Entity, &Name, &Transform), Without<Portal>>,
+    mut player: Query<(&mut Transform, &mut Vertical), (With<Player>, Without<Name>)>,
 ) {
-    let glow = materials.add(emissive(color.0 * 2.0, color.1 * 2.0, color.2 * 2.0));
-    // Le panneau lumineux (large, fin), qu'on traverse.
+    for (e, name, tf) in &named {
+        let n = name.as_str().to_lowercase();
+        if n.contains("portal") && n.contains("arcade") {
+            commands.entity(e).insert(Portal { target: Scene::Arcade });
+            spawn_portal_label(&mut commands, e, "ARCADE");
+        } else if n.contains("portal") && (n.contains("ile") || n.contains("island")) {
+            commands.entity(e).insert(Portal { target: Scene::Island });
+            spawn_portal_label(&mut commands, e, "ÎLE");
+        } else if !spawn_done.0 && n == "spawn" {
+            // L'Empty `SPAWN` est un nœud de 1er niveau → son `Transform` local = sa position.
+            // On garde X/Z, on pose le joueur au sol (`GROUND_Y`), face aux portails (+Z).
+            if let Ok((mut pt, mut v)) = player.single_mut() {
+                pt.translation = Vec3::new(tf.translation.x, GROUND_Y, tf.translation.z);
+                pt.rotation = Quat::from_rotation_y(std::f32::consts::PI); // regarde vers +Z
+                v.vy = 0.0;
+                spawn_done.0 = true;
+            }
+        }
+    }
+}
+
+/// Crée l'étiquette UI (texte) d'un portail, liée à son entité (suit sa position 3D).
+fn spawn_portal_label(commands: &mut Commands, portal: Entity, name: &str) {
     commands.spawn((
         WorldGeometry,
-        Portal { target },
-        Mesh3d(cube.clone()),
-        MeshMaterial3d(glow.clone()),
-        Transform::from_translation(pos).with_scale(Vec3::new(1.8, 2.6, 0.12)),
-    ));
-    // Un petit socle au sol, même couleur, pour viser le portail.
-    commands.spawn((
-        WorldGeometry,
-        Mesh3d(cube.clone()),
-        MeshMaterial3d(glow),
-        Transform::from_xyz(pos.x, 0.02, pos.z).with_scale(Vec3::new(2.0, 0.02, 1.4)),
-    ));
-    // Le nom, en texte UI flottant juste au-dessus du panneau.
-    commands.spawn((
-        WorldGeometry,
-        PortalLabel { world: pos + Vec3::Y * 1.7 },
+        PortalLabel { portal },
         Text::new(name),
         TextFont { font_size: 26.0, ..default() },
         TextColor(Color::WHITE),
@@ -165,18 +142,24 @@ fn spawn_portal(
     ));
 }
 
-/// Dans le hub : projette chaque étiquette de portail (sa position monde) sur l'écran
-/// et l'y positionne (cachée si hors champ / derrière la caméra). Même procédé que les
-/// pseudos d'avatars.
+/// Projette chaque étiquette de portail (au-dessus de l'entité liée) sur l'écran.
 pub fn update_portal_labels(
     camera: Query<(&Camera, &GlobalTransform)>,
+    portals: Query<&GlobalTransform, With<Portal>>,
     mut labels: Query<(&PortalLabel, &mut Node, &mut Visibility)>,
 ) {
     let Ok((cam, cam_tf)) = camera.single() else {
         return;
     };
     for (label, mut node, mut vis) in &mut labels {
-        match cam.world_to_viewport(cam_tf, label.world) {
+        let world = match portals.get(label.portal) {
+            Ok(gt) => gt.translation() + Vec3::Y * 1.3,
+            Err(_) => {
+                *vis = Visibility::Hidden;
+                continue;
+            }
+        };
+        match cam.world_to_viewport(cam_tf, world) {
             Ok(screen) => {
                 *vis = Visibility::Visible;
                 node.left = Val::Px(screen.x);
@@ -187,17 +170,17 @@ pub fn update_portal_labels(
     }
 }
 
-/// Dans le hub uniquement : si le joueur entre dans le volume d'un portail, on bascule.
+/// Dans le hub uniquement : si le joueur s'approche assez d'un portail (en X/Z), on bascule.
 pub fn portal_enter(
     player: Query<&Transform, With<Player>>,
-    portals: Query<(&Transform, &Portal)>,
+    portals: Query<(&GlobalTransform, &Portal)>,
     mut next: ResMut<NextState<Scene>>,
 ) {
     let Ok(p) = player.single() else {
         return;
     };
     for (pt, portal) in &portals {
-        if p.translation.xz().distance(pt.translation.xz()) < PORTAL_RADIUS {
+        if p.translation.xz().distance(pt.translation().xz()) < PORTAL_RADIUS {
             next.set(portal.target.clone());
             return;
         }
@@ -340,9 +323,11 @@ pub fn setup_island(
 // ----------------------------------------------------------------------------
 pub fn enter_hub_player(
     mut clear: ResMut<ClearColor>,
+    mut spawn_done: ResMut<HubSpawnDone>,
     q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_DARK;
+    spawn_done.0 = false; // le marqueur `spawn` du glb (re)placera le joueur
     place_player(q, Vec3::new(0.0, GROUND_Y, 2.5));
 }
 pub fn enter_arcade_player(

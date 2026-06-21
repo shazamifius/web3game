@@ -112,22 +112,28 @@ fn main() {
     let my_color = net::random_color();
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Salle arcade — vue première personne".into(),
-            // app-id Wayland (et classe X11) : sert au compositeur (niri) à
-            // reconnaître nos fenêtres, par ex. pour les ouvrir sur un bureau précis.
-            name: Some("web3game".into()),
-            ..default()
-        }),
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "web3game — monde P2P".into(),
+                    // app-id Wayland (et classe X11) : sert au compositeur (niri) à
+                    // reconnaître nos fenêtres, par ex. pour les ouvrir sur un bureau précis.
+                    name: Some("web3game".into()),
+                    ..default()
+                }),
+                ..default()
+            })
+            // Les modèles Blender (.glb) sont dans `asset/` (et non le `assets/` par défaut).
+            .set(bevy::asset::AssetPlugin { file_path: "asset".into(), ..default() }),
+    )
     // Fond sombre violacé (cohérent avec l'ambiance néon).
     .insert_resource(ClearColor(Color::srgb(0.02, 0.01, 0.05)))
     .insert_resource(net::MyColor(my_color.0, my_color.1, my_color.2))
     // Aiguillage de scènes (hub / arcade / île). On démarre dans le hub, sauf si
     // `SCENE=arcade|ile` (auto-test 3D / foule-3d qui veut sauter le hub).
     .insert_state(scenes::initial_scene())
+    .init_resource::<scenes::HubSpawnDone>()
     // Le joueur est créé UNE fois et survit aux changements de scène ; chaque scène
     // est montée/démontée par OnEnter/OnExit et le joueur est téléporté à son spawn.
     .add_systems(Startup, (player::setup_player, player::grab_cursor))
@@ -161,7 +167,9 @@ fn main() {
             player::look_around,
             player::head_bob,
             player::toggle_cursor,
-            // Portails : actifs dans le hub ; retour au hub (H) : actif ailleurs.
+            // Hub : lier les portails/spawn du glb par nom, détecter l'entrée, suivre les
+            // étiquettes. Retour au hub (H) : actif ailleurs.
+            scenes::bind_gltf_hub.run_if(in_state(Scene::Hub)),
             scenes::portal_enter.run_if(in_state(Scene::Hub)),
             scenes::update_portal_labels.run_if(in_state(Scene::Hub)),
             scenes::return_to_hub.run_if(not(in_state(Scene::Hub))),
