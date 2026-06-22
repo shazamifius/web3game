@@ -213,7 +213,20 @@ pub fn net_send(
     //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace
     //    régulièrement les envois au bon rythme pour chacun.
     // 12.3 : drapeau de repli relais, lu UNE fois (cache) — éteint par défaut → chemin intact.
-    let relay = *relay_fallback.get_or_insert_with(relay_fallback_enabled);
+    // On l'ANNONCE au démarrage : sans ça, impossible de savoir si l'env a bien pris dans le process.
+    let relay = match *relay_fallback {
+        Some(v) => v,
+        None => {
+            let on = relay_fallback_enabled();
+            if on {
+                println!("Repli relais NAT : ACTIF (RELAY_FALLBACK=1) — je relaierai via le rendez-vous si le perçage échoue.");
+            } else {
+                println!("Repli relais NAT : inactif — perçage direct seul. (Mets RELAY_FALLBACK=1 pour traverser les NAT symétriques.)");
+            }
+            *relay_fallback = Some(on);
+            on
+        }
+    };
     for ((id, addr), rate) in peers.iter().zip(&rates) {
         // On ne diffuse l'état qu'aux pairs dont le trou NAT est OUVERT : sinon le
         // paquet mourrait dans leur box. Le perçage est fait par `net_punch` ; tant

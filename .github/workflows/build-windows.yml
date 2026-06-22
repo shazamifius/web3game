@@ -31,7 +31,12 @@ jobs:
           # petit lanceur prêt à l'emploi (édite RENDEZVOUS_ADDR puis double-clic)
           @'
           @echo off
-          set RENDEZVOUS_ADDR=METS_ICI_IP:4000
+          rem Mets l'adresse PUBLIQUE du rendez-vous (port externe 24000 par defaut).
+          set RENDEZVOUS_ADDR=METS_ICI_IP:24000
+          rem Repli relais NAT (12.3) : traverse les NAT symetriques quand le percage echoue.
+          set RELAY_FALLBACK=1
+          rem Doit etre IDENTIQUE entre les deux joueurs (sinon invisibilite asymetrique).
+          set POW_BITS=18
           jeu.exe a
           pause
           '@ | Out-File -Encoding ascii dist/LANCER_joueur_a.bat
