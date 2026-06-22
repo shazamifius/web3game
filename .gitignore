@@ -2,3 +2,6 @@
 /graphify-out
 # Tampon de sortie de simu/tests collé par l'utilisateur (voir flux ch.7) — jamais versionné.
 result.md
+# Reprise PRIVÉE : infra (IP maison/mobile, serveur, repo de logs), récap de session et
+# chantier en cours. Contient des infos sensibles → JAMAIS poussé.
+REPRISE-PRIVEE.md
