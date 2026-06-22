@@ -212,6 +212,15 @@ pub(crate) fn signed_samples_mode() -> bool {
     *S.get_or_init(|| matches!(std::env::var("SIGNED_SAMPLES").as_deref(), Ok("1") | Ok("true")))
 }
 
+/// AUTO-PEUPLEMENT DU PLANCHER (chap. 8.3★ C-sécu-2 ÉTAPE 6 / 6-B) : sous `SIGNED_SAMPLES`, le plancher
+/// vérifié compte AUSSI les états signés DÉTENUS en propre (`signed_states`), pas seulement les preuves de
+/// trailer — à coût wire NUL, même sécurité (cf. `floor_counts_by_cell`). **Activé par DÉFAUT** quand
+/// `SIGNED_SAMPLES` est mis ; `SELFPOP=0` le désactive pour ISOLER l'étape-4 (trailers seuls) en mesure.
+pub(crate) fn floor_selfpop_mode() -> bool {
+    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *S.get_or_init(|| !matches!(std::env::var("SELFPOP").as_deref(), Ok("0") | Ok("false")))
+}
+
 /// Le Q-ième plus grand d'une liste de counts (chap. 8.3★ C-sécu) — l'estimateur de densité robuste à
 /// l'inflation : il faut Q sources DISTINCTES pour porter une valeur jusqu'à ce rang. PUR → testable
 /// unitairement. Si moins de Q valeurs disponibles → CONSERVATEUR (on renvoie la plus PETITE qu'on a =
@@ -665,6 +674,41 @@ impl NetLink {
         true
     }
 
+    /// C-sécu-2 ÉTAPE 6 (6-B) : nombre d'IDs auto-vérifiés PAR CELLULE pour le plancher d'union, en
+    /// FUSIONNANT deux sources d'états SIGNÉS **à coût wire NUL** : (i) les preuves arrivées dans les
+    /// trailers v2 (`verified_proofs`) et (ii) les états signés qu'on DÉTIENT déjà en propre
+    /// (`signed_states`, peuplé après `sig_ok` sous `SIGNED_SAMPLES`). Les seconds sont les preuves
+    /// « gratuites » qu'on avait sous la main sans les compter : chacun porte la position auto-déclarée
+    /// de la personne → sa cellule, scellée par elle-même (sécurité ≥ trailers, zéro tiers à truster).
+    ///
+    /// FRAÎCHEUR : à id égal entre les deux sources, le `seq` le plus grand fixe la cellule → une
+    /// personne n'est JAMAIS comptée dans deux cellules (pas de double-compte par état périmé). PUR :
+    /// `decode_canonical` ne fait que parser (aucune crypto ; les `signed_states` sont DÉJÀ vérifiés à
+    /// la réception) → testable sans horloge ni réseau, comme `proofs_for`/`verify_proof`.
+    /// `with_selfpop=false` n'utilise QUE `verified_proofs` (= comportement étape-4, trailers seuls) :
+    /// sert à ISOLER l'apport de 6-B en mesure (drapeau `SELFPOP=0`, lu au site d'appel pour rester PUR).
+    fn floor_counts_by_cell(&self, with_selfpop: bool) -> HashMap<(i32, i32), u32> {
+        // id → (seq le plus frais vu, cellule de la position auto-déclarée à ce seq).
+        let mut best: HashMap<PeerId, (u64, (i32, i32))> = self.verified_proofs.clone();
+        if with_selfpop {
+            for (id, bytes) in &self.signed_states {
+                if let Some(p) = decode_canonical(bytes) {
+                    match best.get(id) {
+                        Some(&(seen_seq, _)) if seen_seq >= p.seq => {} // déjà aussi frais (ou +) → on garde
+                        _ => {
+                            best.insert(*id, (p.seq, cell_of(p.x, p.z)));
+                        }
+                    }
+                }
+            }
+        }
+        let mut by_cell: HashMap<(i32, i32), u32> = HashMap::new();
+        for &(_seq, cell) in best.values() {
+            *by_cell.entry(cell).or_default() += 1;
+        }
+        by_cell
+    }
+
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
     /// Le focus = les pairs à qui on tient un lien plein débit ; on le STABILISE :
     ///   1. on retire les membres qui ont quitté la table ;
@@ -932,12 +976,13 @@ impl NetLink {
                 }
             }
             // Plancher vérifié : nombre d'IDs auto-vérifiés dont la position ∈ chaque cellule.
-            let mut verified_by_cell: HashMap<(i32, i32), u32> = HashMap::new();
-            if floor && signed {
-                for &(_seq, cell) in self.verified_proofs.values() {
-                    *verified_by_cell.entry(cell).or_default() += 1;
-                }
-            }
+            // ÉTAPE 6 (6-B) : on FUSIONNE les preuves de trailer ET les états signés DÉTENUS en propre
+            // (`signed_states`) — à coût wire NUL, même sécurité (états auto-signés vérifiés). `floor_counts_by_cell`.
+            let verified_by_cell: HashMap<(i32, i32), u32> = if floor && signed {
+                self.floor_counts_by_cell(floor_selfpop_mode())
+            } else {
+                HashMap::new()
+            };
             counts_by_cell
                 .into_iter()
                 .map(|(cell, counts)| {
@@ -1254,6 +1299,42 @@ mod tests {
         assert!(link.verify_proof(&etat_signe(&alice, 300.0, 300.0, 6)));
         assert_eq!(link.verified_proofs.len(), 1);
         assert_eq!(link.verified_proofs[&alice.id()].1, cell_of(300.0, 300.0));
+    }
+
+    /// C-sécu-2 ÉTAPE 6 (6-B) : le plancher AUTO-PEUPLÉ compte les états signés qu'on DÉTIENT
+    /// (`signed_states`) PAR CELLULE — preuves « gratuites », coût wire NUL — en FUSION avec les
+    /// preuves de trailer, SANS double-compter un id présent dans les deux, et en suivant la cellule
+    /// du `seq` le plus FRAIS. (La sécurité est portée par `verify_proof` : `signed_states` n'est
+    /// peuplé qu'après `sig_ok`, donc un état forgé n'y entre jamais — cf. red-team inversé.)
+    #[test]
+    fn floor_auto_peuple_depuis_signed_states_fusion_dedup_fraicheur() {
+        let mut link = link_de_test();
+        let c00 = cell_of(1.0, 1.0); // (0,0)
+        let cloin = cell_of(300.0, 300.0);
+
+        // 3 pairs dont on DÉTIENT l'état signé ; aucune preuve de trailer encore.
+        let a = Identity::generate();
+        let b = Identity::generate();
+        let d = Identity::generate();
+        link.signed_states.insert(a.id(), etat_signe(&a, 1.0, 1.0, 1)); // (0,0)
+        link.signed_states.insert(b.id(), etat_signe(&b, 2.0, 2.0, 1)); // (0,0)
+        link.signed_states.insert(d.id(), etat_signe(&d, 300.0, 300.0, 1)); // lointaine
+        // Sans UN SEUL octet de trailer, le plancher voit déjà 2 personnes en (0,0) et 1 au loin.
+        let by = link.floor_counts_by_cell(true);
+        assert_eq!(by.get(&c00).copied().unwrap_or(0), 2);
+        assert_eq!(by.get(&cloin).copied().unwrap_or(0), 1);
+
+        // DÉDUP : 'a' arrive AUSSI comme preuve de trailer (même cellule) → toujours compté UNE fois.
+        assert!(link.verify_proof(&etat_signe(&a, 1.0, 1.0, 1)));
+        let by = link.floor_counts_by_cell(true);
+        assert_eq!(by.get(&c00).copied().unwrap_or(0), 2); // a + b, PAS 3
+
+        // FRAÎCHEUR : une preuve de trailer plus FRAÎCHE déplace 'b' au loin → il quitte (0,0),
+        // une seule personne 'b' (pas un fantôme resté en (0,0)).
+        assert!(link.verify_proof(&etat_signe(&b, 300.0, 300.0, 9)));
+        let by = link.floor_counts_by_cell(true);
+        assert_eq!(by.get(&c00).copied().unwrap_or(0), 1); // seul 'a' reste en (0,0)
+        assert_eq!(by.get(&cloin).copied().unwrap_or(0), 2); // b (frais) + d
     }
 
     /// 8.3a — l'élection d'hôte de cellule : plus petit id parmi les occupants connus de la

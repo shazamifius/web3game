@@ -92,13 +92,17 @@
 >     verbatim + trailer de preuves HORS corps signé ; PAS de bump `PROTO_VERSION` = nouveau KIND → défaut byte-intact) ;
 >     ét.3 = émission+réception v2 (mon propre claim joint `K_PROOF=4` preuves tournantes) ;
 >     ét.4 = ingestion VÉRIFIANTE (`verify_proof` : sceau + cache `(id,seq)` ; plancher = Σ |IDs vérifiés ∈ cellule|
->     sous `SIGNED_SAMPLES`, sinon 1b intact) ; **ét.5 = re-mesure N=1000/130 s head-to-head**. **89 tests, 0 warning.**
->     ✅ **Inflation FERMÉE** (red-team inversé unitaire **50, pas 66**) **à débit quasi-GRATUIT** (+0,7 % vs 1b, ≪ +30 %),
->     CPU non visible. ⚠ **MAIS récup à 130 s** = 705 vs 1b 756 (**−6,7 %**) : un LAG de CONVERGENCE (l'écart FOND :
->     −130→−91→−69→−51), pas un plafond ; les deux plafonnés par la découverte (mur n°2, ~850 connus). *(NB : le « 87 % »
->     1b @1000 ne se re-mesure pas dans ce harnais POW8 → ne plus le citer ; référence = le 1b re-mesuré côte à côte.)*
->     **DÉCISION (utilisateur) :** REPLI débit pas déclenché → 29 % de marge → **ét.6 = régler `K_PROOF` en touchant au MTU**
->     (preuve par RÉFÉRENCE `(id,seq)` au lieu d'inline 182 o → ~4× plus de couverture/émission). **→ PROCHAINE ACTION.**
+>     sous `SIGNED_SAMPLES`, sinon 1b intact) ; ét.5 = re-mesure N=1000/130 s ; **ét.6 = FERMER le lag (FAIT 22 juin).**
+>     ✅ **Inflation FERMÉE** (red-team inversé unitaire **50, pas 66**) **à débit quasi-GRATUIT**, CPU non visible.
+>     ✅ **ÉTAPE 6 FAITE (22 juin) — C-sécu-2 BOUCLÉ. 90 tests, 0 warning.** Au lieu de l'option 3 (trailer par
+>     RÉFÉRENCE, risquée), une observation du code a ouvert **6-B = AUTO-PEUPLEMENT du plancher depuis `signed_states`
+>     (états signés DÉJÀ détenus, comptés par leur cellule auto-déclarée) — COÛT WIRE NUL.** Mesure head-to-head
+>     N=1000/130 s (`POW_BITS=8`, `SELFPOP=0` isole l'étape-4) : **perception 781 vs étape-4 709 (+10,2 %) et vs 1b 746
+>     (+4,7 %, e6 PASSE DEVANT 1b dès ~t=55 s)**, **débit +0,9 % (zéro octet ajouté)**, red-team **50** (sécu préservée
+>     PAR CONSTRUCTION : `signed_states` n'a que du `sig_ok`). e6 > 1b = fidélité supérieure (compte TOUS les états signés
+>     détenus d'une cellule, pas ≤16 sample-ids gonflables), PAS de l'inflation. ⚠ Dettes mineures : (i) CPU +6 % mural
+>     (décodage `signed_states` sur le chemin métrique → mémoïser si ça pèse sur le frame du vrai jeu) ; (ii) un red-team
+>     bout-en-bout via l'auto-peuplement durcirait la preuve. **Détail + tableau : `PLAN_AUTONOME.md` § PAPIER ÉTAPE 6.**
 >   - *Caveat permanent : `qth`/plancher prouvés en LOGIQUE + récupération headless ; l'anti-inflation /24 RÉEL
 >     attend le harnais NAT (vraies IP, réutilise 9.4b). Détail : §D, blocs « REDESIGN 8.3★ » + « ÉTAPE C-sécu » ;
 >     papier complet : `PLAN_AUTONOME.md` § PAPIER C-sécu-2.*
@@ -123,9 +127,23 @@
 > - **PAS « vraiment sans serveur »** : l'amorçage passe encore par un rendez-vous (borné, démoté à l'amorçage — D10).
 > - **PAS « confidentiel »** : positions en CLAIR pour l'instant (chiffrement = ch.10.2, pas fait).
 >
-> **PROCHAINE ACTION = C-sécu-2 ÉTAPE 6 (régler `K_PROOF` via le MTU : preuve par RÉFÉRENCE), en session FOCALISÉE.**
-> *Étapes 1-5 faites (wire v2 + ingestion vérifiante + re-mesure N=1000). L'inflation est FERMÉE à débit quasi-gratuit ;
-> reste à fermer le LAG de convergence (récup 705 vs 1b 756 à 130 s) en couvrant plus d'occupants/émission dans la marge.*
+> **✅ C-sécu-2 BOUCLÉ (22 juin, étapes 1→6).** Le plancher est désormais à la fois ANTI-INFLATION (red-team 50) ET
+> de meilleure fidélité que l'ancien 1b gonflable (781 vs 746 @1000), à coût wire nul. Lag de convergence fermé.
+>
+> **PLAN D'ACTION — REPRISE (par ordre conseillé ; aucune urgence, 55K = boussole) :**
+> 1. **[sécu, le vrai trou restant] Anti-inflation /24 RÉEL via le harnais NAT.** Tout C-sécu n'est prouvé qu'en LOGIQUE
+>    + récup headless sur bus PARFAIT. La borne anti-Sybil par sous-réseau /24 (rareté de l'IP) n'est PAS testée sur de
+>    vraies IP → réutiliser le harnais namespaces de 9.4b. C'est la dette honnête à fermer avant de dire « densité
+>    sécurisée prouvée ».
+> 2. **[durcissement mineur] Red-team bout-en-bout via l'auto-peuplement 6-B** (aujourd'hui : unitaire + raisonnement
+>    de construction) + mémoïser `floor_counts_by_cell` si le décodage pèse sur le frame du vrai jeu (dette CPU +6 % banc).
+> 3. **[fraîcheur] Mesurer en direct l'ÂGE de perception d'un lointain** (mesure « trop gentille » (b) non close).
+> 4. **[présentation] SWITCH UNREAL via SIDECAR (B)** — décidé le 22 juin, cf. bloc 🎮 plus haut. Le cœur réseau Rust
+>    (intouchable) devient un démon ; Unreal = client mince sur socket local. Étapes : extraire crate `web3core` →
+>    contrat d'interface minimal (poll avatars / push ma position / état orbe) → rebâtir hub/portails/arcade/île/avatars.
+>
+> **PROCHAINE ACTION CONCRÈTE = (1) harnais NAT pour le /24 réel**, en session FOCALISÉE. *(Le switch Unreal vient après
+> le durcissement réseau — ordre voulu par l'utilisateur, cf. décision moteur de présentation.)*
 >
 > ⚡ **PIÈGE DE BANC À RETENIR (sinon on perd 1 h) :** le minage PoW coûte **~3 s à N=1000 sous `POW_BITS=8`** mais
 > **~50 min au défaut 18 bits** (≈3 s/identité × 1000). TOUJOURS lancer les bancs `coopsim-bus N≥1000` avec `POW_BITS=8`

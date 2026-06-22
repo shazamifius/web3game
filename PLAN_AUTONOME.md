@@ -576,3 +576,78 @@ vérifiés, cache `(id, seq)` ; (4) re-mesurer débit/CPU/récup à 1000/2000 ; 
   de débit pour fermer le lag de convergence. Piste = option 3 du papier (preuve par RÉFÉRENCE `(id,seq)` ~40 o au lieu
   de 182 o inline ; le receveur retrouve le sceau qu'il DÉTIENT déjà en `signed_states`, ne compte que les références
   résolues+vérifiées) → ~4× plus d'occupants couverts/émission au MÊME wire. Re-mesure N=1000. **Voir papier étape 6.**
+
+---
+
+## 📄 PAPIER ÉTAPE 6 — fermer le lag de convergence (écrit le 22 juin, AVANT de coder)
+
+> **CONTEXTE (issu de l'étape 5).** L'inflation est FERMÉE (red-team 50) à débit quasi-gratuit (+0,7 %), mais la
+> récupération à 130 s traîne (705 vs 1b 756 = −6,7 %) : un **LAG de convergence**, pas un plafond plus bas. Le
+> plancher vérifié ne compte que `verified_proofs` (preuves arrivées dans les trailers v2), alimenté par une rotation
+> LENTE `K_PROOF=4`. La marge débit (+29 %) est inutilisée. Objectif étape 6 : **remonter le plancher plus vite**.
+
+**🔎 OBSERVATION QUI CHANGE LE PLAN (lecture de `link.rs:911-958`, 22 juin).** Le plancher vérifié, par cellule
+résumée, = `|verified_proofs dont la position ∈ cellule|`. Or `verified_proofs` n'est peuplé QUE par `verify_proof`
+(trailers v2). **MAIS** chaque nœud DÉTIENT déjà, dans `signed_states`, le dernier état **signé et vérifié** de
+TOUS les pairs qu'il a entendus (peuplé par `remember_signed_state`, après `sig_ok`, sous `SIGNED_SAMPLES`). Chacun
+porte la **position auto-déclarée** de la personne → sa cellule. **Les compter au plancher est exactement aussi sûr
+que les preuves de trailer** (même sceau, signé par la personne elle-même ; un agrégateur menteur n'y peut rien) —
+et coûte **ZÉRO octet wire**. Ce sont les preuves « gratuites » qu'on a sous la main et qu'on n'exploitait pas.
+
+**LES DEUX CANDIDATES (chiffrées, on tente la moins chère/risquée d'abord, la mesure tranche) :**
+
+- **6-B — AUTO-PEUPLEMENT DU PLANCHER (coût wire = 0, recommandé en PREMIER).** Au calcul du plancher (`summary_perceived`,
+  sous `SIGNED_SAMPLES`), construire `verified_by_cell` comme l'**UNION par cellule** de DEUX sources : (i) `verified_proofs`
+  (trailers, inchangé) ET (ii) les `signed_states` détenus, décodés en `(id → cellule de sa position auto-déclarée)`.
+  Dédupliqué par id (un `HashSet<PeerId>` par cellule) → **pas de double-compte** si un id est dans les deux. Ne contribue
+  qu'aux cellules que je RÉSUME déjà (la boucle itère sur `counts_by_cell`). **Sécurité : ≥ trailers** (états auto-signés
+  que J'AI vérifiés moi-même, zéro confiance en un tiers) → red-team reste à 50. **Aucun changement de wire, aucun nouveau
+  KIND, aucune contrainte MTU.** *Limite honnête :* ne remonte QUE les cellules dont je détiens des états (proches / bien
+  diffusées). Une foule LOINTAINE dont je n'ai aucun état direct reste tributaire des trailers → si le lag à N=1000 vient
+  surtout de cellules lointaines, 6-B ne le ferme pas seul → repli 6-A.
+
+- **6-A — TRAILER PAR RÉFÉRENCE (option 3 du papier C-sécu-2, repli si 6-B insuffisant).** Porter `(id, seq)` ~40 o au
+  lieu de l'inline 182 o ; le receveur résout contre `signed_states` (sceau qu'il détient), n'inline la preuve complète
+  que pour ce qu'il NE détient pas. ~4× plus de couverture/émission au même MTU, utile pour les cellules lointaines.
+  Plus complexe (wire), donc **2e temps, seulement si la mesure de 6-B le réclame.**
+
+**CRITÈRE PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT de coder).** 6-B est VALIDÉ si, à N=1000/130 s, head-to-head même
+harnais `POW_BITS=8`, sous `SIGNED_SAMPLES=1` (défaut byte-intact intact) : (a) **récupération ≥ étape-4 (705)**, et
+on VISE de combler vers le 1b re-mesuré côte à côte (756) ; (b) **red-team reste 50** (test unitaire inversé inchangé) ;
+(c) débit **≤ +5 %** vs étape-4 (on n'ajoute aucun octet → on s'attend à **≈ 0 %** ; tout écart = bruit de banc) ;
+(d) CPU non visible (le décodage de `signed_states` est du parsing, pas de la crypto — `decode_canonical` ne signe rien).
+**Si 6-B ne franchit pas (a)** → on documente que le lag est dominé par les cellules lointaines et on passe à 6-A.
+**Si 6-B régresse la sécurité d'un iota** → on REPLIE (ne jamais troquer l'anti-inflation contre de la vitesse).
+
+**ÉTAPES DE CODE (petits pas, derrière `SIGNED_SAMPLES`, défaut byte-intact) :** (1) helper PUR
+`floor_ids_by_cell(&self) -> HashMap<cell, HashSet<PeerId>>` qui fusionne `verified_proofs` + `signed_states` décodés ;
+(2) brancher `summary_perceived` dessus sous `signed` ; (3) test unitaire (auto-peuplement compte les états détenus par
+cellule, dédup avec les trailers, un état non vérifié n'entre jamais — il n'est jamais dans `signed_states`) ;
+(4) re-mesure N=1000/130 s ; (5) verdict + maj §0.
+
+**PROGRÈS (22 juin) — 6-B FAIT, critère FRANCHI (dépasse même la cible) :**
+- ✅ **Code 6-B** (`link.rs`, 90 tests, 0 warning, défaut byte-intact) : helper PUR `floor_counts_by_cell(with_selfpop)`
+  qui FUSIONNE `verified_proofs` (trailers) + `signed_states` DÉTENUS (décodés en `id → cellule auto-déclarée`),
+  dédupliqués par id, le `seq` le plus frais fixant la cellule (jamais 2 cellules pour une personne). Branché dans
+  `summary_perceived` sous `SIGNED_SAMPLES` ; drapeau `SELFPOP=0` pour ISOLER l'étape-4 en mesure. **Coût wire = 0.**
+- ✅ **Sécurité préservée PAR CONSTRUCTION** : `signed_states` n'est peuplé qu'après `sig_ok` (`remember_signed_state`)
+  → un état forgé n'y entre jamais → l'auto-peuplement ne peut pas ré-ouvrir l'inflation. Red-team inversé reste **50**
+  (test unitaire `verify_proof_ferme…` intact). ⚠ Dette mineure : un red-team bout-en-bout PASSANT par l'auto-peuplement
+  durcirait encore la preuve (aujourd'hui : unitaire + raisonnement de construction).
+- ✅ **MESURE head-to-head N=1000/130 s, `POW_BITS=8`, même harnais (3 runs, 22 min mural chacun) :**
+  | Perception moy @130 s | Débit ↓ | Pairs connus |
+  |---|---|---|
+  | **1b** (plancher gonflable) : 746 | 55,7 Ko/s | 837,7 |
+  | **étape-4** (vérifié, trailers seuls, `SELFPOP=0`) : 709 | 55,9 Ko/s | 843,6 |
+  | **étape-6** (6-B, trailers + auto-peuplement) : **781** | 56,4 Ko/s (**+0,9 %**) | 847,7 |
+  - **VERDICT :** (a) récup ≥ étape-4 ✅✅ **+72 (+10,2 %)**, et **+35 (+4,7 %) AU-DESSUS de 1b** (croisement ~t=55 s,
+    puis e6 reste devant) ; (b) red-team 50 ✅ ; (c) débit ≤ +5 % ✅ **+0,9 %** (zéro octet ajouté → bruit) ;
+    (d) CPU : +6 % mural (1320 s → 1406 s) — le décodage des `signed_states` sur le chemin MÉTRIQUE (`summary_perceived`),
+    parsing pas crypto. Acceptable au banc ; **dette : mémoïser/incrémentaliser si ça pèse sur le budget-frame du vrai jeu.**
+  - **POURQUOI e6 > 1b (et pourquoi ce n'est PAS de l'inflation) :** le plancher 1b plafonne aux ≤16 sample-ids d'un
+    résumé (et reste gonflable) ; 6-B compte TOUS les états signés détenus d'une cellule, chacun scellé par la personne
+    → plus de couverture RÉELLE et incheatable. Fidélité supérieure, pas gonflage.
+  - **CONSÉQUENCE PLAN :** l'option 3 (trailer par RÉFÉRENCE, 6-A) devient **INUTILE** ici — le lag est fermé à coût
+    wire nul. On garde 6-A documentée en repli théorique pour les cellules LOINTAINES sans état détenu (régime non
+    dominant à N=1000 où on connaît ~848/1000). ⚠ Caveat permanent inchangé : le /24 anti-inflation RÉEL attend le
+    harnais NAT (vraies IP, 9.4b).

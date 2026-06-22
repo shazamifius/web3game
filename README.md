@@ -64,7 +64,7 @@ sans rien arrondir. Le détail vit dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE
 - **« Sans serveur » a un astérisque** : l'amorçage passe encore par un _rendez-vous_ (tout le reste est P2P).
 - **Positions en clair** : le chiffrement bout-à-bout n'est pas encore là.
 - **NAT symétrique non géré** : le hole-punching marche pour les NAT full-cone ; le symétrique demandera un relais.
-- **Perception corroborée : sûre contre l'_omission_, pas encore contre l'_inflation_** (un menteur seul peut sur-déclarer une poignée de présences ; la fermeture est identifiée et mesurée par un test).
+- **Perception corroborée : l'_inflation_ est fermée en _logique / headless_, mais pas encore prouvée sur de vraies IP.** Chaque présence comptée doit désormais être auto-signée par la personne elle-même (un menteur ne peut plus forger les autres ; vérifié par un test « red-team » inversé). La borne anti-Sybil par sous-réseau (/24) reste à éprouver sur un vrai réseau (harnais NAT).
 
 **🚧 Le prochain gros chantier :** l'inclusivité — pouvoir jouer même sur un lien réseau pauvre.
 
