@@ -92,7 +92,14 @@ fn relay_decision(
     if !sig_ok(&inner) {
         return None; // sceau interne invalide → on ne recopie pas du bruit
     }
-    let addr = clients.iter().find(|(_, info)| info.id == dest).map(|(a, _)| *a)?;
+    // RECONNEXION (bug trouvé le 22 juin) : à la reconnexion, un même id a 2 entrées (ancienne adresse
+    // pas encore évincée + nouvelle) → on doit router vers la PLUS RÉCENTE (`seen` max), sinon on relaie
+    // vers l'ancienne adresse MORTE et le pair ne reçoit rien pendant ~5 s.
+    let addr = clients
+        .iter()
+        .filter(|(_, info)| info.id == dest)
+        .max_by_key(|(_, info)| info.seen)
+        .map(|(a, _)| *a)?;
     Some((addr, inner))
 }
 
@@ -242,6 +249,10 @@ pub fn run_rendezvous() {
             let keep = now.duration_since(info.seen) < Duration::from_secs(5);
             if !keep {
                 println!("Joueur {} parti ({addr}).", info.id.short());
+                // 12.3 (diag) : on oublie ses paires de relais → s'il se reconnecte, le ré-établissement
+                // sera de nouveau LOGGÉ (« 🔀 RELAIS établi ») → on VOIT les reconnexions, plus de devinette.
+                let gone = info.id;
+                relayed_pairs.retain(|(s, d)| *s != gone && *d != gone);
             }
             keep
         });
