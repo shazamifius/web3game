@@ -265,6 +265,12 @@ pub fn net_receive(
         if !keep {
             commands.entity(player.body).despawn();
             println!("Joueur {} parti.", id.short());
+            // RECONNEXION (bug trouvé EN RÉEL le 22 juin, via le log serveur) : on oublie AUSSI sa
+            // fenêtre anti-rejeu. Un pair qui se reconnecte est un NOUVEAU process → son `seq` repart
+            // de zéro ; sans ça, on garde son ancien `seq` élevé et on rejette tous ses nouveaux
+            // paquets comme « trop vieux » → il reste INVISIBLE pour toujours (les octets arrivent
+            // pourtant — le relais marche). Oublier la fenêtre = il repart propre à la reconnexion.
+            link.replay.remove(id);
         }
         keep
     });

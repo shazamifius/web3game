@@ -1604,6 +1604,22 @@ mod tests {
         assert!(link.accept_seq(a, 180)); // 200 − 180 = 20 < 64, jamais vu → accepté
     }
 
+    /// RECONNEXION (bug réel du 22 juin) : un pair qui se reconnecte est un nouveau process → son
+    /// `seq` repart bas. Tant qu'on garde son ancienne fenêtre (top élevé), ses paquets sont rejetés
+    /// « trop vieux » → invisible. À l'expiration de l'avatar on OUBLIE sa fenêtre (`replay.remove`) →
+    /// le pair reconnecté repart propre. Ce test prouve la récupération au niveau du `replay`.
+    #[test]
+    fn reconnexion_oubliee_repart_propre() {
+        let mut link = link_de_test();
+        let a = pid(9);
+        assert!(link.accept_seq(a, 100)); // session 1 : seq monte haut
+        assert!(link.accept_seq(a, 101));
+        assert!(!link.accept_seq(a, 1)); // un seq bas serait « trop vieux » → REJETÉ (le bug)
+        link.replay.remove(&a); // l'avatar a expiré → on oublie sa fenêtre (ce que fait net_receive)
+        assert!(link.accept_seq(a, 1)); // session 2 (reconnexion) : seq repart bas → ACCEPTÉ à neuf
+        assert!(link.accept_seq(a, 2)); // et la nouvelle session reprend normalement
+    }
+
     /// RÉPUTATION : au bout de MAX_STRIKES fautes, le pair passe en sourdine.
     #[test]
     fn mute_apres_max_strikes() {
