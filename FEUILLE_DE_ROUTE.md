@@ -1593,6 +1593,70 @@ cohérente par tous les nœuds.
 > 4. **Preuve réelle** A (mobile) ↔ B : ils se voient bouger + fraîcheur (b) chiffrée en ms.
 > *Ferme D17 en v1 (repli centralisé) ; v2 décentralisé (D4) reste un chantier ultérieur.*
 
+> ### ⚙ PAPIER-WIRE 12.3 — le format exact + le seuil de fraîcheur — écrit le 22 juin 2026 (PAPIER, zéro code)
+> *Étape 1 du PAPIER 12.3. On fige le format AVANT de coder. Lu dans le vrai code : `wire.rs` (les
+> `KIND_*`, dernier = 10), `message.rs` (état scellé 182 o = `SIGNED_STATE_SIZE`, `mark_as_relay` ne
+> change QUE le 1er octet), `rendezvous.rs` (présentateur pur : HELLO→WELCOME, ne relaie RIEN
+> aujourd'hui), `receive.rs` (`KIND_RELAY` existant = relais BROADCAST « upload faible », fanout 12).*
+>
+> **CONSTAT QUI DÉCIDE LE FORMAT.** Le `KIND_RELAY` existant ne convient PAS au cas D17 : il est
+> *broadcast* (le parent recopie l'état à TOUS ses voisins) et *sans destinataire* (le paquet ne porte
+> que l'id de l'ÉMETTEUR). Le cas NAT est *unicast* : A veut joindre **B précisément**, via le seul
+> point public commun (le rendez-vous, v1). Il faut donc **porter le destinataire** dans le paquet et
+> apprendre au rendez-vous à **router** (il ne sait aujourd'hui que présenter). → nouveau KIND dédié.
+>
+> **LE FORMAT (figé) — `KIND_RELAY_FWD = 11` (prochain libre après 10) :** une simple ENVELOPPE de
+> routage autour de l'état déjà scellé. On ne re-signe rien (on réutilise le sceau bout-en-bout).
+> ```
+> [0]                     KIND_RELAY_FWD (11)
+> [1]                     PROTO_VERSION
+> [2..34]                 dest_id : clé publique du DESTINATAIRE (B). ROUTAGE seul, NON signé.
+> [34..216]               l'état KIND_STATE SCELLÉ de l'émetteur (A), VERBATIM (182 o = SIGNED_STATE_SIZE)
+> ```
+> Taille = 2 + 32 + 182 = **216 o**. Le rendez-vous (en mode relais) : lit `dest_id`, retrouve l'adresse
+> de B dans sa table de clients récents (reverse-lookup id→addr), **vérifie le sceau interne** (`sig_ok`
+> — refuse de relayer du bruit = anti-amplification), puis renvoie les **182 o internes tels quels** (ils
+> sont DÉJÀ en forme `KIND_STATE`) à l'adresse de B. B reçoit un `KIND_STATE` normal, vérifie le sceau,
+> voit A bouger. **Symétrique :** B fait pareil (dest=A) → relais bidirectionnel, un `KIND_RELAY_FWD` par
+> sens. **Fanout = 1** (unicast) → strictement plus sûr que le `KIND_RELAY` broadcast (ratio ≤ 1, jamais
+> amplificateur). Bornes réutilisées : rate-limit par source (déjà là) + budget relais façon
+> `RELAY_RATE`/`CAP` ; dest doit être un **client récent** (vu < 5 s). *Sécu : le rendez-vous-relais ne
+> peut que PORTER des octets signés, jamais forger — exactement la propriété de `mark_as_relay`.*
+>
+> **DEUX DRAPEAUX, PAR DÉFAUT À ZÉRO (le défaut reste byte-pour-byte intact).**
+> - Côté rendez-vous : `RENDEZVOUS_RELAY=1`. Éteint → présentateur pur, « tuable », ne route rien (état
+>   actuel inchangé). Allumé → comprend `KIND_RELAY_FWD`.
+> - Côté client : `RELAY_FALLBACK=1`. Éteint → `punch_abandoned` reste un **no-op** (comportement
+>   actuel exact). Allumé → quand le perçage est abandonné vers un pair, on emballe notre état scellé en
+>   `KIND_RELAY_FWD(dest=ce pair)` et on l'envoie à l'adresse du rendez-vous. *Le hook est déjà là :
+>   `punch_abandoned(tries)` dans `punch.rs`.*
+>
+> **LE SEUIL DE FRAÎCHEUR (b) — pré-enregistré, mais l'arbitre final c'est TON flair.** Mesurer l'âge
+> *unidirectionnel* vrai exigerait des horloges synchronisées (hors scope, reporté). On mesure donc le
+> **RTT relayé** avec l'horloge LOCALE de A seule : A envoie un petit ping relayé horodaté (son temps
+> local), B le réfléchit via le relais, A calcule le RTT. Fraîcheur ≈ RTT/2. *(Instrument de MESURE de
+> l'expérience, derrière le même drapeau — pas du protocole de jeu.)* Seuils pré-enregistrés, pour une
+> présence SOCIALE (pas un FPS compétitif) :
+> - **PASS** : les avatars bougent visiblement via relais ET RTT relayé médian **< 150 ms**.
+> - **DÉGRADÉ** : 150–250 ms (jouable mais mou).
+> - **FAIL** : pas de mouvement relayé, ou RTT **> 250 ms**.
+> *Ces nombres sont une HYPOTHÈSE d'ingénieur. Le vrai juge de « est-ce acceptable », c'est toi qui
+> regardes l'écran : est-ce que ça FEEL vivant ? Ton ressenti tranche, pas le chiffre.*
+>
+> **MES DOUTES (transparence, pas devoirs — à flairer) :**
+> - `dest_id` non signé : si on le falsifie, l'état (toujours scellé, infalsifiable) de A part juste vers
+>   le MAUVAIS pair, qui vérifie le sceau et affiche A. Pas de forge d'état possible ; fanout 1 ;
+>   rate-limité ; dest doit être un client récent. Pire abus = se servir du rendez-vous comme réflecteur
+>   1:1 entre deux clients déjà inscrits → borné (ratio ≤ 1, pas un amplificateur). **Jugé acceptable.**
+> - Centralisation : le rendez-vous-relais reporte du trafic de JEU → c'est un serveur à nouveau. Assumé
+>   en v1 **parce que REPLI** (hors chemin par défaut). À décentraliser en v2 (bute sur D4).
+> - Le confound hairpin (B même box que le serveur) reste NON mesuré → **étape 0 d'abord** (mesure propre
+>   B-ailleurs) pour savoir si le repli sert une minorité ou (presque) tout le monde.
+>
+> **Reste à faire, dans l'ordre (cadence intouchable) :** étape 0 (mesure propre, ~0 code, matériel à
+> monter par toi) → puis code du repli derrière les 2 drapeaux, compile → test → preuve headless → commit
+> → push → preuve réelle A(mobile)↔B avec RTT chiffré.
+
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
 chiffrement (10.2) et de l'inclusivité (ch. 8 — la voix s'adapte au lien).
