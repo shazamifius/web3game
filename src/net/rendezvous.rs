@@ -11,7 +11,7 @@
 use super::aoi::{dist2, keep_nearest, within_radius, MAX_NEIGHBORS};
 use super::control::{decode_hello, encode_welcome};
 use super::crypto::{PeerId, pow_bits};
-use super::message::{decode_relay_fwd, sig_ok, SIGNED_STATE_SIZE};
+use super::message::decode_relay_fwd;
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::{kind, KIND_RELAY_FWD, RENDEZVOUS_PORT};
@@ -80,18 +80,17 @@ fn relay_flag_on(v: Option<&str>) -> bool {
 }
 
 /// DÉCISION DE RELAIS (pure, testable) : à partir d'une enveloppe `KIND_RELAY_FWD` reçue et de la
-/// table des clients, rend `(adresse de B, état scellé de A à recopier)` — ou `None` si l'enveloppe
-/// est malformée, si son sceau interne est invalide (on ne relaie JAMAIS du bruit non signé →
-/// anti-amplification), ou si le destinataire n'est pas un client connu. Le rendez-vous ne fait que
-/// PORTER des octets signés : il ne peut rien forger (le sceau bout-en-bout tient).
-fn relay_decision(
-    buf: &[u8],
+/// table des clients, rend `(adresse de B, payload scellé à recopier)` — ou `None` si l'enveloppe est
+/// malformée, ou si le destinataire n'est pas un client connu. 12.3-G : on NE vérifie PLUS le sceau
+/// ici (le payload peut être un état OU une orbe, sceaux différents) → c'est le DESTINATAIRE qui
+/// vérifie (états et orbes s'auto-vérifient à la réception). L'anti-amplification NE repose PAS sur ce
+/// sceau mais sur fanout 1 + rate-limit (appelant) + dest inscrit (ci-dessous) → réflecteur 1:1 borné
+/// entre deux clients connus, jamais un service ouvert. Le rendez-vous ne fait que PORTER des octets.
+fn relay_decision<'a>(
+    buf: &'a [u8],
     clients: &HashMap<SocketAddr, ClientInfo>,
-) -> Option<(SocketAddr, [u8; SIGNED_STATE_SIZE])> {
-    let (dest, inner) = decode_relay_fwd(buf)?;
-    if !sig_ok(&inner) {
-        return None; // sceau interne invalide → on ne recopie pas du bruit
-    }
+) -> Option<(SocketAddr, &'a [u8])> {
+    let (dest, payload) = decode_relay_fwd(buf)?;
     // RECONNEXION (bug trouvé le 22 juin) : à la reconnexion, un même id a 2 entrées (ancienne adresse
     // pas encore évincée + nouvelle) → on doit router vers la PLUS RÉCENTE (`seen` max), sinon on relaie
     // vers l'ancienne adresse MORTE et le pair ne reçoit rien pendant ~5 s.
@@ -100,7 +99,7 @@ fn relay_decision(
         .filter(|(_, info)| info.id == dest)
         .max_by_key(|(_, info)| info.seen)
         .map(|(a, _)| *a)?;
-    Some((addr, inner))
+    Some((addr, payload))
 }
 
 /// Ce que le rendez-vous retient d'un client : son id, sa dernière activité, sa
@@ -167,15 +166,16 @@ pub fn run_rendezvous() {
         for (from, bytes) in socket.poll() {
             // 12.3 — REPLI RELAIS (derrière le drapeau). Une enveloppe KIND_RELAY_FWD est routée vers
             // son destinataire (un client connu), à débit borné, UNIQUEMENT si l'émetteur est lui aussi
-            // un client inscrit (réflecteur entre deux pairs connus, pas un service ouvert). On ne route
-            // que des octets SIGNÉS (relay_decision vérifie le sceau). Hors mode relais : ignoré.
+            // un client inscrit (réflecteur 1:1 entre deux pairs connus, pas un service ouvert). 12.3-G :
+            // le payload peut être un état OU une orbe → le sceau est vérifié par le DESTINATAIRE, plus
+            // ici (anti-amplification = fanout 1 + rate-limit + dest inscrit). Hors mode relais : ignoré.
             if relay && kind(&bytes) == Some(KIND_RELAY_FWD) {
                 if clients.contains_key(&from) {
                     let c = relay_credit.entry(from).or_insert(RELAY_CAP);
                     if *c >= 1.0 {
-                        if let Some((dest_addr, inner)) = relay_decision(&bytes, &clients) {
+                        if let Some((dest_addr, payload)) = relay_decision(&bytes, &clients) {
                             *c -= 1.0;
-                            let _ = socket.send_to(dest_addr, &inner);
+                            let _ = socket.send_to(dest_addr, payload);
                             // Diagnostic : 1re recopie de CE sens → on l'annonce une fois.
                             if let (Some(src), Some(dst)) =
                                 (clients.get(&from).map(|i| i.id), clients.get(&dest_addr).map(|i| i.id))
@@ -309,7 +309,7 @@ mod tests {
     // --- 12.3 : REPLI RELAIS (routage côté rendez-vous) -------------------------
 
     use super::super::crypto::Identity;
-    use super::super::message::{encode_relay_fwd, encode_signed, PlayerState};
+    use super::super::message::{encode_relay_fwd, encode_signed, sig_ok, PlayerState, SIGNED_STATE_SIZE};
 
     fn client(id: PeerId, addr: &str) -> (SocketAddr, ClientInfo) {
         let info = ClientInfo { id, seen: Instant::now(), pos: (0.0, 0.0), last_count: 0 };
@@ -350,10 +350,10 @@ mod tests {
 
         let sealed = sealed_state(&a);
         let env = encode_relay_fwd(b.id(), &sealed);
-        let (addr, inner) = relay_decision(&env, &clients).expect("doit router");
+        let (addr, payload) = relay_decision(&env, &clients).expect("doit router");
         assert_eq!(addr, b_addr); // vers B, pas l'autre
-        assert_eq!(inner, sealed); // l'état de A est recopié à l'octet près
-        assert!(sig_ok(&inner)); // et son sceau tient → le rendez-vous ne forge rien
+        assert_eq!(payload, &sealed[..]); // l'état de A est recopié à l'octet près
+        assert!(sig_ok(payload)); // et son sceau tient → le rendez-vous ne forge rien
     }
 
     /// Destinataire INCONNU (pas un client) → on ne route pas (pas de réflecteur vers l'extérieur).
@@ -366,10 +366,13 @@ mod tests {
         assert!(relay_decision(&env, &clients).is_none());
     }
 
-    /// État interne au sceau INVALIDE (octet trituré) → on ne recopie PAS du bruit (anti-amplification),
-    /// même si le destinataire existe.
+    /// 12.3-G — DÉPLACEMENT DE LA VÉRIF DE SCEAU. Le rendez-vous ne vérifie PLUS le sceau (le payload
+    /// peut être un état OU une orbe) : il ROUTE même un payload au sceau cassé vers un dest inscrit,
+    /// et c'est le DESTINATAIRE qui le jette (états et orbes s'auto-vérifient à la réception). L'anti-
+    /// amplification tient toujours : fanout 1 + rate-limit (appelant) + dest inscrit (cf. test voisin
+    /// `relais_refuse_destinataire_inconnu` qui, lui, est la vraie barrière anti-réflecteur).
     #[test]
-    fn relais_refuse_sceau_invalide() {
+    fn relais_route_meme_payload_non_verifie_le_dest_tranche() {
         let a = Identity::generate();
         let b = Identity::generate();
         let mut clients = HashMap::new();
@@ -378,7 +381,11 @@ mod tests {
 
         let mut sealed = sealed_state(&a);
         sealed[40] ^= 0xFF; // on casse le corps signé
+        assert!(!sig_ok(&sealed)); // le sceau est bien invalide…
         let env = encode_relay_fwd(b.id(), &sealed);
-        assert!(relay_decision(&env, &clients).is_none());
+        // …mais le rendez-vous route quand même vers B (dest inscrit) : la vérif a migré chez le dest.
+        let (addr, payload) = relay_decision(&env, &clients).expect("12.3-G : route sans vérifier");
+        assert_eq!(addr, b_addr);
+        assert_eq!(payload, &sealed[..]); // porté verbatim ; B le rejettera (sig_ok faux à la réception)
     }
 }
