@@ -22,7 +22,6 @@
 //! l'enveloppe, mais pas en changer le contenu sans casser le sceau.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -213,14 +212,13 @@ pub(crate) fn verify(message: &[u8], sig: &[u8; SIG_LEN], pubkey: &[u8; PUBKEY_L
     verifying_key.verify(message, &signature).is_ok()
 }
 
-/// Lit 32 octets d'aléa cryptographique depuis le système (`/dev/urandom`).
-/// On évite ainsi une dépendance de plus (`rand`) : la seule chose qu'on demande
-/// au monde extérieur, c'est de l'entropie — et l'OS est fait pour ça.
+/// Lit 32 octets d'aléa cryptographique depuis le système, de façon MULTIPLATEFORME
+/// (`getrandom` : `/dev/urandom` sous Linux, `BCryptGenRandom` sous Windows, etc.).
+/// Avant on lisait `/dev/urandom` en dur → plantage sur Windows. `getrandom` est la
+/// crate minimale dédiée à ça (celle qu'utilise tout l'écosystème Rust sous le capot).
 fn os_random_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut seed))
-        .expect("impossible de lire /dev/urandom pour générer les clés");
+    getrandom::fill(&mut seed).expect("impossible d'obtenir de l'aléa cryptographique de l'OS");
     seed
 }
 
@@ -236,7 +234,12 @@ fn identity_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("WEB3GAME_DIR") {
         return PathBuf::from(d);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    // `$HOME` sous Unix ; `$USERPROFILE` sous Windows (HOME y est rarement défini) ; sinon le
+    // dossier courant en dernier recours.
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     home.join(".web3game")
 }
 

@@ -15,6 +15,10 @@ bevy = { version = "0.18.1" }
 # (cf. src/net/crypto.rs, le seul fichier qui l'utilise).
 ed25519-dalek = "2"
 
+# Aléa cryptographique MULTIPLATEFORME (entropie de l'OS). Remplace la lecture en dur de
+# `/dev/urandom` (qui plantait sous Windows). Crate minimale, déjà tirée transitivement.
+getrandom = "0.3"
+
 # La feature "wayland" n'existe QUE sur Linux (session dev en Wayland) ; sur Windows/macOS
 # elle n'existe pas → on ne l'active que pour la cible Linux. Cargo UNIONNE les features de
 # `[dependencies]` et de la cible : Linux = bevy+wayland (inchangé), Windows = bevy sans wayland.
