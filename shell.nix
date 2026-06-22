@@ -6,8 +6,11 @@
 
 pkgs.mkShell {
   # Outils nécessaires à la compilation (trouvent alsa/udev via pkg-config).
+  # cargo + rustc : le compilateur Rust EST fourni par le shell → `nix-shell --run "cargo run"`
+  # est auto-suffisant (rien à installer à côté). Sans ça, on tombait sur `rustc: not found`
+  # ou, en compilant hors du shell, sur `wayland-client not found` (libs système absentes).
   # cargo-watch : relance automatiquement le jeu à chaque sauvegarde de fichier.
-  nativeBuildInputs = [ pkgs.pkg-config pkgs.cargo-watch ];
+  nativeBuildInputs = [ pkgs.cargo pkgs.rustc pkgs.pkg-config pkgs.cargo-watch ];
 
   buildInputs = [
     pkgs.alsa-lib        # audio
