@@ -483,4 +483,37 @@ mod tests {
         bytes.truncate(bytes.len() - 5); // coupe dans la preuve → longueur ≠ attendue
         assert_eq!(decode_cell_summary_v2(&bytes), None);
     }
+
+    /// FORESIGHT « gros paquets à l'échelle » (demandé par l'utilisateur le 22 juin) : on MESURE la
+    /// taille du PLUS GROS paquet possible de chaque type, contre le MTU UDP usuel (~1400 o ; charge
+    /// utile sûre ~1200). Le constat clé : AUCUN paquet ne grandit avec N (tout est plafonné par
+    /// MAX_NEIGHBORS/MAX_CARDS/MAX_CELL_SAMPLES) → 5K ou 50K ne gonfle PAS les paquets. Le SEUL paquet
+    /// qui dépasse le MTU, et ce indépendamment de N, est le résumé v2 (trailer de 16 preuves ×182 o).
+    /// Ce test FIGE ces faits : si quelqu'un fait franchir le MTU à un paquet du chemin par défaut,
+    /// il casse ici (garde anti-fragmentation). V2 est documenté > MTU = dette latente AVANT l'échelle.
+    #[test]
+    fn foresight_taille_paquets_vs_mtu() {
+        const MTU_SAFE: usize = 1200; // charge utile UDP sûre (sous fragmentation IP)
+
+        // Cellule sur-peuplée → l'échantillon est plafonné à MAX_CELL_SAMPLES (16), pas N.
+        let host = Identity::generate();
+        let occ: Vec<(PeerId, f32, f32)> = (0..5000).map(|i| (pid((i % 255) as u8), i as f32, 0.0)).collect();
+        let mut s = build_cell_summary((0, 0), host.id(), &occ, 1);
+        s.count = 5000; // la cellule DIT 5000 occupants…
+        sign_summary(&mut s, &host);
+
+        // …mais le résumé v1 reste BORNÉ (16 échantillons), pas 5000 → sous le MTU.
+        let v1 = encode_cell_summary(&s);
+        assert_eq!(v1.len(), HEADER + MAX_CELL_SAMPLES * SAMPLE_SIZE + SIG_LEN); // 55+640+64 = 759
+        assert!(v1.len() <= MTU_SAFE, "v1 doit tenir sous le MTU (mesuré {} o)", v1.len());
+
+        // v2 au MAXIMUM : 16 preuves signées de 182 o. MESURÉ = 3672 o → DÉPASSE le MTU (~×2,6).
+        let proofs: Vec<Vec<u8>> = (0..MAX_CELL_SAMPLES).map(|k| signed_proof(k as f32, 0.0, 1)).collect();
+        let v2 = encode_cell_summary_v2(&s, &proofs);
+        assert_eq!(v2.len(), 759 + 1 + MAX_CELL_SAMPLES * SIGNED_STATE_SIZE); // 759+1+2912 = 3672
+        assert!(v2.len() > MTU_SAFE, "FORESIGHT : v2 dépasse le MTU (mesuré {} o) → fragmente → à découper avant l'échelle", v2.len());
+
+        // Repère chiffré pour le journal (visible avec `cargo test -- --nocapture`).
+        println!("FORESIGHT paquets : v1_max={} o (≤MTU), v2_max={} o (>MTU, à découper)", v1.len(), v2.len());
+    }
 }

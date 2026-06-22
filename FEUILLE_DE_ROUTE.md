@@ -1517,7 +1517,39 @@ cohérente par tous les nœuds.
 - [ ] 12.1 — **Éviction/TTL** des pairs absents (mémoire stable). Ferme D16.
 - [ ] 12.2 — **Unifier bot/jeu** : un cœur de session partagé. Ferme D2.
 - [ ] 12.3 — **Relais TURN décentralisés + IPv6** (NAT symétrique). Ferme D17.
+- [ ] 12.4 — **Découper le résumé v2 > MTU** (foresight 22 juin, ci-dessous). Préalable à l'échelle V2.
 **Ferme :** D2, D16, D17. **Vérif :** simu longue (mémoire stable) ; cas NAT symétrique OK.
+
+> ### ⚙ FORESIGHT « gros paquets à l'échelle » — MESURÉ le 22 juin 2026 (à la demande de l'utilisateur)
+> *« obtenir 5K connectés et voir si de trop gros paquets ne deviennent pas horribles ». Réponse mesurée
+> (test `foresight_taille_paquets_vs_mtu` dans `cell.rs`, 91 tests, 0 warning), pas argumentée.*
+>
+> **Bonne nouvelle — AUCUN paquet ne grandit avec N.** Tout est plafonné par des constantes
+> (`MAX_NEIGHBORS=32`, `MAX_CARDS=16`, `MAX_CELL_SAMPLES=16`) → **5K ou 50K ne gonfle PAS les paquets**,
+> la taille est bornée par design. L'intuition « à 5K ça explose » est levée sur ce point précis.
+>
+> **Taille MAX par type (mesurée / calculée des encodeurs), vs MTU UDP sûr ~1200 o :**
+>
+> | Paquet | Taille max | Croît avec N ? | vs MTU |
+> |--------|-----------|----------------|--------|
+> | STATE / RELAY / RELAY_FWD / PUNCH / HELLO | 118 / 182 / 216 / 34 / 42 o | non (fixe) | ✅ |
+> | WELCOME (cap 32 voisins) | **1221 o** | non (capé) | ✅ proche du bord |
+> | GOSSIP (cap 16 cartes) | ~740 o | non (capé) | ✅ |
+> | CELL_SUMMARY v1 (cap 16 samples) | **759 o** | non (capé) | ✅ |
+> | **CELL_SUMMARY_V2** (cap 16 preuves ×182) | **3672 o** | non (capé) | ❌ **~×2,6 le MTU** |
+>
+> **LE SEUL vrai risque : le résumé v2 (~3,6 Ko) DÉPASSE le MTU**, indépendamment de N → IP le fragmente
+> en ~3 morceaux ; en UDP, **un fragment perdu = tout le paquet jeté** → à l'échelle, avec de la perte,
+> c'est exactement le « horrible » pressenti. **Nuance :** v2 n'est émis QUE sous le drapeau
+> `SIGNED_SAMPLES` (défaut = v1 intact, V2 pas sur le fil) → le **chemin par défaut n'a AUCUN paquet >
+> MTU** aujourd'hui (le plus gros = WELCOME à 1221 o). Mais v2 est le format que C-sécu-2 a fermé et
+> qu'on voudra utiliser → **dette latente, à régler AVANT de scaler (→ tâche 12.4).**
+>
+> **Ce que je tranche pour 12.4 :** découper le **trailer de preuves en paquets séparés** (chaque preuve
+> = 182 o, DÉJÀ auto-certifiante → voyage seule, unionnée à la réception). Le code le permet déjà (cf.
+> test « relais peut retirer des preuves » : trailer hors corps signé, sous-ensemble tournant). Alternative
+> plus simple si besoin : plafonner à ~3 preuves/paquet (759+1+3×182 = 1306 o, sous MTU). *Pas urgent
+> (hors chemin défaut), mais tracé pour ne pas le découvrir le jour de l'échelle.*
 
 > ### ⚙ PAPIER 12.3 — LE RELAIS (D17) — écrit le 22 juin 2026 (PAPIER, zéro code)
 > *Méthode : comme C-sécu, on pose le mur SUR LE PAPIER avant de coder. Le drapeau gate tout,
@@ -1579,9 +1611,15 @@ cohérente par tous les nœuds.
 > - **Centralisation.** Le rendez-vous-relais redevient un serveur. Acceptable en v1 **car repli**, à
 >   décentraliser en v2.
 >
+> **⚠ RECADRAGE (22 juin, avec l'utilisateur) — la fraîcheur (b) N'EST PAS prioritaire.** Le « vivant »
+> ne se mesure pas, il se FABRIQUE : l'interpolation/extrapolation côté client (`smooth_damp`, déjà là)
+> rend un mouvement prédit+lissé souvent PLUS vivant qu'un 0 ms brut mais saccadé. Donc on ne vise pas le
+> 0 ms et le RTT n'est PAS une barrière. On le **logue pour info** (borne de sécu), point. La make-or-break
+> du relais redevient **purement BINAIRE**.
+>
 > **CRITÈRE PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT de coder).** Deux pairs qui NE peuvent PAS se percer
 > (perçage abandonné des **deux** côtés, vérifié dans les logs) **se voient néanmoins BOUGER** via le
-> relais — ET on **chiffre enfin la fraîcheur (b)** en direct (âge de perception relayée, en ms). C'est
+> relais. (RTT relayé loggé pour info, jamais un gate.) C'est
 > le test qui n'a jamais pu tourner faute de connexion : le relais le débloque. *Échec admis si : pas de
 > mouvement relayé, ou fraîcheur si dégradée qu'elle casse le game-feel (seuil à fixer dans le papier-wire).*
 >
@@ -1631,17 +1669,12 @@ cohérente par tous les nœuds.
 >   `KIND_RELAY_FWD(dest=ce pair)` et on l'envoie à l'adresse du rendez-vous. *Le hook est déjà là :
 >   `punch_abandoned(tries)` dans `punch.rs`.*
 >
-> **LE SEUIL DE FRAÎCHEUR (b) — pré-enregistré, mais l'arbitre final c'est TON flair.** Mesurer l'âge
-> *unidirectionnel* vrai exigerait des horloges synchronisées (hors scope, reporté). On mesure donc le
-> **RTT relayé** avec l'horloge LOCALE de A seule : A envoie un petit ping relayé horodaté (son temps
-> local), B le réfléchit via le relais, A calcule le RTT. Fraîcheur ≈ RTT/2. *(Instrument de MESURE de
-> l'expérience, derrière le même drapeau — pas du protocole de jeu.)* Seuils pré-enregistrés, pour une
-> présence SOCIALE (pas un FPS compétitif) :
-> - **PASS** : les avatars bougent visiblement via relais ET RTT relayé médian **< 150 ms**.
-> - **DÉGRADÉ** : 150–250 ms (jouable mais mou).
-> - **FAIL** : pas de mouvement relayé, ou RTT **> 250 ms**.
-> *Ces nombres sont une HYPOTHÈSE d'ingénieur. Le vrai juge de « est-ce acceptable », c'est toi qui
-> regardes l'écran : est-ce que ça FEEL vivant ? Ton ressenti tranche, pas le chiffre.*
+> **LA FRAÎCHEUR (b) — RÉTROGRADÉE (22 juin, décision utilisateur), loggée pour info, JAMAIS un gate.**
+> Le « vivant » se FABRIQUE (interpolation/extrapolation côté client, déjà en place) — souvent plus
+> vivant qu'un 0 ms saccadé. On ne vise donc pas une cible de ms. On mesure le **RTT relayé** (horloge
+> LOCALE de A : ping relayé horodaté, B le réfléchit, A calcule) **uniquement pour le journal** — borne
+> de sécu, pas critère. Le seul juge de « est-ce acceptable », c'est le RESSENTI à l'écran. Make-or-break
+> du relais = **binaire** (ils se voient bouger, oui/non).
 >
 > **MES DOUTES (transparence, pas devoirs — à flairer) :**
 > - `dest_id` non signé : si on le falsifie, l'état (toujours scellé, infalsifiable) de A part juste vers
