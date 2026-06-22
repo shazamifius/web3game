@@ -20,6 +20,8 @@
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
 use super::link::NetLink;
+use super::message::encode_relay_fwd;
+use super::netcode::relay_fallback_enabled;
 use super::punch::Holes;
 use super::wire::{KIND_ORB, PROTO_VERSION};
 use crate::world::{ROOM_HEIGHT, ROOM_SIZE};
@@ -351,6 +353,7 @@ pub fn orb_simulate(
 pub fn orb_send(
     time: Res<Time>,
     mut acc: Local<f32>,
+    mut relay_fallback: Local<Option<bool>>, // 12.3-G : drapeau lu UNE fois (cache), comme net_send
     link: Res<NetLink>,
     holes: Res<Holes>,
     orb: Res<Orb>,
@@ -386,9 +389,28 @@ pub fn orb_send(
         &link.identity,
     );
 
+    // 12.3-G : repli relais lu UNE fois (cache). Éteint → on n'émet QUE vers les trous ouverts
+    // (comportement historique exact : aucun changement byte-pour-byte quand RELAY_FALLBACK absent).
+    let relay = match *relay_fallback {
+        Some(v) => v,
+        None => {
+            let on = relay_fallback_enabled();
+            *relay_fallback = Some(on);
+            on
+        }
+    };
+
     for (id, addr) in &link.peers {
-        if holes.map.get(id).map_or(false, |h| h.open) {
-            let _ = link.socket.send_to(*addr, &bytes);
+        // Comme net_send : direct si le trou est OUVERT, sinon (drapeau allumé) on emballe l'orbe
+        // SCELLÉE en KIND_RELAY_FWD(dest) vers le rendez-vous, qui la porte au pair non-perçable. Ainsi
+        // l'orbe traverse le NAT comme l'avatar → plus de double maître entre deux pairs relayés.
+        let open = holes.map.get(id).map_or(false, |h| h.open);
+        let relayed = relay && holes.map.get(id).map_or(false, |h| h.wants_relay());
+        if open {
+            let _ = link.socket.send_to(*addr, &bytes); // connexion directe (inchangé)
+        } else if relayed {
+            let env = encode_relay_fwd(*id, &bytes);
+            let _ = link.socket.send_to(link.rendezvous, &env);
         }
     }
 }

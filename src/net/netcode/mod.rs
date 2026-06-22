@@ -25,4 +25,5 @@ pub use interpolate::net_interpolate;
 pub use nameplates::{update_nameplates, Nameplates};
 pub use receive::net_receive;
 pub use send::net_send;
+pub(crate) use send::relay_fallback_enabled; // 12.3-G : réutilisé par orb_send (source unique du drapeau)
 pub use state::RemoteAvatars;

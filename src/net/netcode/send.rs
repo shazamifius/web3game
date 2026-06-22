@@ -24,7 +24,7 @@ const GOSSIP_FANOUT: usize = 4;
 /// ABANDONNÉ (NAT symétrique / box injoignable), au lieu de l'ignorer on route notre état via le
 /// rendez-vous. ÉTEINT par défaut (`RELAY_FALLBACK` absent) → comportement historique exact (on
 /// n'émet rien vers un trou fermé). Allumé sur `1`/`true`.
-fn relay_fallback_enabled() -> bool {
+pub(crate) fn relay_fallback_enabled() -> bool {
     relay_fallback_on(std::env::var("RELAY_FALLBACK").ok().as_deref())
 }
 
