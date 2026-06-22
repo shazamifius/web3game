@@ -4,6 +4,7 @@
 use crate::world::ROOM_SIZE;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::Hdr;
@@ -21,7 +22,6 @@ const EYE_HEIGHT: f32 = 0.7; // hauteur des yeux au-dessus du centre du corps (~
 pub const GROUND_Y: f32 = 0.7;
 const GRAVITY: f32 = 18.0; // m/s² (un peu plus que la vraie : plus « jeu », moins flottant)
 const JUMP_SPEED: f32 = 6.0; // impulsion verticale au décollage (m/s) → saut ~1 m de haut
-const FLY_SPEED: f32 = 10.0; // vitesse verticale en mode survol (île)
 
 /// Joueur : porte la position et la rotation gauche/droite (lacet).
 #[derive(Component)]
@@ -131,16 +131,16 @@ pub fn setup_player(
                 Transform::from_xyz(0.0, EYE_HEIGHT, 0.0),
                 // HDR + bloom : le néon « glow ». Tonemapping pour de belles couleurs.
                 Hdr,
-                // Bloom FORT → les néons (salle, hub, cristaux, étoiles) « glow » nettement.
+                // Bloom modéré : assez pour le « glow » néon, sans tout laver en blanc.
                 Bloom {
-                    intensity: 0.60,
+                    intensity: 0.30,
                     ..Bloom::NATURAL
                 },
                 Tonemapping::TonyMcMapface,
-                // Ambiance violacée tiède, basse pour que le néon ressorte (mais moins froide).
+                // Ambiance basse et violacée : surfaces SOMBRES → le néon émissif RESSORT.
                 AmbientLight {
-                    color: Color::srgb(0.55, 0.42, 0.60),
-                    brightness: 110.0,
+                    color: Color::srgb(0.45, 0.35, 0.55),
+                    brightness: 45.0,
                     ..default()
                 },
             ));
@@ -231,24 +231,65 @@ pub fn jump_and_gravity(
     }
 }
 
-/// Mode SURVOL (île géante, en attendant la collision raycast) : Espace = monter,
-/// Shift gauche = descendre. La gravité est désactivée sur l'île (cf. main.rs).
-pub fn fly_vertical(
+/// COLLISION de l'île (raycast sur le terrain) : le joueur MARCHE sur le relief, et s'il
+/// QUITTE l'île (chute hors du terrain / sous l'eau), il revient INSTANTANÉMENT au spawn.
+/// On lance un rayon vers le BAS sous le joueur, filtré sur le seul terrain (`Terrain`) :
+///   - touche → sa hauteur devient le sol (gravité + saut par-dessus, comme ailleurs) ;
+///   - rien sous nous OU on est passé sous le niveau de l'eau → retour au spawn.
+/// Tant que le terrain n'est pas chargé, on tient le joueur immobile (pas de chute parasite).
+pub fn island_collision(
+    mut ray: MeshRayCast,
+    terrain: Query<(), With<crate::scenes::IslandTextured>>,
+    spawn: Res<crate::scenes::IslandSpawn>,
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut player: Query<&mut Transform, With<Player>>,
+    mut player: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
-    let Ok(mut t) = player.single_mut() else {
+    let Ok((mut t, mut v)) = player.single_mut() else {
         return;
     };
-    let mut dy = 0.0;
-    if keyboard.pressed(KeyCode::Space) {
-        dy += 1.0;
+    if terrain.is_empty() {
+        v.vy = 0.0; // terrain pas encore chargé → on ne chute pas
+        return;
     }
-    if keyboard.pressed(KeyCode::ShiftLeft) {
-        dy -= 1.0;
+    // Hors carte / sous l'eau → retour spawn instantané.
+    if t.translation.y < spawn.water_y {
+        t.translation = spawn.pos;
+        t.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        v.vy = 0.0;
+        return;
     }
-    t.translation.y = (t.translation.y + dy * FLY_SPEED * time.delta_secs()).max(0.5);
+    // Sol = terrain sous le joueur (rayon vers le bas, depuis un peu au-dessus).
+    let origin = t.translation + Vec3::Y * 4.0;
+    let filter = |e: Entity| terrain.contains(e);
+    let settings = MeshRayCastSettings::default()
+        .with_filter(&filter)
+        .with_visibility(RayCastVisibility::Any);
+    let ground = ray
+        .cast_ray(Ray3d::new(origin, Dir3::NEG_Y), &settings)
+        .first()
+        .map(|(_, hit)| hit.point.y + GROUND_Y); // centre du corps au-dessus du sol
+
+    let dt = time.delta_secs();
+    v.vy -= GRAVITY * dt;
+    match ground {
+        Some(g) => {
+            let grounded = t.translation.y <= g + 0.02 && v.vy <= 0.0;
+            if grounded && keyboard.just_pressed(KeyCode::Space) {
+                v.vy = JUMP_SPEED;
+            }
+            t.translation.y += v.vy * dt;
+            if t.translation.y <= g {
+                t.translation.y = g;
+                v.vy = 0.0;
+            }
+        }
+        None => {
+            // Pas de terrain sous nous (au-dessus de l'eau / dans le vide) → on chute,
+            // puis le test « sous l'eau » ci-dessus renverra au spawn.
+            t.translation.y += v.vy * dt;
+        }
+    }
 }
 
 /// Vue à la souris : lacet sur le corps, tangage sur la tête (bloqué aux ~90°).

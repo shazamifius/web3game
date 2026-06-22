@@ -134,6 +134,7 @@ fn main() {
     // `SCENE=arcade|ile` (auto-test 3D / foule-3d qui veut sauter le hub).
     .insert_state(scenes::initial_scene())
     .init_resource::<scenes::HubSpawnDone>()
+    .init_resource::<scenes::IslandSpawn>()
     // Le joueur est créé UNE fois et survit aux changements de scène ; chaque scène
     // est montée/démontée par OnEnter/OnExit et le joueur est téléporté à son spawn.
     .add_systems(Startup, (player::setup_player, player::grab_cursor))
@@ -151,6 +152,7 @@ fn main() {
         Update,
         (
             scenes::texture_island,
+            scenes::bind_island_spawn,
             meteorites::spawn_meteors,
             meteorites::fall_meteors,
             meteorites::twinkle,
@@ -165,9 +167,9 @@ fn main() {
         Update,
         (
             player::move_player,
-            // Gravité/saut PARTOUT sauf sur l'île géante (là : mode survol, cf. fly_vertical).
+            // Gravité/saut sur sol plat (hub/arcade) ; sur l'île : collision raycast (relief).
             player::jump_and_gravity.run_if(not(in_state(Scene::Island))),
-            player::fly_vertical.run_if(in_state(Scene::Island)),
+            player::island_collision.run_if(in_state(Scene::Island)),
             player::look_around,
             player::head_bob,
             player::toggle_cursor,

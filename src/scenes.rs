@@ -43,9 +43,27 @@ pub struct WorldGeometry;
 #[derive(Resource, Default)]
 pub struct HubSpawnDone(pub bool);
 
-/// Marqueur posé sur le terrain de l'île une fois qu'il a été coloré procéduralement.
+/// Marqueur posé sur le terrain de l'île une fois qu'il a été coloré procéduralement
+/// (sert AUSSI de cible au raycast de collision : on ne marche QUE sur ce terrain).
 #[derive(Component)]
 pub struct IslandTextured;
+
+/// Point d'apparition de l'île (lu du marqueur `spawn` du glb) + niveau de « chute » sous
+/// lequel on renvoie le joueur au spawn (sortie de l'île / eau). `done` : déjà placé ?
+#[derive(Resource)]
+pub struct IslandSpawn {
+    pub pos: Vec3,
+    pub water_y: f32,
+    pub done: bool,
+}
+
+impl Default for IslandSpawn {
+    fn default() -> Self {
+        // Au-dessus de l'île tant que le marqueur n'est pas lu ; `water_y = 0` = sous le
+        // plus bas terrain marchable (centre du corps ≥ 0,7 dessus) → pas de faux renvoi.
+        Self { pos: Vec3::new(0.0, 30.0, 0.0), water_y: 0.0, done: false }
+    }
+}
 
 /// Un portail du hub : marcher dedans bascule vers `target`.
 #[derive(Component)]
@@ -86,17 +104,12 @@ pub fn setup_hub(mut commands: Commands, assets: Res<AssetServer>) {
         SceneRoot(assets.load("HUB.glb#Scene0")),
         Transform::IDENTITY,
     ));
-    // Lumière douce (le glb a des matériaux émissifs, mais ses surfaces mates ont besoin
-    // d'être éclairées) + un peu de directionnel pour le relief.
+    // Lumière VOLONTAIREMENT BASSE : surfaces sombres → les néons émissifs (strength 4)
+    // RESSORTENT (look synthwave). Juste de quoi ne pas être dans le noir total.
     commands.spawn((
         WorldGeometry,
-        PointLight { color: Color::srgb(0.9, 0.9, 1.0), intensity: 900_000.0, range: 60.0, shadows_enabled: false, ..default() },
+        PointLight { color: Color::srgb(0.7, 0.75, 0.95), intensity: 220_000.0, range: 50.0, shadows_enabled: false, ..default() },
         Transform::from_xyz(0.0, 6.0, 8.0),
-    ));
-    commands.spawn((
-        WorldGeometry,
-        DirectionalLight { color: Color::srgb(0.8, 0.85, 1.0), illuminance: 2500.0, shadows_enabled: false, ..default() },
-        Transform::from_xyz(4.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
@@ -205,8 +218,8 @@ pub fn return_to_hub(keyboard: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextS
 /// posée sur une grande MER bleue, sous un ciel ouvert, avec un soleil, du RELIEF (une
 /// colline + des rochers) et quelques NUAGES qui flottent. Pas encore de météorites —
 /// c'est le pas suivant ; ici on rend juste l'endroit agréable.
-/// Facteur d'agrandissement de l'île .glb (le mesh exporté est normalisé à ~2 unités).
-pub const ISLAND_SCALE: f32 = 30.0;
+/// Facteur d'agrandissement de l'île .glb (le mesh exporté est petit).
+pub const ISLAND_SCALE: f32 = 12.0;
 
 pub fn setup_island(
     mut commands: Commands,
@@ -354,6 +367,32 @@ fn terrain_color(t: f32, flat: f32) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
 }
 
+/// LIAISON du marqueur `spawn` de l'île (Empty du glb, nœud de 1er niveau → `Transform`
+/// local × `ISLAND_SCALE` = position monde). On y pose le joueur UNE fois (à `OnEnter`,
+/// `done` est remis à `false`). Sert aussi de point de renvoi quand on tombe de l'île.
+pub fn bind_island_spawn(
+    mut spawn: ResMut<IslandSpawn>,
+    named: Query<(&Name, &Transform)>,
+    mut player: Query<(&mut Transform, &mut Vertical), (With<Player>, Without<Name>)>,
+) {
+    if spawn.done {
+        return;
+    }
+    for (name, tf) in &named {
+        if name.as_str().eq_ignore_ascii_case("spawn") {
+            // Centre du corps légèrement au-dessus du marqueur (la collision le posera au sol).
+            spawn.pos = tf.translation * ISLAND_SCALE + Vec3::Y * GROUND_Y;
+            if let Ok((mut pt, mut v)) = player.single_mut() {
+                pt.translation = spawn.pos;
+                pt.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+                v.vy = 0.0;
+            }
+            spawn.done = true;
+            return;
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Téléportation du joueur au point d'apparition de chaque scène
 // ----------------------------------------------------------------------------
@@ -375,12 +414,15 @@ pub fn enter_arcade_player(
 }
 pub fn enter_island_player(
     mut clear: ResMut<ClearColor>,
+    mut spawn: ResMut<IslandSpawn>,
     mut q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_NIGHT;
-    // Point de SURVOL en surplomb, face à l'île (vers +Z) → on voit tout le terrain texturé.
+    spawn.done = false; // le marqueur `spawn` du glb (re)placera le joueur
+    // Placement temporaire EN HAUTEUR le temps que le terrain charge (la collision tient le
+    // joueur immobile tant que le terrain n'est pas là, puis `bind_island_spawn` le pose).
     if let Ok((mut t, mut v)) = q.single_mut() {
-        t.translation = Vec3::new(0.0, 16.0, -48.0);
+        t.translation = Vec3::new(0.0, 30.0, 0.0);
         t.rotation = Quat::from_rotation_y(std::f32::consts::PI);
         v.vy = 0.0;
     }
