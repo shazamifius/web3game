@@ -176,21 +176,25 @@
 > en tête (orthogonal à la mesure perception/débit). Et écrire la sortie DIRECTEMENT dans un fichier (`> f.txt`), JAMAIS
 > via `| grep > f` (grep bufferise par blocs → blackout des snapshots ; le binaire Rust, lui, line-buffer son stdout).
 >
-> 🚀 **DÉMARRAGE PROCHAINE SESSION — le PAPIER « test 2-humains » (D17, papier d'abord, comme C-sécu) :**
-> - **But :** prouver — ou réfuter — que la base sait faire entrer DEUX humains réels dans le même espace via le vrai
->   Internet, et CHIFFRER pour la 1re fois la fraîcheur ressentie (b) / fermer D27. C'est le squelette de bout en bout
->   (*walking skeleton*) : moche mais qui marche, AVANT tout nouveau poli.
-> - **Acquis sur lequel s'appuyer :** chemin UDP signé + perçage NAT déjà prouvé EN NAMESPACES (ch.7.5, `tools/test-nat.sh`,
->   full-cone 6/6) — mais JAMAIS sur deux vraies box / NAT inconnus. Orbe Bevy = suffit pour VOIR jitter + saut (pas Unreal).
-> - **▶️ Petits pas :** (1) PAPIER : dispositif (1 PC + 1 tel en partage, ou VPS 5 €), ce qu'on mesure, critère
->   pré-enregistré ; (2) faire se connecter 2 instances sur 2 réseaux RÉELS (rendez-vous + perçage) ; (3) mesurer
->   end-to-end l'âge de perception (« je bouge » → « tu me vois »), le taux de connexion par type de NAT ; (4) verdict.
-> - **Critère pré-enregistré (à figer dans le papier AVANT de coder) :** (a) 2 inconnus sur 2 NAT se voient bouger ;
->   (b) retard médian < X ms (X à fixer = seuil « vivant ») ; (c) testé en HOSTILE (lien mobile, NAT symétrique) sinon nul.
->   **Si le perçage échoue sur NAT symétrique → ce n'est pas un échec, c'est le MUR D17 trouvé cheap → relais (ch.12.3).**
+> 🚀 **DÉMARRAGE PROCHAINE SESSION — le PAPIER « RELAIS » (D17, papier d'abord, comme C-sécu) :**
+> - **Le test 2-humains a TOURNÉ (22 juin).** Verdict mesuré : **bootstrap Internet ✅** (2 humains / 2 réseaux
+>   se trouvent via le rendez-vous public) ; **perçage NAT direct ❌** des deux côtés → **mur D17 MESURÉ**. La
+>   fraîcheur (b) / D27 n'a PAS pu être chiffrée : sans perçage, ils ne se voient pas bouger. → Le relais débloque.
+> - **⚠ Confound à NE PAS blanchir :** B était derrière la MÊME box que le serveur (hairpin → `192.168.1.254`).
+>   Donc seul l'échec de A (NAT symétrique mobile) est un VRAI mur ; l'échec de B est un artefact de topo.
+>   → Le relais est cadré **REPLI** (minorité non-perçable), pas chemin nominal. *(détail : § PAPIER 12.3.)*
+> - **▶️ Petits pas (cf. PAPIER 12.3 écrit le 22 juin) :** (0) UNE mesure propre B-sur-un-autre-réseau (~0 code) pour
+>   dimensionner le repli ; (1) papier-wire (format demande de relais + seuil de fraîcheur) ; (2) repli minimal
+>   derrière un flag (v1 = rendez-vous relaie une paire qui a abandonné — hook `punch_abandoned`), défaut intact,
+>   0 warning ; (3) preuve A(mobile)↔B : ils se voient BOUGER + fraîcheur (b) chiffrée en ms.
+> - **Critère pré-enregistré (figé dans le PAPIER 12.3 AVANT de coder) :** deux pairs au perçage abandonné des DEUX
+>   côtés se voient néanmoins BOUGER via relais, ET on chiffre enfin la fraîcheur (b) en ms. Échec admis si pas de
+>   mouvement relayé, ou fraîcheur cassant le game-feel.
+> - **Acquis réutilisé :** le primitif relais existe et est durci (`mark_as_relay`/`KIND_RELAY` + bornes
+>   `RELAY_RATE`/`RELAY_CAP`/`MAX_RELAY_FANOUT`). L'état relayé reste signé → sécu OK par construction.
 >
-> **APRÈS le test 2-humains :** la preuve réordonne le plan. Selon ce que (b) révèle → interpolation R1 (si le saut
-> domine), relais NAT symétrique (si le perçage est le mur), ou switch Unreal. *Petit pas, preuve d'abord, dehors cette fois.*
+> **APRÈS le relais :** la preuve réordonne le plan. Si (b) relayée tient → interpolation R1 (si le saut domine) ou
+> switch Unreal. Si (b) trop dégradée → v2 relais décentralisé (D4). *Petit pas, preuve d'abord, dehors cette fois.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
@@ -1514,6 +1518,80 @@ cohérente par tous les nœuds.
 - [ ] 12.2 — **Unifier bot/jeu** : un cœur de session partagé. Ferme D2.
 - [ ] 12.3 — **Relais TURN décentralisés + IPv6** (NAT symétrique). Ferme D17.
 **Ferme :** D2, D16, D17. **Vérif :** simu longue (mémoire stable) ; cas NAT symétrique OK.
+
+> ### ⚙ PAPIER 12.3 — LE RELAIS (D17) — écrit le 22 juin 2026 (PAPIER, zéro code)
+> *Méthode : comme C-sécu, on pose le mur SUR LE PAPIER avant de coder. Le drapeau gate tout,
+> le chemin par défaut reste byte-pour-byte intact, 0 warning. On écrit le critère AVANT de coder.*
+>
+> **CE QUE LA MESURE PROUVE VRAIMENT (et ce qu'elle NE prouve pas).** Test du 22 juin : A (Windows,
+> partage mobile, NAT symétrique/CGNAT) + B (NixOS maison) se trouvent via le rendez-vous public ✅,
+> mais le perçage direct échoue des deux côtés ❌. **ATTENTION — le test a un confound de topologie**
+> qu'on ne blanchit pas : B était derrière la **MÊME box que le serveur** → vu en hairpin comme
+> `192.168.1.254` (adresse privée). Donc deux échecs de **nature différente** ont été mélangés :
+>
+> | Pair | Échec observé | Nature réelle |
+> |------|---------------|---------------|
+> | **A** (mobile/CGNAT) | port ne correspond pas | **VRAI mur** — NAT symétrique, fréquent sur mobile |
+> | **B** (même box que serveur) | adresse privée `192.168.1.254` | **ARTEFACT** de topo, PAS un mur de NAT |
+>
+> Conséquence honnête : on ne peut PAS encore écrire « la majorité ne pourra pas se connecter » — la
+> moitié de l'échec est un artefact. Ce qui est prouvé : **le NAT symétrique (A) exige un relais.** Le
+> reste est NON-MESURÉ. → Le relais est donc cadré comme **REPLI** (pour la minorité non-perçable),
+> **pas comme chemin nominal**. Cela rend la centralisation v1 (le rendez-vous relaie) acceptable :
+> elle est hors du chemin par défaut, pas sur chaque connexion.
+>
+> **⚠ ÉTAPE 0 PRÉ-ENREGISTRÉE (avant tout code) — UNE mesure propre, ~0 code.** Remettre **B sur un
+> autre réseau que la box du serveur** (2e partage mobile, ou un ami ailleurs) et relancer le test.
+> Question tranchée par cette mesure : *un NAT non-symétrique perce-t-il, lui ?* 
+> - Si **oui** → le relais reste un repli pour la minorité symétrique (cadrage ci-dessus confirmé).
+> - Si **non** (même les NAT classiques échouent) → le relais redevient chemin quasi-nominal, et la
+>   centralisation v1 devient un vrai problème à re-discuter AVANT de coder le repli.
+> *C'est la mesure qui n'a jamais tourné proprement faute de 2e réseau. Elle dimensionne le chantier.*
+>
+> **QUI RELAIE ? (la décision d'archi).**
+> - **v1 pragmatique — le RENDEZ-VOUS relaie**, derrière un flag/mode, JAMAIS le défaut. Les deux pairs
+>   l'atteignent déjà (seul point public commun) → chemin le plus court vers « deux humains se voient ».
+>   ⚠ Casse la propriété « rendez-vous tuable » + en fait un goulot → **acceptable SEULEMENT en repli**,
+>   à décentraliser ensuite. *On part de là.*
+> - **v2 décentralisé — un PAIR bien connecté relaie** (TURN-like P2P). Aligné avec la vision sans-serveur,
+>   mais bute sur **D4 (incitation au relais)** déjà ouvert. Plus tard.
+>
+> **LE HOOK PRÉCIS (le primitif existe déjà, on le RÉUTILISE).** Le repli se branche sur
+> `punch_abandoned(tries)` ([`src/net/punch.rs`](src/net/punch.rs)) : après `PUNCH_GIVEUP` (40 essais
+> ~10 s) le perçage est ABANDONNÉ et plus rien ne se passe → **c'est LÀ qu'on route via relais.** Et le
+> primitif « porter un état signé d'autrui sans pouvoir le forger, à débit borné » est **déjà codé et
+> durci** : `mark_as_relay`/`KIND_RELAY` (le sceau tient → le relayeur ne peut que recopier les octets)
+> + `RELAY_RATE`(30)/`RELAY_CAP`(60)/`MAX_RELAY_FANOUT`(12) (anti-amplification). Le chantier = réutiliser
+> ce primitif pour le cas « perçage échoué entre A et B », pas seulement « upload faible ».
+>
+> **FORMAT (esquisse, à figer à l'étape papier-wire).** Quand A abandonne le perçage vers B : A demande
+> au point public commun (v1 = rendez-vous) « relaie-moi vers B ». Le rendez-vous, en mode relais,
+> applique le **MÊME forwarding borné que `KIND_RELAY`** (vérifie le sceau, recopie, plafonné). L'état de
+> jeu relayé reste **signé bout-en-bout** → le relais ne peut que porter, jamais falsifier (sécu OK par
+> construction, rien de neuf à prouver côté confiance).
+>
+> **COÛTS À CHIFFRER (mesure, pas argument).**
+> - **Latence → fraîcheur (b).** Un saut de plus mord directement sur la fraîcheur. Mesurer : âge de
+>   perception **direct** (quand ça perce) vs **relayé**, en ms. *C'est la 1re fois qu'on pourra chiffrer
+>   (b) en conditions réelles — le perçage échoué l'a toujours empêché.*
+> - **Bande passante du relais.** Il porte du trafic de jeu (positions ~20 Hz), plus juste des adresses.
+>   Trivial à 2 ; à **borner** à l'échelle (un relais ≠ 55K) — les bornes `KIND_RELAY` s'appliquent.
+> - **Centralisation.** Le rendez-vous-relais redevient un serveur. Acceptable en v1 **car repli**, à
+>   décentraliser en v2.
+>
+> **CRITÈRE PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT de coder).** Deux pairs qui NE peuvent PAS se percer
+> (perçage abandonné des **deux** côtés, vérifié dans les logs) **se voient néanmoins BOUGER** via le
+> relais — ET on **chiffre enfin la fraîcheur (b)** en direct (âge de perception relayée, en ms). C'est
+> le test qui n'a jamais pu tourner faute de connexion : le relais le débloque. *Échec admis si : pas de
+> mouvement relayé, ou fraîcheur si dégradée qu'elle casse le game-feel (seuil à fixer dans le papier-wire).*
+>
+> **PETITS PAS (cadence intouchable).**
+> 1. **Étape 0** (ci-dessus) : 1 mesure propre B-ailleurs (~0 code) → dimensionne le repli.
+> 2. **Papier-wire** : format exact de la demande de relais + seuil de fraîcheur acceptable.
+> 3. **Repli minimal codé derrière un flag** (v1 = rendez-vous relaie une paire qui a abandonné), défaut
+>    byte-pour-byte intact, 0 warning, compile → test → preuve headless → commit → push.
+> 4. **Preuve réelle** A (mobile) ↔ B : ils se voient bouger + fraîcheur (b) chiffrée en ms.
+> *Ferme D17 en v1 (repli centralisé) ; v2 décentralisé (D4) reste un chantier ultérieur.*
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
