@@ -1538,6 +1538,10 @@ cohérente par tous les nœuds.
 > | CELL_SUMMARY v1 (cap 16 samples) | **759 o** | non (capé) | ✅ |
 > | **CELL_SUMMARY_V2** (cap 16 preuves ×182) | **3672 o** | non (capé) | ❌ **~×2,6 le MTU** |
 >
+> *⤷ MAJ 12.3-G : `RELAY_FWD` n'est plus « fixe 216 o » — son payload est désormais VARIABLE (avatar
+> 216 o, orbe 170 o). Toujours bien sous le MTU (le plus gros payload relayé prévu = l'état 182 o). Le
+> seul paquet > MTU reste le résumé v2 ci-dessous. Voir le PAPIER-WIRE 12.3-G plus bas.*
+>
 > **LE SEUL vrai risque : le résumé v2 (~3,6 Ko) DÉPASSE le MTU**, indépendamment de N → IP le fragmente
 > en ~3 morceaux ; en UDP, **un fragment perdu = tout le paquet jeté** → à l'échelle, avec de la perte,
 > c'est exactement le « horrible » pressenti. **Nuance :** v2 n'est émis QUE sous le drapeau
@@ -1711,6 +1715,88 @@ cohérente par tous les nœuds.
 > - Joueur A : `env RENDEZVOUS_ADDR=<ip>:<port> RELAY_FALLBACK=1 ...jeu a`
 > - Joueur B : `env RENDEZVOUS_ADDR=<ip>:<port> RELAY_FALLBACK=1 ...jeu b`
 > - Critère : A et B se voient BOUGER alors qu'aucun ne perce l'autre (vérifié par « ABANDON du perçage » dans les logs).
+
+> ### ⚙ PAPIER-WIRE 12.3-G — LE RELAIS GÉNÉRALISÉ (l'orbe & le reste traversent) — écrit le 22 juin 2026 (PAPIER, zéro code)
+> *Suite directe du 12.3 PROUVÉ. Méthode identique : on fige le format AVANT de coder ; le drapeau gate
+> tout ; le défaut reste byte-pour-byte intact ; 0 warning ; critère écrit AVANT. Lu dans le vrai code :
+> `message.rs` (`RELAY_FWD_SIZE` = 2+32+182 = 216 o FIXE ; `encode/decode_relay_fwd`), `rendezvous.rs`
+> (`relay_decision` fait `sig_ok(&inner)` sur un état 182 o), `orb.rs` (`orb_send` n'émet qu'aux trous
+> `h.open` ; `decode_orb_verified`/`orb_sig_ok` vérifient le sceau de l'orbe à la RÉCEPTION),
+> `netcode/send.rs` (`net_send` relaie déjà l'avatar pour les pairs `wants_relay`).*
+>
+> **LE SYMPTÔME (vérifié, pas supposé).** L'orbe apparaît en DOUBLE entre deux pairs relayés. Cause exacte
+> ([`orb.rs`](src/net/orb.rs) `orb_send`, l.389-393) : l'orbe n'est diffusée qu'aux pairs au trou **OUVERT**
+> (`h.open`). En relais NAT, **aucun trou n'est ouvert** → l'état d'orbe ne traverse jamais → chacun reste
+> maître de la sienne. **Le relais porte l'avatar (182 o) mais PAS l'orbe.** `net_send` sait relayer ;
+> `orb_send` non. C'est la seule lacune : le relais 12.3 est fait pour UN type de paquet (l'état joueur).
+>
+> **LA DÉCISION D'ARCHI (ce que je tranche).** On NE crée PAS un `KIND_RELAY_ORB_FWD` par type (2 kinds
+> aujourd'hui, 3 demain… ça ne scale pas, et la vision 55K dit « le relais porte les OBJETS PARTAGÉS du
+> monde, pas que les avatars »). On **généralise `KIND_RELAY_FWD`** en enveloppe à **payload de longueur
+> variable** : elle porte n'importe quel paquet déjà scellé (état joueur, orbe, plus tard gossip…). Une
+> seule enveloppe, propre et non-jetable.
+>
+> **LE FORMAT (figé) — `KIND_RELAY_FWD` reste 11, mais payload VARIABLE :**
+> ```
+> [0]                     KIND_RELAY_FWD (11)              — inchangé
+> [1]                     PROTO_VERSION                    — inchangé
+> [2..34]                 dest_id : clé publique du DESTINATAIRE. ROUTAGE seul, NON signé. — inchangé
+> [34..]                  PAYLOAD : un paquet déjà scellé, VERBATIM, de longueur LIBRE      — CHANGE
+> ```
+> **⭐ Propriété clé qui protège la base PROUVÉE : pour l'avatar, les octets sont IDENTIQUES.** L'ancien
+> format fixe = ce nouveau format avec payload = 182 o. Donc l'enveloppe d'avatar sur le fil **ne change
+> pas d'un octet**. Seul le DÉCODEUR change : il ne vérifie plus `len == 216` mais `len >= 34`, et rend le
+> payload comme tranche/`Vec` de longueur libre. **L'enveloppe d'orbe** = 2+32+`SIGNED_ORB_SIZE`(136) =
+> **170 o** → bien sous le MTU (~1200 o), aucune fragmentation (≠ résumé v2 à 3,6 Ko, cf. foresight 12.4).
+>
+> **CE QUE LE RENDEZ-VOUS DOIT LÂCHER — et pourquoi c'est SÛR.** Aujourd'hui `relay_decision` fait
+> `sig_ok(&inner)` : ça vérifie le sceau d'un état joueur de 182 o. Un payload variable peut être une orbe
+> (autre structure, autre sceau) → le rendez-vous **ne peut plus vérifier le sceau génériquement** sans
+> connaître le type. On **retire la vérif de sceau au rendez-vous** ; **le destinataire vérifie** (il le
+> faisait déjà : un avatar relayé arrive en `KIND_STATE` normal et passe par le sceau à l'ingestion ; une
+> orbe passe par `decode_orb_verified`/`orb_sig_ok` — VÉRIFIÉ dans le code, [orb.rs:149-164](src/net/orb.rs#L149)).
+> **L'anti-amplification NE repose PAS sur ce `sig_ok`** — il repose sur 3 barrières qui RESTENT intactes
+> (VÉRIFIÉ dans `rendezvous.rs`) : (1) **fanout = 1** (1 entrant → 1 sortant, jamais amplificateur) ;
+> (2) **rate-limit par source** (`relay_credit`/`RELAY_CAP`, [rendezvous.rs:140](src/net/rendezvous.rs#L140)) ;
+> (3) **dest doit être un client inscrit** (`relay_decision` rend `None` sinon → impossible de réfléchir vers
+> une victime hors-jeu). La barrière qui PORTE la sécurité (dest-inscrit + fanout 1) ne bouge pas.
+>
+> **MES DOUTES (transparence, pas devoirs) :**
+> - *Résidu assumé du retrait de `sig_ok` :* le rendez-vous relaiera désormais des octets non vérifiés (le
+>   dest les jette si le sceau échoue). Pire abus = un client inscrit fait gaspiller à un AUTRE client
+>   inscrit une vérif de signature (bon marché) à SON propre débit (1:1, rate-limité, attribuable). Borné,
+>   pas un amplificateur. **Jugé acceptable** (on perdait juste un filtre d'hygiène, pas une garantie).
+> - *Une alternative écartée :* unifier tous les payloads en « [corps signé][sig] avec pubkey à offset
+>   connu » pour que le rendez-vous vérifie générique. Plus invasif (orbe et état ont des layouts
+>   différents) pour re-gagner un filtre dont le dest se charge déjà. Pas le bon compromis.
+>
+> **CRITÈRE PRÉ-ENREGISTRÉ (Règle 2, écrit AVANT de coder).** Deux pairs au perçage abandonné des deux
+> côtés (donc relayés, comme la preuve 12.3) voient **UNE SEULE orbe**, avec un **maître cohérent** (le
+> même `owner` des deux côtés), et le transfert d'autorité fonctionne en relais. Juge = le ressenti +
+> idéalement une trace (l'`owner` vu par A == celui vu par B). *Échec admis si l'orbe reste double, ou si
+> le maître diverge entre A et B.*
+>
+> **PETITS PAS (cadence intouchable — base 12.3 PROUVÉE = intouchable, Règle 1) :**
+> 1. **Papier-wire** = CE bloc. Zéro code.
+> 2. **Pas A — généraliser l'enveloppe (prouvable HEADLESS, zéro changement observable).**
+>    `encode/decode_relay_fwd` → payload variable ; `relay_decision` n'assume plus 182 o et **ne fait plus
+>    `sig_ok`**. Tests unitaires : (a) **l'enveloppe d'avatar reste byte-identique** (garde-fou de
+>    non-régression — c'est LA preuve que la base ne bouge pas) ; (b) un payload de longueur libre fait
+>    l'aller-retour ; (c) malformé rejeté. compile → test → 0 warning → commit → push. *Aucun émetteur ne
+>    produit encore de payload non-182 → comportement observable inchangé. Le relais avatar prouvé reste
+>    byte-pour-byte sur le fil ; seul le `sig_ok` du rendez-vous disparaît (le dest vérifiait déjà).*
+> 3. **Pas B — l'orbe emprunte le relais.** `orb_send` : pour les pairs `wants_relay` (comme `net_send`,
+>    [send.rs:240-254](src/net/netcode/send.rs#L240)), emballer l'orbe scellée en `KIND_RELAY_FWD(dest)`
+>    vers le rendez-vous au lieu de ne rien envoyer. Gaté par `RELAY_FALLBACK` (défaut OFF → `orb_send`
+>    inchangé). compile → test → 0 warning → commit → push.
+> 4. **Preuve réelle (Pas B)** : A (mobile) ↔ B relayés → **une seule orbe, maître cohérent** (critère
+>    ci-dessus), lu sur le ressenti + trace. Re-vérifier au passage que **le relais avatar n'a PAS
+>    régressé** (le log serveur montre toujours les 🔀 des deux sens) — no-premature-victory.
+>
+> **CE QUE ÇA NE FERA PAS (à dire d'avance) :** ne décentralise pas le relais (toujours v1 centralisé,
+> D4 reste) ; ne résout PAS l'orbe « repère mort » (bug île séparé, cf. REPRISE §4) ; testé à 2 pairs, pas
+> à l'échelle ; le gossip/autres objets ne passeront que quand on câblera LEUR émission (le format les
+> portera, mais Pas B ne branche QUE l'orbe).
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
