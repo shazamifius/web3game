@@ -1686,9 +1686,24 @@ cohérente par tous les nœuds.
 > - Le confound hairpin (B même box que le serveur) reste NON mesuré → **étape 0 d'abord** (mesure propre
 >   B-ailleurs) pour savoir si le repli sert une minorité ou (presque) tout le monde.
 >
-> **Reste à faire, dans l'ordre (cadence intouchable) :** étape 0 (mesure propre, ~0 code, matériel à
-> monter par toi) → puis code du repli derrière les 2 drapeaux, compile → test → preuve headless → commit
-> → push → preuve réelle A(mobile)↔B avec RTT chiffré.
+> **AVANCEMENT (22 juin soir) — le repli est CODÉ derrière les 2 drapeaux, unit-prouvé :**
+> - ✅ **Pas 1 — routage rendez-vous** (`RENDEZVOUS_RELAY`, défaut OFF) : décode `KIND_RELAY_FWD`, vérifie
+>   le sceau interne, route vers le destinataire (client connu), à débit borné. Tests purs.
+> - ✅ **Pas 2 — émission client** (`RELAY_FALLBACK`, défaut OFF) : au perçage abandonné (`HoleState::abandoned`),
+>   `net_send` emballe l'état scellé en `KIND_RELAY_FWD(dest)` vers le rendez-vous. 99 tests, 0 warning.
+> - **Ce qui n'est PAS encore prouvé :** le LOOP complet en conditions réelles (perçage abandonné → relais →
+>   B affiche A). Tout est unit/pur ; le repli est câblé dans le client de JEU (`net_send`), PAS dans le bot
+>   headless (`bot.rs`) → pas de preuve headless de bout en bout possible sans contrivance (sur `lo` le perçage
+>   RÉUSSIT, donc rien n'abandonne). **La vraie preuve = ton test 2-machines** (c'est le but D17 de toute façon).
+> - **Reste :** preuve réelle A(mobile)↔B avec les 2 drapeaux allumés (commandes ci-dessous) ; étape 0 (mesure
+>   propre B-ailleurs) ; RTT loggé pour info (instrument optionnel, plus un gate).
+>
+> **▶️ COMMANDES POUR LA PREUVE RÉELLE (les 2 drapeaux) :**
+> - Serveur : relancer le rendez-vous avec `RENDEZVOUS_RELAY=1` (sur le service systemd : ajouter la variable
+>   d'env, ou lancer à la main `env RENDEZVOUS_RELAY=1 .../jeu rendezvous`). Le timer d'autoupdate pulle déjà ce code.
+> - Joueur A : `env RENDEZVOUS_ADDR=<ip>:<port> RELAY_FALLBACK=1 ...jeu a`
+> - Joueur B : `env RENDEZVOUS_ADDR=<ip>:<port> RELAY_FALLBACK=1 ...jeu b`
+> - Critère : A et B se voient BOUGER alors qu'aucun ne perce l'autre (vérifié par « ABANDON du perçage » dans les logs).
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
