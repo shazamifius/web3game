@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Moteur de jeu, 100 % Rust. Feature "wayland" car la session est en Wayland.
+# Moteur de jeu, 100 % Rust.
+bevy = { version = "0.18.1" }
+
+# La feature "wayland" n'existe QUE sur Linux (session dev en Wayland) ; sur Windows/macOS
+# elle n'existe pas → on ne l'active que pour la cible Linux. Cargo UNIONNE les features de
+# `[dependencies]` et de la cible : Linux = bevy+wayland (inchangé), Windows = bevy sans wayland
+# (la compilation .exe devient possible). Aucun impact sur la principale ni le laptop.
+[target.'cfg(target_os = "linux")'.dependencies]
 bevy = { version = "0.18.1", features = ["wayland"] }
 
 # CRYPTO (chapitre 5) : signatures à clé publique Ed25519. C'est la SEULE

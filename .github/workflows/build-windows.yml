@@ -1,0 +1,43 @@
+name: build-windows
+
+# Compile un .exe Windows du jeu sur un runner Windows natif (pas de cross-compile
+# depuis Linux, trop fragile pour Bevy) et le publie en artefact téléchargeable.
+# Déclenché à la MAIN (bouton « Run workflow » dans l'onglet Actions, ou via l'API).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compiler (release)
+        run: cargo build --release
+
+      - name: Empaqueter exe + assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/jeu.exe dist/
+          Copy-Item -Recurse asset dist/asset
+          # petit lanceur prêt à l'emploi (édite RENDEZVOUS_ADDR puis double-clic)
+          @'
+          @echo off
+          set RENDEZVOUS_ADDR=METS_ICI_IP:4000
+          jeu.exe a
+          pause
+          '@ | Out-File -Encoding ascii dist/LANCER_joueur_a.bat
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3game-windows
+          path: dist
