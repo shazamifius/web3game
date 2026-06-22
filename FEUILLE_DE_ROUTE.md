@@ -1686,17 +1686,24 @@ cohérente par tous les nœuds.
 > - Le confound hairpin (B même box que le serveur) reste NON mesuré → **étape 0 d'abord** (mesure propre
 >   B-ailleurs) pour savoir si le repli sert une minorité ou (presque) tout le monde.
 >
-> **AVANCEMENT (22 juin soir) — le repli est CODÉ derrière les 2 drapeaux, unit-prouvé :**
+> **✅✅ D17 BIDIRECTIONNEL PROUVÉ EN RÉEL (22 juin soir) — la forteresse n'est plus vide (D27).**
+> Deux humains, deux vrais réseaux (A = Windows/mobile NAT symétrique ; B = NixOS/maison LAN), qui NE
+> peuvent PAS se percer, **se voient bouger via le relais qu'on a écrit**. Preuve = le log du rendez-vous
+> (juge neutre) montre **les DEUX sens** : `🔀 00000b4b → 000010d6` (B→A) ET `🔀 000010d6 → 00000b4b` (A→B).
+> *C'est la 1re fois que le code fait entrer deux humains réels dans le même espace via Internet.*
 > - ✅ **Pas 1 — routage rendez-vous** (`RENDEZVOUS_RELAY`, défaut OFF) : décode `KIND_RELAY_FWD`, vérifie
->   le sceau interne, route vers le destinataire (client connu), à débit borné. Tests purs.
-> - ✅ **Pas 2 — émission client** (`RELAY_FALLBACK`, défaut OFF) : au perçage abandonné (`HoleState::abandoned`),
->   `net_send` emballe l'état scellé en `KIND_RELAY_FWD(dest)` vers le rendez-vous. 99 tests, 0 warning.
-> - **Ce qui n'est PAS encore prouvé :** le LOOP complet en conditions réelles (perçage abandonné → relais →
->   B affiche A). Tout est unit/pur ; le repli est câblé dans le client de JEU (`net_send`), PAS dans le bot
->   headless (`bot.rs`) → pas de preuve headless de bout en bout possible sans contrivance (sur `lo` le perçage
->   RÉUSSIT, donc rien n'abandonne). **La vraie preuve = ton test 2-machines** (c'est le but D17 de toute façon).
-> - **Reste :** preuve réelle A(mobile)↔B avec les 2 drapeaux allumés (commandes ci-dessous) ; étape 0 (mesure
->   propre B-ailleurs) ; RTT loggé pour info (instrument optionnel, plus un gate).
+>   le sceau interne, route vers le destinataire, à débit borné. + log diagnostic « 🔀 RELAIS établi X→Y ».
+> - ✅ **Pas 2 — émission client** (`RELAY_FALLBACK`, défaut OFF) : au perçage abandonné, `net_send` relaie
+>   via le rendez-vous. + le client annonce « Repli relais : ACTIF » au démarrage.
+> - ✅ **BUG trouvé EN RÉEL (introuvable en headless) :** `ingest_state` ouvrait le trou direct même sur un
+>   état RELAYÉ → A se croyait connecté en direct, n'abandonnait jamais, ne relayait jamais en retour
+>   (asymétrie : A voyait B, B ne voyait pas A). Fix : n'ouvrir le trou que si `from != rendezvous`. *Aucun
+>   test sur `lo` ne pouvait le voir (le perçage y réussit) — la valeur d'un humain dehors, prouvée.*
+> - **Ce que ça NE prouve PAS :** v1 = rendez-vous-relais CENTRALISÉ (repli, pas décentralisé — v2/D4 reste) ;
+>   testé à 2 pairs (pas l'échelle) ; la fraîcheur (b) RTT non chiffrée (rétrogradée, optionnelle) ; B était
+>   sur le LAN du serveur (pointé en LAN direct → pas de hairpin, mais pas un 3e réseau distinct non plus).
+> - **Reste (plus tard) :** v2 relais décentralisé (D4) ; relais à l'échelle (bucket partagé par source) ;
+>   étape 0 « B sur un 3e réseau » si on veut chiffrer le taux de réussite par type de NAT.
 >
 > **▶️ COMMANDES POUR LA PREUVE RÉELLE (les 2 drapeaux) :**
 > - Serveur : relancer le rendez-vous avec `RENDEZVOUS_RELAY=1` (sur le service systemd : ajouter la variable
