@@ -98,9 +98,47 @@ impl Rarity {
     }
 }
 
-/// Compteur PAR rareté (remis à 0 à chaque entrée sur l'île).
+/// Compteur PAR rareté. PERSISTANT : chargé au début de l'île, sauvé à chaque ramassage
+/// (`~/.web3game/ile_score.txt`) → la collection survit aux changements de scène et de session.
 #[derive(Resource, Default)]
 pub struct Score(pub [u32; 4]);
+
+/// Fichier de progression de l'île, à côté du coffre d'identité (`$WEB3GAME_DIR`, sinon
+/// `~/.web3game` ; `%USERPROFILE%` sous Windows). Local par utilisateur, jamais réseau.
+fn island_score_path() -> std::path::PathBuf {
+    let dir = std::env::var_os("WEB3GAME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".web3game")
+        });
+    dir.join("ile_score.txt")
+}
+
+/// Charge la progression sauvegardée (4 compteurs), ou des zéros si rien/illisible.
+fn load_island_score() -> [u32; 4] {
+    let mut out = [0u32; 4];
+    if let Ok(txt) = std::fs::read_to_string(island_score_path()) {
+        for (slot, tok) in out.iter_mut().zip(txt.split_whitespace()) {
+            if let Ok(v) = tok.parse() {
+                *slot = v;
+            }
+        }
+    }
+    out
+}
+
+/// Sauvegarde la progression — best-effort : on ne casse JAMAIS le jeu si l'écriture échoue.
+fn save_island_score(s: &[u32; 4]) {
+    let path = island_score_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format!("{} {} {} {}", s[0], s[1], s[2], s[3]));
+}
 
 /// Cadence d'apparition + graine de hasard maison (xorshift).
 #[derive(Resource)]
@@ -166,7 +204,7 @@ pub fn setup_island_game(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.insert_resource(Score::default());
+    commands.insert_resource(Score(load_island_score())); // reprend la collection sauvegardée
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
@@ -388,6 +426,7 @@ pub fn collect_meteors(
     if let Some((e, rarity)) = nearest_collectible(p, &gems) {
         commands.entity(e).despawn();
         score.0[rarity.idx()] += 1;
+        save_island_score(&score.0); // persiste la collection à chaque ramassage
     }
 }
 
