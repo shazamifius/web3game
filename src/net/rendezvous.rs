@@ -11,9 +11,10 @@
 use super::aoi::{dist2, keep_nearest, within_radius, MAX_NEIGHBORS};
 use super::control::{decode_hello, encode_welcome};
 use super::crypto::{PeerId, pow_bits};
+use super::message::{decode_relay_fwd, sig_ok, SIGNED_STATE_SIZE};
 use super::skin::random_hue;
 use super::transport::Socket;
-use super::wire::RENDEZVOUS_PORT;
+use super::wire::{kind, KIND_RELAY_FWD, RENDEZVOUS_PORT};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -56,6 +57,45 @@ fn rate_limit_hello(credit: f32) -> (bool, f32) {
     }
 }
 
+/// RELAIS NAT (chap. 12.3 / D17), repli derrière DRAPEAU. Budget par source du relais : un repli
+/// honnête émet ~20 paquets/s (cadence de jeu) → on tolère `RELAY_RATE` en régime, `RELAY_CAP` en
+/// pointe. Au-delà, on cesse de relayer cette source (anti-amplification : le rendez-vous ne se
+/// laisse pas transformer en réflecteur illimité). Valeurs jumelles de celles du relais pair (6.5).
+const RELAY_RATE: f32 = 30.0;
+const RELAY_CAP: f32 = 60.0;
+
+/// Le rendez-vous est-il en MODE RELAIS ? Éteint par DÉFAUT (`RENDEZVOUS_RELAY` non défini) → il
+/// reste un présentateur PUR, « tuable », qui ne route AUCUN état (comportement historique, chemin
+/// par défaut byte-pour-byte intact). Allumé (`RENDEZVOUS_RELAY=1`) → il relaie les paires qui ne
+/// peuvent pas se percer. *Casse la propriété « rendez-vous jetable » → assumé en v1 car c'est un
+/// REPLI (cf. PAPIER 12.3) ; à décentraliser en v2.*
+fn relay_enabled() -> bool {
+    relay_flag_on(std::env::var("RENDEZVOUS_RELAY").ok().as_deref())
+}
+
+/// Politique du drapeau (PURE, testable sans toucher l'environnement) : seul `1`/`true` allume le
+/// relais ; absent ou toute autre valeur = ÉTEINT (présentateur pur). Défaut sûr = OFF.
+fn relay_flag_on(v: Option<&str>) -> bool {
+    matches!(v, Some("1") | Some("true"))
+}
+
+/// DÉCISION DE RELAIS (pure, testable) : à partir d'une enveloppe `KIND_RELAY_FWD` reçue et de la
+/// table des clients, rend `(adresse de B, état scellé de A à recopier)` — ou `None` si l'enveloppe
+/// est malformée, si son sceau interne est invalide (on ne relaie JAMAIS du bruit non signé →
+/// anti-amplification), ou si le destinataire n'est pas un client connu. Le rendez-vous ne fait que
+/// PORTER des octets signés : il ne peut rien forger (le sceau bout-en-bout tient).
+fn relay_decision(
+    buf: &[u8],
+    clients: &HashMap<SocketAddr, ClientInfo>,
+) -> Option<(SocketAddr, [u8; SIGNED_STATE_SIZE])> {
+    let (dest, inner) = decode_relay_fwd(buf)?;
+    if !sig_ok(&inner) {
+        return None; // sceau interne invalide → on ne recopie pas du bruit
+    }
+    let addr = clients.iter().find(|(_, info)| info.id == dest).map(|(a, _)| *a)?;
+    Some((addr, inner))
+}
+
 /// Ce que le rendez-vous retient d'un client : son id, sa dernière activité, sa
 /// position (pour l'AoI), et son dernier nombre de voisins (pour ne logger qu'au
 /// changement).
@@ -80,10 +120,17 @@ pub fn run_rendezvous() {
     println!(
         "Rendez-vous : écoute sur 127.0.0.1:{RENDEZVOUS_PORT} (couleur de salle : teinte {world_hue}°). En attente de joueurs…"
     );
+    // 12.3 : mode relais (repli NAT), lu UNE fois. Éteint par défaut → présentateur pur (chemin intact).
+    let relay = relay_enabled();
+    if relay {
+        println!("⚠ Mode RELAIS ACTIVÉ (RENDEZVOUS_RELAY) : je route les états des paires qui ne percent pas. Plus « jetable » → repli v1 (cf. PAPIER 12.3).");
+    }
 
     let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
     // D21 : seaux de rate-limit débit par source (adresse). Rechargés au temps écoulé à chaque tour.
     let mut hello_credit: HashMap<SocketAddr, f32> = HashMap::new();
+    // 12.3 : budget de relais par source (séparé du HELLO car cadence de jeu ~20 Hz, pas 1 Hz).
+    let mut relay_credit: HashMap<SocketAddr, f32> = HashMap::new();
     let mut last_tick = Instant::now();
 
     loop {
@@ -97,8 +144,33 @@ pub fn run_rendezvous() {
         if hello_credit.len() > MAX_CLIENTS {
             hello_credit.retain(|_, c| *c < HELLO_BURST);
         }
+        // 12.3 : même recharge/drainage pour le budget de relais (anti-saturation mémoire).
+        if relay {
+            for credit in relay_credit.values_mut() {
+                *credit = (*credit + dt * RELAY_RATE).min(RELAY_CAP);
+            }
+            if relay_credit.len() > MAX_CLIENTS {
+                relay_credit.retain(|_, c| *c < RELAY_CAP);
+            }
+        }
 
         for (from, bytes) in socket.poll() {
+            // 12.3 — REPLI RELAIS (derrière le drapeau). Une enveloppe KIND_RELAY_FWD est routée vers
+            // son destinataire (un client connu), à débit borné, UNIQUEMENT si l'émetteur est lui aussi
+            // un client inscrit (réflecteur entre deux pairs connus, pas un service ouvert). On ne route
+            // que des octets SIGNÉS (relay_decision vérifie le sceau). Hors mode relais : ignoré.
+            if relay && kind(&bytes) == Some(KIND_RELAY_FWD) {
+                if clients.contains_key(&from) {
+                    let c = relay_credit.entry(from).or_insert(RELAY_CAP);
+                    if *c >= 1.0 {
+                        if let Some((dest_addr, inner)) = relay_decision(&bytes, &clients) {
+                            *c -= 1.0;
+                            let _ = socket.send_to(dest_addr, &inner);
+                        }
+                    }
+                }
+                continue; // une enveloppe de relais n'est jamais un HELLO
+            }
             // HELLO porte la position du joueur (pour l'AoI) ET son identité (clé
             // publique). Depuis le chap. 6.1, le rendez-vous n'ATTRIBUE plus de numéro :
             // l'identité, c'est la clé. Il ne fait que présenter les joueurs entre eux.
@@ -210,5 +282,81 @@ mod tests {
             }
         }
         assert_eq!(repondus, HELLO_BURST as i32); // exactement la pointe, pas 100
+    }
+
+    // --- 12.3 : REPLI RELAIS (routage côté rendez-vous) -------------------------
+
+    use super::super::crypto::Identity;
+    use super::super::message::{encode_relay_fwd, encode_signed, PlayerState};
+
+    fn client(id: PeerId, addr: &str) -> (SocketAddr, ClientInfo) {
+        let info = ClientInfo { id, seen: Instant::now(), pos: (0.0, 0.0), last_count: 0 };
+        (addr.parse().unwrap(), info)
+    }
+
+    /// Fabrique l'état SCELLÉ d'un joueur (forme KIND_STATE de 182 o) sous son identité.
+    fn sealed_state(idy: &Identity) -> [u8; SIGNED_STATE_SIZE] {
+        let p = PlayerState {
+            id: idy.id(), x: 1.0, y: 0.0, z: -2.0, vx: 0.0, vy: 0.0, vz: 0.0,
+            yaw: 0.0, pitch: 0.0, r: 0.5, g: 0.5, b: 0.5, parent: None, seq: 1,
+        };
+        encode_signed(&p, idy)
+    }
+
+    /// Le mode relais est ÉTEINT par défaut (drapeau absent) et ne s'allume QUE sur `1`/`true` → le
+    /// chemin par défaut reste celui d'avant (aucun routage d'état). Testé purement, sans toucher l'env.
+    #[test]
+    fn relais_eteint_par_defaut() {
+        assert!(!relay_flag_on(None)); // drapeau absent → OFF (présentateur pur)
+        assert!(!relay_flag_on(Some("0")));
+        assert!(!relay_flag_on(Some("yes"))); // toute valeur inattendue → OFF (défaut sûr)
+        assert!(relay_flag_on(Some("1")));
+        assert!(relay_flag_on(Some("true")));
+    }
+
+    /// LE cas nominal : A (qui ne perce pas B) envoie une enveloppe RELAY_FWD(dest=B) ; le rendez-vous
+    /// la route vers l'ADRESSE de B, en recopiant l'état scellé de A VERBATIM (le sceau tient).
+    #[test]
+    fn relais_route_vers_le_bon_destinataire_verbatim() {
+        let a = Identity::generate();
+        let b = Identity::generate();
+        let mut clients = HashMap::new();
+        let (b_addr, b_info) = client(b.id(), "203.0.113.7:5000");
+        clients.insert(b_addr, b_info);
+        let (other_addr, other_info) = client(Identity::generate().id(), "198.51.100.2:6000");
+        clients.insert(other_addr, other_info);
+
+        let sealed = sealed_state(&a);
+        let env = encode_relay_fwd(b.id(), &sealed);
+        let (addr, inner) = relay_decision(&env, &clients).expect("doit router");
+        assert_eq!(addr, b_addr); // vers B, pas l'autre
+        assert_eq!(inner, sealed); // l'état de A est recopié à l'octet près
+        assert!(sig_ok(&inner)); // et son sceau tient → le rendez-vous ne forge rien
+    }
+
+    /// Destinataire INCONNU (pas un client) → on ne route pas (pas de réflecteur vers l'extérieur).
+    #[test]
+    fn relais_refuse_destinataire_inconnu() {
+        let a = Identity::generate();
+        let inconnu = Identity::generate();
+        let clients: HashMap<SocketAddr, ClientInfo> = HashMap::new(); // personne
+        let env = encode_relay_fwd(inconnu.id(), &sealed_state(&a));
+        assert!(relay_decision(&env, &clients).is_none());
+    }
+
+    /// État interne au sceau INVALIDE (octet trituré) → on ne recopie PAS du bruit (anti-amplification),
+    /// même si le destinataire existe.
+    #[test]
+    fn relais_refuse_sceau_invalide() {
+        let a = Identity::generate();
+        let b = Identity::generate();
+        let mut clients = HashMap::new();
+        let (b_addr, b_info) = client(b.id(), "203.0.113.7:5000");
+        clients.insert(b_addr, b_info);
+
+        let mut sealed = sealed_state(&a);
+        sealed[40] ^= 0xFF; // on casse le corps signé
+        let env = encode_relay_fwd(b.id(), &sealed);
+        assert!(relay_decision(&env, &clients).is_none());
     }
 }

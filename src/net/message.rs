@@ -13,7 +13,7 @@
 //! une identité : il faudrait posséder la clé privée correspondante.
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::wire::{KIND_RELAY, KIND_STATE, PROTO_VERSION};
+use super::wire::{KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, PROTO_VERSION};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id` = sa clé publique), où
 /// (`x,y,z`), à quelle vitesse il va (`vx,vy,vz`), comment il est orienté
@@ -161,6 +161,48 @@ pub(crate) fn sig_ok(buf: &[u8]) -> bool {
     verify(&body, &sig, &pubkey)
 }
 
+// ----------------------------------------------------------------------------
+// ENVELOPPE DE RELAIS NAT (chap. 12.3 / D17) — UNICAST A → rendez-vous → B.
+// ----------------------------------------------------------------------------
+// Quand A ne peut PAS percer le NAT de B (perçage abandonné), il demande au seul point public
+// commun (le rendez-vous, v1) de router son état SCELLÉ vers B. C'est une simple enveloppe de
+// ROUTAGE autour de l'état déjà signé — on NE re-signe RIEN (le sceau bout-en-bout tient).
+//   [0] KIND_RELAY_FWD | [1] version | [2..34] dest_id (clé de B, ROUTAGE seul, NON signé)
+//   | [34..216] l'état KIND_STATE SCELLÉ de A, VERBATIM (182 o = SIGNED_STATE_SIZE).
+// Le destinataire n'est PAS signé : au pire, un dest falsifié fait router l'état (toujours scellé,
+// infalsifiable) vers le mauvais pair, qui vérifie le sceau et affiche A — aucune forge possible.
+/// Taille d'une enveloppe de relais NAT = en-tête (2) + dest (32) + état scellé (182) = 216 o.
+pub(crate) const RELAY_FWD_SIZE: usize = 2 + PUBKEY_LEN + SIGNED_STATE_SIZE;
+
+/// Décode une enveloppe `KIND_RELAY_FWD` → `(dest, état_scellé_verbatim)`, ou `None` si malformée.
+/// L'état interne est rendu VERBATIM (déjà en forme `KIND_STATE`, déjà signé) : l'appelant (le
+/// rendez-vous) vérifie son sceau avec `sig_ok` AVANT de le recopier, et ne re-signe jamais.
+pub(crate) fn decode_relay_fwd(buf: &[u8]) -> Option<(PeerId, [u8; SIGNED_STATE_SIZE])> {
+    if buf.len() != RELAY_FWD_SIZE || buf[0] != KIND_RELAY_FWD || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    let mut db = [0u8; PUBKEY_LEN];
+    db.copy_from_slice(&buf[2..2 + PUBKEY_LEN]);
+    let dest = PeerId::from_bytes(db);
+    let mut inner = [0u8; SIGNED_STATE_SIZE];
+    inner.copy_from_slice(&buf[2 + PUBKEY_LEN..]);
+    Some((dest, inner))
+}
+
+/// Construit une enveloppe `KIND_RELAY_FWD` autour d'un état déjà scellé, à destination de `dest`.
+/// `#[cfg(test)]` pour l'instant : la vraie ÉMISSION par le client (au perçage abandonné, derrière
+/// le drapeau `RELAY_FALLBACK`) arrive au pas suivant. Garder ici la réciproque de `decode_relay_fwd`
+/// permet de prouver le format dès maintenant SANS code mort dans le build normal.
+#[cfg(test)]
+pub(crate) fn encode_relay_fwd(dest: PeerId, sealed: &[u8; SIGNED_STATE_SIZE]) -> [u8; RELAY_FWD_SIZE] {
+    let mut out = [0u8; RELAY_FWD_SIZE];
+    out[0] = KIND_RELAY_FWD;
+    out[1] = PROTO_VERSION;
+    out[2..2 + PUBKEY_LEN].copy_from_slice(dest.bytes());
+    out[2 + PUBKEY_LEN..].copy_from_slice(sealed);
+    out
+}
+
 /// Lit l'id (clé) revendiqué dans un paquet d'état, sans rien vérifier. Sert à la
 /// réputation : quand le sceau est valide mais le contenu impossible, on sait QUI accuser.
 pub(crate) fn claimed_id(buf: &[u8]) -> Option<PeerId> {
@@ -294,6 +336,45 @@ mod tests {
         p.id = victime.id(); // je PRÉTENDS être la victime…
         let signed = encode_signed(&p, &attaquant); // … mais je signe avec MA clé
         assert!(decode_verified(&signed).is_none());
+    }
+
+    /// RELAY_FWD (12.3) : l'enveloppe de routage fait l'aller-retour, ET l'état SCELLÉ interne
+    /// ressort VERBATIM + se vérifie encore (le relais ne casse pas le sceau bout-en-bout).
+    #[test]
+    fn relay_fwd_survit_a_l_aller_retour_et_garde_le_sceau() {
+        let a = Identity::generate();
+        let mut p = etat_exemple();
+        p.id = a.id();
+        let sealed = encode_signed(&p, &a); // l'état scellé de A (forme KIND_STATE)
+        let dest = pid(42); // la clé de B (destinataire)
+        let env = encode_relay_fwd(dest, &sealed);
+        assert_eq!(env.len(), RELAY_FWD_SIZE); // 216 o
+        let (recu_dest, recu_inner) = decode_relay_fwd(&env).expect("doit se décoder");
+        assert_eq!(recu_dest, dest); // le routage a survécu
+        assert_eq!(recu_inner, sealed); // l'état interne est rendu VERBATIM
+        assert!(sig_ok(&recu_inner)); // et son sceau tient toujours → le relais ne forge rien
+        assert_eq!(decode_verified(&recu_inner).unwrap().id, a.id()); // l'émetteur reste A
+    }
+
+    /// RELAY_FWD : une enveloppe malformée (mauvais type, mauvaise taille) est rejetée nettement,
+    /// et un paquet d'état NORMAL n'est PAS lu comme une enveloppe (pas de croisement de format).
+    #[test]
+    fn relay_fwd_malforme_et_pas_de_croisement() {
+        let a = Identity::generate();
+        let mut p = etat_exemple();
+        p.id = a.id();
+        let sealed = encode_signed(&p, &a);
+        let mut env = encode_relay_fwd(pid(7), &sealed);
+        // mauvais type → rejet
+        env[0] = KIND_STATE;
+        assert!(decode_relay_fwd(&env).is_none());
+        // taille non canonique → rejet
+        assert!(decode_relay_fwd(&env[..RELAY_FWD_SIZE - 1]).is_none());
+        // un état signé normal (182 o) n'est pas une enveloppe (216 o) → rejet par la taille
+        assert!(decode_relay_fwd(&sealed).is_none());
+        // et réciproquement, l'enveloppe (type 11) n'est pas décodée comme un état (type 1)
+        let bonne = encode_relay_fwd(pid(7), &sealed);
+        assert!(decode(&bonne).is_none());
     }
 
     /// L'enveloppe scellée résiste au RELAIS (bascule KIND_RELAY) mais pas à la

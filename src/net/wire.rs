@@ -23,6 +23,7 @@ pub(crate) const KIND_ACCUSE: u8 = 7; // témoin → pairs : « j'ai banni ce tr
 pub(crate) const KIND_GOSSIP: u8 = 8; // pair → pairs : « cartes de visite » d'autres pairs (découverte décentralisée, 8.1)
 pub(crate) const KIND_CELL_SUMMARY: u8 = 9; // hôte de cellule → observateurs : RÉSUMÉ d'une région (foule en LOD, 8.3)
 pub(crate) const KIND_CELL_SUMMARY_V2: u8 = 10; // idem + TRAILER de preuves auto-signées (8.3★ C-sécu-2, gaté SIGNED_SAMPLES)
+pub(crate) const KIND_RELAY_FWD: u8 = 11; // A → rendez-vous : « route cet état SCELLÉ vers B » (repli NAT, 12.3 / D17, gaté RENDEZVOUS_RELAY)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {
