@@ -29,6 +29,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(String::as_str);
 
+    // BANNER DE BUILD : on imprime de quel commit est ce binaire. Démasque un vieux .exe relancé
+    // par erreur (cf. les boucles de test du 22 juin) → on ne devine plus quelle version tourne.
+    println!("web3game build {} (mode: {})", env!("GIT_HASH"), mode.unwrap_or("jeu"));
+
     // `cargo run -- net-demo a`  lance la démo réseau en texte (sans la 3D).
     if mode == Some("net-demo") {
         let role = args.get(2).map(String::as_str).unwrap_or("a");
