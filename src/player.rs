@@ -21,6 +21,7 @@ const EYE_HEIGHT: f32 = 0.7; // hauteur des yeux au-dessus du centre du corps (~
 pub const GROUND_Y: f32 = 0.7;
 const GRAVITY: f32 = 18.0; // m/s² (un peu plus que la vraie : plus « jeu », moins flottant)
 const JUMP_SPEED: f32 = 6.0; // impulsion verticale au décollage (m/s) → saut ~1 m de haut
+const FLY_SPEED: f32 = 10.0; // vitesse verticale en mode survol (île)
 
 /// Joueur : porte la position et la rotation gauche/droite (lacet).
 #[derive(Component)]
@@ -130,9 +131,9 @@ pub fn setup_player(
                 Transform::from_xyz(0.0, EYE_HEIGHT, 0.0),
                 // HDR + bloom : le néon « glow ». Tonemapping pour de belles couleurs.
                 Hdr,
-                // Bloom plus marqué → les néons (salle, hub, cristaux) « glow » davantage.
+                // Bloom FORT → les néons (salle, hub, cristaux, étoiles) « glow » nettement.
                 Bloom {
-                    intensity: 0.40,
+                    intensity: 0.60,
                     ..Bloom::NATURAL
                 },
                 Tonemapping::TonyMcMapface,
@@ -228,6 +229,26 @@ pub fn jump_and_gravity(
         transform.translation.y = GROUND_Y;
         v.vy = 0.0;
     }
+}
+
+/// Mode SURVOL (île géante, en attendant la collision raycast) : Espace = monter,
+/// Shift gauche = descendre. La gravité est désactivée sur l'île (cf. main.rs).
+pub fn fly_vertical(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut player: Query<&mut Transform, With<Player>>,
+) {
+    let Ok(mut t) = player.single_mut() else {
+        return;
+    };
+    let mut dy = 0.0;
+    if keyboard.pressed(KeyCode::Space) {
+        dy += 1.0;
+    }
+    if keyboard.pressed(KeyCode::ShiftLeft) {
+        dy -= 1.0;
+    }
+    t.translation.y = (t.translation.y + dy * FLY_SPEED * time.delta_secs()).max(0.5);
 }
 
 /// Vue à la souris : lacet sur le corps, tangage sur la tête (bloqué aux ~90°).

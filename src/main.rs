@@ -146,10 +146,11 @@ fn main() {
         (scenes::setup_island, scenes::enter_island_player, meteorites::setup_island_game),
     )
     .add_systems(OnExit(Scene::Island), scenes::despawn_world)
-    // Le petit jeu de l'île (météorites) ne tourne QUE sur l'île.
+    // Le petit jeu de l'île (météorites) ne tourne QUE sur l'île ; + le texturing du terrain.
     .add_systems(
         Update,
         (
+            scenes::texture_island,
             meteorites::spawn_meteors,
             meteorites::fall_meteors,
             meteorites::twinkle,
@@ -164,7 +165,9 @@ fn main() {
         Update,
         (
             player::move_player,
-            player::jump_and_gravity,
+            // Gravité/saut PARTOUT sauf sur l'île géante (là : mode survol, cf. fly_vertical).
+            player::jump_and_gravity.run_if(not(in_state(Scene::Island))),
+            player::fly_vertical.run_if(in_state(Scene::Island)),
             player::look_around,
             player::head_bob,
             player::toggle_cursor,

@@ -43,6 +43,10 @@ pub struct WorldGeometry;
 #[derive(Resource, Default)]
 pub struct HubSpawnDone(pub bool);
 
+/// Marqueur posé sur le terrain de l'île une fois qu'il a été coloré procéduralement.
+#[derive(Component)]
+pub struct IslandTextured;
+
 /// Un portail du hub : marcher dedans bascule vers `target`.
 #[derive(Component)]
 pub struct Portal {
@@ -201,71 +205,24 @@ pub fn return_to_hub(keyboard: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextS
 /// posée sur une grande MER bleue, sous un ciel ouvert, avec un soleil, du RELIEF (une
 /// colline + des rochers) et quelques NUAGES qui flottent. Pas encore de météorites —
 /// c'est le pas suivant ; ici on rend juste l'endroit agréable.
+/// Facteur d'agrandissement de l'île .glb (le mesh exporté est normalisé à ~2 unités).
+pub const ISLAND_SCALE: f32 = 30.0;
+
 pub fn setup_island(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
 ) {
-    let disc = meshes.add(Cylinder::new(1.0, 1.0)); // rayon 1, hauteur 1 (mis à l'échelle)
     let ball = meshes.add(Sphere::new(1.0));
 
-    // --- La MER : un grand disque bleu translucide, autour et sous l'île. ---
-    let sea = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.45, 0.75),
-        perceptual_roughness: 0.2, // un peu brillante (eau)
-        ..default()
-    });
+    // --- L'ÎLE : le modèle Blender `asset/ile.glb`, agrandi. Il n'a NI matériau NI texture
+    // → `texture_island` (système) le colore PROCÉDURALEMENT par hauteur + pente. ---
     commands.spawn((
         WorldGeometry,
-        Mesh3d(disc.clone()),
-        MeshMaterial3d(sea),
-        Transform::from_xyz(0.0, -0.6, 0.0).with_scale(Vec3::new(120.0, 0.2, 120.0)),
+        SceneRoot(assets.load("ile.glb#Scene0")),
+        Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(ISLAND_SCALE)),
     ));
-
-    // --- L'ÎLE : un disque d'herbe (rayon ~6), bordé de sable clair. ---
-    let sand = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.80, 0.74, 0.50),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    commands.spawn((
-        WorldGeometry,
-        Mesh3d(disc.clone()),
-        MeshMaterial3d(sand),
-        Transform::from_xyz(0.0, -0.2, 0.0).with_scale(Vec3::new(13.0, 0.5, 13.0)), // plage
-    ));
-    let grass = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.18, 0.50, 0.20),
-        perceptual_roughness: 0.95,
-        ..default()
-    });
-    commands.spawn((
-        WorldGeometry,
-        Mesh3d(disc.clone()),
-        MeshMaterial3d(grass.clone()),
-        Transform::from_xyz(0.0, -0.1, 0.0).with_scale(Vec3::new(11.0, 0.5, 11.0)), // herbe
-    ));
-
-    // --- RELIEF : une colline douce (sphère aplatie) au fond, + quelques rochers. ---
-    commands.spawn((
-        WorldGeometry,
-        Mesh3d(ball.clone()),
-        MeshMaterial3d(grass.clone()),
-        Transform::from_xyz(0.0, 0.0, -3.5).with_scale(Vec3::new(4.0, 1.6, 4.0)),
-    ));
-    let rock = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.35, 0.35, 0.38),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    for (x, z, s) in [(3.2_f32, 1.5_f32, 0.5_f32), (-3.0, 2.2, 0.7), (2.0, -2.8, 0.4)] {
-        commands.spawn((
-            WorldGeometry,
-            Mesh3d(ball.clone()),
-            MeshMaterial3d(rock.clone()),
-            Transform::from_xyz(x, 0.0, z).with_scale(Vec3::splat(s)),
-        ));
-    }
 
     // --- ÉTOILES : une multitude de petits points blancs émissifs, semés sur un dôme
     // lointain et haut (positions déterministes via un petit xorshift → même ciel à
@@ -318,6 +275,85 @@ pub fn setup_island(
     ));
 }
 
+/// TEXTURING PROCÉDURAL du terrain de l'île (le .glb n'a aucune texture). Quand le gros
+/// mesh « Landscape » est chargé, on calcule UNE couleur par sommet selon sa HAUTEUR et sa
+/// PENTE (sable en bas, herbe, roche sur les pentes raides, neige sur les sommets), on
+/// l'écrit en couleurs de sommets, et on pose un matériau blanc qui les laisse ressortir.
+/// → un terrain « clean » sans aucun travail de texture côté Blender. Fait UNE fois (marqueur).
+pub fn texture_island(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    q: Query<(Entity, &Mesh3d), Without<IslandTextured>>,
+) {
+    use bevy::mesh::VertexAttributeValues as V;
+    for (e, m3d) in &q {
+        let Some(mesh) = meshes.get_mut(&m3d.0) else {
+            continue; // pas encore chargé
+        };
+        // On ne vise QUE le terrain (très dense) — pas les météores/étoiles (petits meshes).
+        if mesh.count_vertices() < 50_000 {
+            continue;
+        }
+        if mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_none() {
+            let positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(V::Float32x3(p)) => p.clone(),
+                _ => continue,
+            };
+            let normals: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
+                Some(V::Float32x3(n)) => n.clone(),
+                _ => vec![[0.0, 1.0, 0.0]; positions.len()],
+            };
+            let (mut ymin, mut ymax) = (f32::MAX, f32::MIN);
+            for p in &positions {
+                ymin = ymin.min(p[1]);
+                ymax = ymax.max(p[1]);
+            }
+            let span = (ymax - ymin).max(1e-4);
+            let colors: Vec<[f32; 4]> = positions
+                .iter()
+                .zip(&normals)
+                .map(|(p, n)| terrain_color((p[1] - ymin) / span, n[1].abs()))
+                .collect();
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        }
+        // Matériau blanc mat → les couleurs de sommets portent toute la teinte du terrain.
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.95,
+            ..default()
+        });
+        commands.entity(e).insert((MeshMaterial3d(mat), IslandTextured));
+    }
+}
+
+/// Couleur d'un sommet de terrain selon sa hauteur `t` (0 = bas, 1 = sommet) et la planéité
+/// `flat` (1 = horizontal, 0 = vertical/falaise). Bandes douces : sable → herbe → roche → neige,
+/// et les pentes raides virent à la roche (falaises) quelle que soit la hauteur.
+fn terrain_color(t: f32, flat: f32) -> [f32; 4] {
+    let grass = [0.16, 0.42, 0.15];
+    let rock = [0.34, 0.31, 0.28];
+    let snow = [0.92, 0.94, 0.98];
+    let sand = [0.78, 0.71, 0.46];
+    let lerp = |a: [f32; 3], b: [f32; 3], k: f32| {
+        let k = k.clamp(0.0, 1.0);
+        [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]
+    };
+    let base = if t < 0.06 {
+        sand
+    } else if t > 0.72 {
+        snow
+    } else if t > 0.5 {
+        lerp(grass, rock, (t - 0.5) / 0.22)
+    } else {
+        grass
+    };
+    // Pentes raides → roche (falaises) : d'autant plus que c'est vertical.
+    let cliff = ((1.0 - flat) * 1.6).clamp(0.0, 0.85);
+    let c = lerp(base, rock, cliff);
+    [c[0], c[1], c[2], 1.0]
+}
+
 // ----------------------------------------------------------------------------
 // Téléportation du joueur au point d'apparition de chaque scène
 // ----------------------------------------------------------------------------
@@ -339,10 +375,15 @@ pub fn enter_arcade_player(
 }
 pub fn enter_island_player(
     mut clear: ResMut<ClearColor>,
-    q: Query<(&mut Transform, &mut Vertical), With<Player>>,
+    mut q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_NIGHT;
-    place_player(q, Vec3::new(0.0, GROUND_Y, 0.0));
+    // Point de SURVOL en surplomb, face à l'île (vers +Z) → on voit tout le terrain texturé.
+    if let Ok((mut t, mut v)) = q.single_mut() {
+        t.translation = Vec3::new(0.0, 16.0, -48.0);
+        t.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        v.vy = 0.0;
+    }
 }
 
 /// Pose le joueur à `pos`, face à -Z, vitesse verticale remise à 0.

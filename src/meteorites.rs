@@ -16,7 +16,7 @@ use crate::player::Player;
 use crate::scenes::WorldGeometry;
 use bevy::prelude::*;
 
-const ISLAND_RADIUS: f32 = 8.0; // rayon de la zone où les météorites tombent
+const ISLAND_RADIUS: f32 = 18.0; // rayon de la zone où les météorites tombent (île agrandie)
 const FALL_SPEED: f32 = 11.0; // vitesse de chute (m/s) — lente : on les voit venir de loin
 const GROUND_HIT: f32 = 0.30; // hauteur (y) à laquelle un météore « atterrit »
 const PICKUP_RADIUS: f32 = 1.6; // distance (m) pour ramasser un cristal posé
@@ -229,17 +229,17 @@ pub fn spawn_meteors(
     if clock.timer > 0.0 {
         return;
     }
-    clock.timer = 1.0 + next_rand(&mut clock.rng) * 1.5; // prochaine : 1,0–2,5 s (plus espacé)
+    clock.timer = 20.0 + next_rand(&mut clock.rng) * 100.0; // prochaine : 20–120 s (rare)
 
     let rarity = Rarity::roll(next_rand(&mut clock.rng));
     let ang = next_rand(&mut clock.rng) * std::f32::consts::TAU;
     let rad = next_rand(&mut clock.rng).sqrt() * ISLAND_RADIUS;
     let target = Vec3::new(ang.cos() * rad, GROUND_HIT, ang.sin() * rad);
-    // Départ TRÈS HAUT (70–105 m) et un peu décalé → on les voit arriver longtemps.
+    // Départ ULTRA HAUT (320–390 m) et quasi vertical → ~30 s de chute, visible de très loin.
     let off = Vec3::new(
-        (next_rand(&mut clock.rng) - 0.5) * 45.0,
-        70.0 + next_rand(&mut clock.rng) * 35.0,
-        (next_rand(&mut clock.rng) - 0.5) * 45.0,
+        (next_rand(&mut clock.rng) - 0.5) * 30.0,
+        320.0 + next_rand(&mut clock.rng) * 70.0,
+        (next_rand(&mut clock.rng) - 0.5) * 30.0,
     );
     let start = target + off;
     let vel = (target - start).normalize() * FALL_SPEED;
