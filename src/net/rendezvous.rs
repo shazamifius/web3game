@@ -15,7 +15,7 @@ use super::message::{decode_relay_fwd, sig_ok, SIGNED_STATE_SIZE};
 use super::skin::random_hue;
 use super::transport::Socket;
 use super::wire::{kind, KIND_RELAY_FWD, RENDEZVOUS_PORT};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -131,6 +131,9 @@ pub fn run_rendezvous() {
     let mut hello_credit: HashMap<SocketAddr, f32> = HashMap::new();
     // 12.3 : budget de relais par source (séparé du HELLO car cadence de jeu ~20 Hz, pas 1 Hz).
     let mut relay_credit: HashMap<SocketAddr, f32> = HashMap::new();
+    // 12.3 (diagnostic) : paires (src→dest) déjà relayées au moins une fois → on logue la 1re recopie
+    // de chaque sens (preuve OBSERVABLE du relais, neutre, sans dépendre des fenêtres 3D).
+    let mut relayed_pairs: HashSet<(PeerId, PeerId)> = HashSet::new();
     let mut last_tick = Instant::now();
 
     loop {
@@ -166,6 +169,14 @@ pub fn run_rendezvous() {
                         if let Some((dest_addr, inner)) = relay_decision(&bytes, &clients) {
                             *c -= 1.0;
                             let _ = socket.send_to(dest_addr, &inner);
+                            // Diagnostic : 1re recopie de CE sens → on l'annonce une fois.
+                            if let (Some(src), Some(dst)) =
+                                (clients.get(&from).map(|i| i.id), clients.get(&dest_addr).map(|i| i.id))
+                            {
+                                if relayed_pairs.insert((src, dst)) {
+                                    println!("🔀 RELAIS établi : {} → {} (première recopie)", src.short(), dst.short());
+                                }
+                            }
                         }
                     }
                 }
