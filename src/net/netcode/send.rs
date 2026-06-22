@@ -233,10 +233,11 @@ pub fn net_send(
         // que le trou n'est pas ouvert, on accumule juste un peu de crédit, prêt à
         // émettre dès que la connexion directe est établie.
         let open = holes.map.get(id).map_or(false, |h| h.open);
-        // 12.3 — REPLI : perçage ABANDONNÉ (NAT symétrique) → au lieu d'ignorer, on route via le
-        // rendez-vous (si le drapeau est allumé). Trou ni ouvert ni abandonné = perçage en cours :
-        // on attend, exactement comme avant (défaut byte-pour-byte intact quand `relay` est faux).
-        let relayed = relay && !open && holes.map.get(id).map_or(false, |h| h.abandoned());
+        // 12.3 — REPLI : on route via le rendez-vous (si le drapeau est allumé) dès que le pair le
+        // VEUT — perçage abandonné OU pair qui nous joint déjà par relais (réciprocité immédiate, ferme
+        // la fenêtre de reconnexion). Trou ni ouvert ni « wants_relay » = perçage en cours → on attend,
+        // exactement comme avant (défaut byte-pour-byte intact quand `relay` est faux).
+        let relayed = relay && holes.map.get(id).map_or(false, |h| h.wants_relay());
         if !open && !relayed {
             continue;
         }

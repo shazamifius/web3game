@@ -71,6 +71,10 @@ pub(crate) fn decode_punch(buf: &[u8]) -> Option<PeerId> {
 /// le temps écoulé depuis le dernier essai (pour cadencer les tentatives).
 pub(crate) struct HoleState {
     pub(crate) open: bool,
+    /// Le pair nous JOINT via le relais (on a reçu son état relayé par le rendez-vous) → preuve que le
+    /// direct échoue de son côté → on doit le relayer EN RETOUR tout de suite, sans attendre nos 40
+    /// perçages. Ferme la fenêtre de ré-armement de ~10 s à la reconnexion (12.3, étude du 22 juin).
+    pub(crate) relays_to_us: bool,
     tries: u32,
     acc: f32,
 }
@@ -82,12 +86,19 @@ impl HoleState {
     pub(crate) fn abandoned(&self) -> bool {
         !self.open && punch_abandoned(self.tries)
     }
+
+    /// Doit-on RELAYER notre état vers ce pair ? Oui (tant que le direct n'est pas ouvert) si : soit
+    /// on a abandonné notre perçage, SOIT le pair nous joint déjà par relais (réciprocité immédiate →
+    /// plus de fenêtre aveugle de 10 s à la reconnexion). Le direct, dès qu'il s'ouvre, reprend la main.
+    pub(crate) fn wants_relay(&self) -> bool {
+        self.abandoned() || (!self.open && self.relays_to_us)
+    }
 }
 
 impl Default for HoleState {
     fn default() -> Self {
         // `acc` démarre à PUNCH_INTERVAL pour percer DÈS la première image.
-        HoleState { open: false, tries: 0, acc: PUNCH_INTERVAL }
+        HoleState { open: false, relays_to_us: false, tries: 0, acc: PUNCH_INTERVAL }
     }
 }
 
@@ -179,5 +190,20 @@ mod tests {
         assert!(h.abandoned()); // au seuil, trou fermé : ABANDONNÉ → repli relais
         h.open = true;
         assert!(!h.abandoned()); // trou OUVERT (perçage réussi) → jamais abandonné, même au seuil
+    }
+
+    /// 12.3 — `wants_relay()` : on relaie si on a abandonné OU si le pair nous joint déjà par relais
+    /// (réciprocité immédiate → ferme la fenêtre de reconnexion). Le direct ouvert reprend toujours la main.
+    #[test]
+    fn hole_wants_relay_abandon_ou_pair_relaie() {
+        let mut h = HoleState::default();
+        assert!(!h.wants_relay()); // neuf : perçage en cours, ni abandon ni pair-relais → on attend
+        h.relays_to_us = true;
+        assert!(h.wants_relay()); // le pair nous joint par relais → on relaie TOUT DE SUITE (sans 40 essais)
+        h.relays_to_us = false;
+        h.tries = PUNCH_GIVEUP;
+        assert!(h.wants_relay()); // abandon du perçage → relais
+        h.open = true;
+        assert!(!h.wants_relay()); // direct OUVERT → jamais de relais, même si abandon/pair-relais
     }
 }

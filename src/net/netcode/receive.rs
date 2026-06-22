@@ -367,6 +367,10 @@ fn ingest_state(
     let hole = holes.map.entry(state.id).or_default();
     if opens_hole {
         hole.open = true;
+    } else {
+        // Reçu via le rendez-vous (relayé) : le pair nous joint par relais → on le relaiera EN RETOUR
+        // tout de suite (sans attendre l'abandon de notre perçage) → ferme la fenêtre de reconnexion.
+        hole.relays_to_us = true;
     }
     let snap = Snapshot {
         t: now,
