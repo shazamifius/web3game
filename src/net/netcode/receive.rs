@@ -189,8 +189,9 @@ pub fn net_receive(
                             // On affiche le protégé chez nous même si le budget est épuisé.
                             link.note_pos(state.id, (state.x, state.z)); // 8.1 : AoI + gossip
                             let want_detailed = link.is_focus(&state.id); // 8.2c : tier de rendu
+                            // Relais d'upload faible : le download du protégé reste DIRECT → on ouvre le trou.
                             ingest_state(
-                                state, now, link.my_id, want_detailed, &mut holes, &mut avatars,
+                                state, now, link.my_id, want_detailed, true, &mut holes, &mut avatars,
                                 &mut commands, &mut meshes, &mut materials,
                             );
                         }
@@ -228,8 +229,12 @@ pub fn net_receive(
                         } else {
                             link.note_pos(state.id, (state.x, state.z)); // 8.1 : pour l'AoI + le gossip
                             let want_detailed = link.is_focus(&state.id); // 8.2c : tier de rendu
+                            // 12.3 : n'ouvrir le trou QUE si l'état vient en DIRECT. S'il vient du rendez-vous
+                            // (relayé), il prouve la vie du pair, pas un chemin direct → ne pas ouvrir, pour
+                            // qu'on abandonne le perçage et qu'on relaie EN RETOUR (sinon asymétrie observée).
+                            let direct = from != link.rendezvous;
                             ingest_state(
-                                state, now, link.my_id, want_detailed, &mut holes, &mut avatars,
+                                state, now, link.my_id, want_detailed, direct, &mut holes, &mut avatars,
                                 &mut commands, &mut meshes, &mut materials,
                             );
                         }
@@ -345,6 +350,7 @@ fn ingest_state(
     now: f32,
     my_id: Option<PeerId>,
     want_detailed: bool,
+    opens_hole: bool,
     holes: &mut Holes,
     avatars: &mut RemoteAvatars,
     commands: &mut Commands,
@@ -354,7 +360,14 @@ fn ingest_state(
     if Some(state.id) == my_id {
         return; // jamais notre propre avatar
     }
-    holes.map.entry(state.id).or_default().open = true;
+    // 12.3 : un état RELAYÉ (reçu via le rendez-vous) prouve que le pair est VIVANT, pas qu'un chemin
+    // DIRECT existe. On n'ouvre le trou que sur un état DIRECT — sinon on se croit connecté en direct,
+    // on émet dans le vide au lieu de relayer en retour, et on n'abandonne jamais le perçage → le repli
+    // ne s'arme jamais (bug d'asymétrie du relais NAT, observé en RÉEL le 22 juin via le log serveur).
+    let hole = holes.map.entry(state.id).or_default();
+    if opens_hole {
+        hole.open = true;
+    }
     let snap = Snapshot {
         t: now,
         pos: Vec3::new(state.x, state.y, state.z),
