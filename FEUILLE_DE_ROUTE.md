@@ -130,41 +130,67 @@
 > **✅ C-sécu-2 BOUCLÉ (22 juin, étapes 1→6).** Le plancher est désormais à la fois ANTI-INFLATION (red-team 50) ET
 > de meilleure fidélité que l'ancien 1b gonflable (781 vs 746 @1000), à coût wire nul. Lag de convergence fermé.
 >
-> **PLAN D'ACTION — REPRISE (par ordre conseillé ; aucune urgence, 55K = boussole) :**
-> 1. **[sécu, le vrai trou restant] Anti-inflation /24 RÉEL via le harnais NAT.** Tout C-sécu n'est prouvé qu'en LOGIQUE
->    + récup headless sur bus PARFAIT. La borne anti-Sybil par sous-réseau /24 (rareté de l'IP) n'est PAS testée sur de
->    vraies IP → réutiliser le harnais namespaces de 9.4b. C'est la dette honnête à fermer avant de dire « densité
->    sécurisée prouvée ».
-> 2. **[durcissement mineur] Red-team bout-en-bout via l'auto-peuplement 6-B** (aujourd'hui : unitaire + raisonnement
->    de construction) + mémoïser `floor_counts_by_cell` si le décodage pèse sur le frame du vrai jeu (dette CPU +6 % banc).
-> 3. **[fraîcheur] Mesurer en direct l'ÂGE de perception d'un lointain** (mesure « trop gentille » (b) non close).
-> 4. **[présentation] SWITCH UNREAL via SIDECAR (B)** — décidé le 22 juin, cf. bloc 🎮 plus haut. Le cœur réseau Rust
->    (intouchable) devient un démon ; Unreal = client mince sur socket local. Étapes : extraire crate `web3core` →
->    contrat d'interface minimal (poll avatars / push ma position / état orbe) → rebâtir hub/portails/arcade/île/avatars.
+> 🏦 **C-sécu est BANQUÉ — on n'en fait PLUS (décision 22 juin, avec l'utilisateur).** État connu, propre, on y
+> reviendra. **On ne lance PAS C-sécu-3.** Le raisonnement (le sien, validé) : *continuer à dorer ce sous-système,
+> alors que la moitié du script n'existe pas, est un double gâchis* — (a) on polit trop tôt, (b) on polit contre des
+> hypothèses que la moitié non-écrite va DÉPLACER (la corroboration /24 suppose un modèle d'adresses que le NAT réel
+> va changer ; le timing gossip est réglé sur un réseau parfait que la vraie perte/jitter va bouger). Donc tout poli
+> d'aujourd'hui serait à RE-faire. Dette C-sécu laissée explicite : /24 anti-inflation jamais testé sur de vraies IP ;
+> red-team 6-B prouvé en unitaire seulement ; mémoïser `floor_counts_by_cell` si le décodage pèse (CPU +6 % banc).
 >
-> **PROCHAINE ACTION CONCRÈTE = (1) harnais NAT pour le /24 réel**, en session FOCALISÉE. *(Le switch Unreal vient après
-> le durcissement réseau — ordre voulu par l'utilisateur, cf. décision moteur de présentation.)*
+> 🟠 **PIÈCE À TÉMOIN — l'orbe est CASSÉE (et c'est l'argument fait chair).** Un sous-système magnifiquement poli
+> (autorité unique, migration d'hôte déterministe, preuve de contact anti-vol, 12 tests headless verts) a
+> SILENCIEUSEMENT cassé quand on a empilé scènes + île + gravité : l'orbe est restée clouée à `(0,1.5,0)` dans le
+> repère MORT de la salle (`ORB_START` + boîte `ROOM_SIZE`/`ROOM_HEIGHT`, [orb.rs:31](src/net/orb.rs#L31),
+> [orb.rs:304-332](src/net/orb.rs#L304-332)), pendant que le joueur a déménagé sur l'île (`IslandSpawn.pos`). Enterrée
+> sous le terrain / sous l'eau / à 30 m → invisible. **Pas réparée exprès** : son game-feel part vers Unreal, la
+> ré-ancrer dans Bevy serait du jetable. Témoin du « ce qu'on a poli devra RE-être poli », et du fait que les tests
+> HEADLESS ne voient pas l'intégration visuelle. → couche présentation (étape 4).
+>
+> 🆕 **D27 — « la forteresse vide ».** Le doute le plus dangereux du projet, jusqu'ici ABSENT du registre (26 doutes
+> techniques, 0 de périmètre) : *ai-je bâti une forteresse réseau magnifique dans laquelle DEUX humains réels ne se
+> sont jamais retrouvés via le vrai Internet ?* Sa preuve : la mesure (b) « fraîcheur ressentie » — la SEULE grandeur
+> qui décide « espace vivant vs mort » — est la SEULE jamais chiffrée, et le banc bus headless en est STRUCTURELLEMENT
+> incapable (grandeur humaine sur lien réel avec perte/jitter). La cadence anti-collapse a donc un angle mort câblé :
+> elle ne prouve QUE ce que le simulateur sait prouver. D27 ne se ferme que dehors. → c'est l'objet du PLAN ci-dessous.
+>
+> **PLAN D'ACTION — REPRISE (par ordre, décidé le 22 juin ; 55K = boussole, pas échéance) :**
+> 1. **[LE squelette de bout en bout — la base, AU SENS LITTÉRAL] D17 : deux humains, deux vrais NAT, le vrai
+>    Internet, qui se voient bouger. Laid accepté.** Aujourd'hui deux inconnus sur deux box ne peuvent PAS se
+>    connecter (hole-punching parqué) → ce n'est pas du poli, c'est la PORTE D'ENTRÉE de la maison, et elle n'existe
+>    pas. « Finir la base » = D17, pas C-sécu-3. Ce test attaque d'un coup : D17 NAT (marche ou mur, découvert cheap
+>    maintenant), (b) fraîcheur en direct (ferme D27), saut d'orbe (R1) et jitter — les 4 vraies mauvaises expériences.
+>    **On pré-enregistre AVANT le test** : ms de retard médian = « mort », taux de connexion par TYPE de NAT — et on
+>    inclut de l'HOSTILE (lien mobile, deux NAT symétriques) sinon on ne fait que déplacer l'auto-félicitation.
+> 2. **[présentation] SWITCH UNREAL via SIDECAR (B)** — décidé le 22 juin, cf. bloc 🎮 plus haut. APRÈS que la base
+>    sache connecter 2 humains. Le cœur réseau Rust (intouchable) devient un démon ; Unreal = client mince sur socket
+>    local. Étapes : extraire crate `web3core` → contrat d'interface minimal (poll avatars / push ma position / état
+>    orbe) → rebâtir hub/portails/arcade/île/avatars (l'orbe y renaît, ré-ancrée).
+>
+> **PROCHAINE ACTION CONCRÈTE = PAPIER « test 2-humains » d'abord** (critère pré-enregistré, dispositif : 1 PC + 1
+> téléphone en partage de connexion, ou un VPS à 5 €), AVANT la moindre ligne. *(Pas Unreal pour ça — l'orbe Bevy
+> suffit pour VOIR le jitter et le saut.)*
 >
 > ⚡ **PIÈGE DE BANC À RETENIR (sinon on perd 1 h) :** le minage PoW coûte **~3 s à N=1000 sous `POW_BITS=8`** mais
 > **~50 min au défaut 18 bits** (≈3 s/identité × 1000). TOUJOURS lancer les bancs `coopsim-bus N≥1000` avec `POW_BITS=8`
 > en tête (orthogonal à la mesure perception/débit). Et écrire la sortie DIRECTEMENT dans un fichier (`> f.txt`), JAMAIS
 > via `| grep > f` (grep bufferise par blocs → blackout des snapshots ; le binaire Rust, lui, line-buffer son stdout).
 >
-> 🚀 **DÉMARRAGE PROCHAINE SESSION — l'étape 6 (papier d'abord, wire = sécu critique SUPERVISÉ) :**
-> - **But :** fermer le lag de convergence sans casser le MTU. Le plafond actuel : 16 samples + `K_PROOF=4` preuves inline
->   (182 o) ≈ 1488 o, frôle 1500. **Piste retenue (option 3 du papier) :** preuve par RÉFÉRENCE `(id,seq)` ~40 o au lieu
->   de 182 o inline → ~4× plus d'occupants couverts/émission au MÊME wire ; le receveur RETROUVE le sceau qu'il détient
->   DÉJÀ en `signed_states` (gossip), ne compte au plancher que les références RÉSOLUES + vérifiées (sinon ignore = sûr).
-> - **Acquis (étapes 1-5) :** `verify_proof` (cache `(id,seq)`), `verified_proofs` (id→seq,cellule), plancher vérifié sous
->   `SIGNED_SAMPLES`. **89 tests, 0 warning.** Mesure N=1000 : inflation fermée, débit +0,7 %, récup 705 vs 1b 756.
-> - **▶️ Étape 6 — petits pas :** (1) PAPIER : format de la référence + résolution receveur + repli si sceau absent ;
->   (2) wire (nouveau sous-format ou champ) gaté, défaut byte-intact ; (3) émission référence ; (4) réception résout +
->   vérifie ; (5) re-mesure N=1000 (récup doit rejoindre ~756 à débit ≤ +30 %).
-> - **Critère pré-enregistré (inchangé) :** (a) red-team 66→50 ✅ ; (b) récup ≥ 1b re-mesuré (756 @1000) ; (c) débit ≤ +30 %
->   vs 1b ; (d) CPU < 1 %/cœur. **Si le débit explose → REPLI** (plancher anti-omission documenté ; `qth` porte la sécurité).
+> 🚀 **DÉMARRAGE PROCHAINE SESSION — le PAPIER « test 2-humains » (D17, papier d'abord, comme C-sécu) :**
+> - **But :** prouver — ou réfuter — que la base sait faire entrer DEUX humains réels dans le même espace via le vrai
+>   Internet, et CHIFFRER pour la 1re fois la fraîcheur ressentie (b) / fermer D27. C'est le squelette de bout en bout
+>   (*walking skeleton*) : moche mais qui marche, AVANT tout nouveau poli.
+> - **Acquis sur lequel s'appuyer :** chemin UDP signé + perçage NAT déjà prouvé EN NAMESPACES (ch.7.5, `tools/test-nat.sh`,
+>   full-cone 6/6) — mais JAMAIS sur deux vraies box / NAT inconnus. Orbe Bevy = suffit pour VOIR jitter + saut (pas Unreal).
+> - **▶️ Petits pas :** (1) PAPIER : dispositif (1 PC + 1 tel en partage, ou VPS 5 €), ce qu'on mesure, critère
+>   pré-enregistré ; (2) faire se connecter 2 instances sur 2 réseaux RÉELS (rendez-vous + perçage) ; (3) mesurer
+>   end-to-end l'âge de perception (« je bouge » → « tu me vois »), le taux de connexion par type de NAT ; (4) verdict.
+> - **Critère pré-enregistré (à figer dans le papier AVANT de coder) :** (a) 2 inconnus sur 2 NAT se voient bouger ;
+>   (b) retard médian < X ms (X à fixer = seuil « vivant ») ; (c) testé en HOSTILE (lien mobile, NAT symétrique) sinon nul.
+>   **Si le perçage échoue sur NAT symétrique → ce n'est pas un échec, c'est le MUR D17 trouvé cheap → relais (ch.12.3).**
 >
-> **APRÈS C-sécu-2 :** attaquer le **mur n°2** (bootstrap symétrique — touche le protocole → supervisé), ou Phase B
-> inclusivité, ou ch.10.2 chiffrement. *Petit pas, preuve d'abord.*
+> **APRÈS le test 2-humains :** la preuve réordonne le plan. Selon ce que (b) révèle → interpolation R1 (si le saut
+> domine), relais NAT symétrique (si le perçage est le mur), ou switch Unreal. *Petit pas, preuve d'abord, dehors cette fois.*
 >
 > ──────────── JOURNAL DÉTAILLÉ ci-dessous (archive — relire au besoin via `grep`) ────────────
 
@@ -706,6 +732,25 @@ autoritaire (deux hôtes en désaccord = deux flux, aucune corruption d'état).
 8.1b/D23, PoW exigée sur les cartes) sont non-signés *à dessein* mais maîtrisés. *Vérif :* un hôte qui cache/invente
 >X % de sa cellule est détecté et contourné en N s. **Couche 1 = quasi mécanique (à coder en TÊTE de Phase B) ;
 couche 2 = le design à prouver.**
+
+### Catégorie 10 — Périmètre (le doute qui peut tuer le projet)
+
+> *Catégorie créée le 22 juin : elle MANQUAIT. 26 doutes techniques, 0 de périmètre — or le seul qui peut tuer le
+> projet n'est aucun des 26. Toute la rigueur était pointée VERS L'INTÉRIEUR du netcode ; aucune vers « est-ce la
+> bonne chose à construire, pour qui, et quand un humain y touche ».*
+
+**D27 — « La forteresse vide ».** 🔴 `[test 2-humains, prochaine action]`
+*Constat :* on a bâti une forteresse réseau profonde et rare (crypto, gossip, AOI, anti-Sybil, anti-inflation
+corroborée) dans laquelle **deux humains réels ne se sont jamais retrouvés via le vrai Internet**. *La preuve du
+doute :* la mesure (b) « fraîcheur ressentie » — la SEULE grandeur qui décide si un espace social est *vivant* (si
+ta position a 4 s de retard, l'espace est mort) — est la SEULE jamais chiffrée. Et ce n'est pas un oubli : le banc
+bus headless en est **structurellement incapable** ((b) est une grandeur humaine-perceptuelle sur un lien réel avec
+perte/jitter). *Conséquence méta :* la cadence anti-collapse (compile → test → **preuve headless**) a un angle mort
+CÂBLÉ — elle ne peut prouver QUE ce que le simulateur sait prouver, et continuer à travailler le protocole peut
+devenir une façon très sophistiquée d'éviter le test le plus effrayant : mettre la chose entre les mains d'une
+personne. *Piste (= la seule honnête) :* deux humains, deux vrais NAT, le vrai Internet, critère de fraîcheur
+pré-enregistré AVANT le test, conditions hostiles incluses (lien mobile, NAT symétrique). *Vérif :* (b) chiffrée en
+direct, taux de connexion mesuré par type de NAT. **Ferme aussi, par ricochet, ce que D17/R1 cachaient.**
 
 ---
 
