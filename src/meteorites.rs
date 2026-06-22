@@ -13,10 +13,11 @@
 //! une zone autour de l'origine) → marchera tel quel avec une vraie île .glb.
 
 use crate::player::Player;
-use crate::scenes::WorldGeometry;
+use crate::scenes::{IslandTextured, WorldGeometry};
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 
-const ISLAND_RADIUS: f32 = 18.0; // rayon de la zone où les météorites tombent (île agrandie)
+const ISLAND_RADIUS: f32 = 95.0; // rayon de la zone d'impact (île géante ×30, demi-étendue ~138)
 const FALL_SPEED: f32 = 11.0; // vitesse de chute (m/s) — lente : on les voit venir de loin
 const GROUND_HIT: f32 = 0.30; // hauteur (y) à laquelle un météore « atterrit »
 const PICKUP_RADIUS: f32 = 1.6; // distance (m) pour ramasser un cristal posé
@@ -260,10 +261,16 @@ pub fn spawn_meteors(
 pub fn fall_meteors(
     time: Res<Time>,
     assets: Res<MeteorAssets>,
+    mut ray: MeshRayCast,
+    terrain: Query<(), With<IslandTextured>>,
     mut commands: Commands,
     mut meteors: Query<(Entity, &mut Transform, &mut Meteor)>,
 ) {
     let dt = time.delta_secs();
+    let filter = |e: Entity| terrain.contains(e);
+    let settings = MeshRayCastSettings::default()
+        .with_filter(&filter)
+        .with_visibility(RayCastVisibility::Any);
     for (e, mut tf, mut m) in &mut meteors {
         tf.translation += m.vel * dt;
 
@@ -280,10 +287,28 @@ pub fn fall_meteors(
             ));
         }
 
-        if tf.translation.y <= GROUND_HIT {
-            tf.translation.y = GROUND_HIT;
-            // On garde `Twinkle` → le cristal posé continue de scintiller (il gère la taille).
-            commands.entity(e).remove::<Meteor>().insert(Collectible { rarity: m.rarity });
+        // Sol RÉEL sous le météore (raycast sur le terrain), pour qu'il se pose SUR le relief
+        // (montagnes comprises) au lieu de plonger dans un plan plat. On lance depuis un peu
+        // au-dessus pour ne pas rater le sol si on l'a déjà franchi cette frame.
+        let origin = tf.translation + Vec3::Y * 2.0;
+        let ground = ray
+            .cast_ray(Ray3d::new(origin, Dir3::NEG_Y), &settings)
+            .first()
+            .map(|(_, hit)| hit.point.y);
+
+        match ground {
+            // Touché le terrain : on pose le cristal POSÉ dessus (centre = sol + demi-taille).
+            Some(g) if tf.translation.y <= g + m.rarity.body_size() => {
+                tf.translation.y = g + m.rarity.body_size() * 0.5;
+                // On garde `Twinkle` → le cristal posé continue de scintiller (il gère la taille).
+                commands.entity(e).remove::<Meteor>().insert(Collectible { rarity: m.rarity });
+            }
+            // Pas de terrain sous nous (tombé hors de l'île / au-dessus de l'eau) : on laisse
+            // filer, puis on nettoie sous le niveau de référence pour ne pas accumuler.
+            None if tf.translation.y < GROUND_HIT - 5.0 => {
+                commands.entity(e).despawn();
+            }
+            _ => {}
         }
     }
 }

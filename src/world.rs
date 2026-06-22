@@ -47,7 +47,7 @@ pub fn setup_room(
     let neon_magenta = materials.add(emissive(edge_c.0, edge_c.1, edge_c.2)); // arêtes (accent)
     let neon_wall = materials.add(emissive(wall_c.0, wall_c.1, wall_c.2)); // grille des murs
     let neon_ceil = materials.add(emissive(grid_soft.0, grid_soft.1, grid_soft.2)); // grille du plafond
-    let fixture_mat = materials.add(emissive(2.0, 1.6, 1.35)); // plafonnier (blanc chaud, fixe)
+    let fixture_mat = materials.add(emissive(14.0, 11.0, 9.0)); // plafonnier (blanc chaud, fixe) — irradie
 
     // On garde les poignées des matériaux néon : si on est connecté à un serveur,
     // `apply_world_color` les recolore avec la teinte PARTAGÉE par tous les joueurs.
@@ -176,10 +176,13 @@ pub struct WorldNeon {
 /// Sol/plafond suivent la teinte ; murs et arêtes prennent des teintes décalées
 /// (≈ +140° et +210°) pour un contraste agréable.
 fn palette_from_hue(base: f32) -> Palette {
-    let grid = hsv(base, 1.0, 1.3);
-    let grid_soft = hsv(base, 0.85, 0.95);
-    let wall_c = hsv((base + 140.0) % 360.0, 1.0, 1.2);
-    let edge_c = hsv((base + 210.0) % 360.0, 1.0, 1.25);
+    // Valeurs (V) BIEN au-dessus de 1.0 : c'est l'écart au-dessus de 1.0 qui nourrit
+    // le bloom HDR. À 1.2–1.3 le « glow » était quasi nul (le néon paraissait peint) ;
+    // à 4–6 il IRRADIE comme une vraie émission Blender, sans tout laver en blanc.
+    let grid = hsv(base, 1.0, 11.0);
+    let grid_soft = hsv(base, 0.85, 6.0);
+    let wall_c = hsv((base + 140.0) % 360.0, 1.0, 9.0);
+    let edge_c = hsv((base + 210.0) % 360.0, 1.0, 10.0);
     (grid, grid_soft, wall_c, edge_c)
 }
 

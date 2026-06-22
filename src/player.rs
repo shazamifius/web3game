@@ -128,13 +128,21 @@ pub fn setup_player(
             p.spawn((
                 PlayerCamera,
                 Camera3d::default(),
+                // Far plane large : l'île géante + son ciel (lune/étoiles lointaines) doivent
+                // tenir dans le frustum sans être coupés.
+                Projection::from(PerspectiveProjection {
+                    far: 4000.0,
+                    ..default()
+                }),
                 Transform::from_xyz(0.0, EYE_HEIGHT, 0.0),
                 // HDR + bloom : le néon « glow ». Tonemapping pour de belles couleurs.
                 Hdr,
-                // Bloom modéré : assez pour le « glow » néon, sans tout laver en blanc.
+                // Bloom À SEUIL (OLD_SCHOOL = additif + prefilter) : SEULS les pixels au-dessus
+                // du seuil (le néon émissif ≫ 1) « bavent », et fort. Le terrain/les murs sombres
+                // restent NETS → plus de voile gris sur l'île, et un glow néon franc comme Blender.
                 Bloom {
                     intensity: 0.30,
-                    ..Bloom::NATURAL
+                    ..Bloom::OLD_SCHOOL
                 },
                 Tonemapping::TonyMcMapface,
                 // Ambiance basse et violacée : surfaces SOMBRES → le néon émissif RESSORT.

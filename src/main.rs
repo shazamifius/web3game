@@ -153,6 +153,8 @@ fn main() {
         (
             scenes::texture_island,
             scenes::bind_island_spawn,
+            scenes::animate_water,
+            scenes::animate_fireflies,
             meteorites::spawn_meteors,
             meteorites::fall_meteors,
             meteorites::twinkle,

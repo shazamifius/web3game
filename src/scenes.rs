@@ -13,6 +13,7 @@
 //! n'ont pas de hub, donc rien à changer pour elles.
 
 use crate::player::{Player, Vertical, GROUND_Y};
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 
 /// L'instance où l'on se trouve. `Hub` au démarrage (sauf `SCENE=…`).
@@ -47,6 +48,21 @@ pub struct HubSpawnDone(pub bool);
 /// (sert AUSSI de cible au raycast de collision : on ne marche QUE sur ce terrain).
 #[derive(Component)]
 pub struct IslandTextured;
+
+/// Marqueur de la MER animée (notre plan subdivisé). `animate_water` ondule ses sommets.
+#[derive(Component)]
+pub struct Water;
+
+/// Une LUCIOLE : flotte autour de `origin` selon une dérive lente (sinus déphasés par `phase`).
+#[derive(Component)]
+pub struct Firefly {
+    origin: Vec3,
+    phase: f32,
+}
+
+/// Niveau (monde) de la surface de l'eau. Le plan « eau » du glb est à y≈0,110 en local ;
+/// ×`ISLAND_SCALE` → ~1,32 monde. On y pose notre mer et on en déduit le seuil de chute.
+const WATER_Y: f32 = 0.11032158 * ISLAND_SCALE;
 
 /// Point d'apparition de l'île (lu du marqueur `spawn` du glb) + niveau de « chute » sous
 /// lequel on renvoie le joueur au spawn (sortie de l'île / eau). `done` : déjà placé ?
@@ -218,16 +234,23 @@ pub fn return_to_hub(keyboard: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextS
 /// posée sur une grande MER bleue, sous un ciel ouvert, avec un soleil, du RELIEF (une
 /// colline + des rochers) et quelques NUAGES qui flottent. Pas encore de météorites —
 /// c'est le pas suivant ; ici on rend juste l'endroit agréable.
-/// Facteur d'agrandissement de l'île .glb (le mesh exporté est petit).
-pub const ISLAND_SCALE: f32 = 12.0;
+/// Facteur d'agrandissement de l'île .glb (le mesh exporté est petit). GROS : une vraie île
+/// à explorer (mesh natif ±4,6 → ±138 m, sommets ~91 m). Le ciel/la mer/les ombres en
+/// cascade plus bas sont dimensionnés en conséquence.
+pub const ISLAND_SCALE: f32 = 30.0;
 
 pub fn setup_island(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut spawn: ResMut<IslandSpawn>,
     assets: Res<AssetServer>,
 ) {
     let ball = meshes.add(Sphere::new(1.0));
+
+    // Sous la surface de l'eau → renvoi au spawn (on ne nage pas). Un peu sous la surface
+    // pour ne déclencher que si on plonge vraiment.
+    spawn.water_y = WATER_Y - 0.6;
 
     // --- L'ÎLE : le modèle Blender `asset/ile.glb`, agrandi. Il n'a NI matériau NI texture
     // → `texture_island` (système) le colore PROCÉDURALEMENT par hauteur + pente. ---
@@ -237,10 +260,38 @@ pub fn setup_island(
         Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(ISLAND_SCALE)),
     ));
 
+    // --- LA MER : notre propre plan subdivisé (le plan « eau » plat du glb est masqué par
+    // `texture_island`). Bleu translucide, peu rugueux → le clair de lune y fait des reflets ;
+    // `animate_water` ondule ses sommets pour des vagues. Vaste, pour ceinturer l'île. ---
+    let sea_mesh = meshes.add(
+        Plane3d::default()
+            .mesh()
+            .size(1500.0, 1500.0)
+            .subdivisions(160)
+            .build(),
+    );
+    let sea_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.04, 0.20, 0.32, 0.85),
+        perceptual_roughness: 0.10,
+        metallic: 0.0,
+        reflectance: 0.45,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.spawn((
+        WorldGeometry,
+        Water,
+        Mesh3d(sea_mesh),
+        MeshMaterial3d(sea_mat),
+        Transform::from_xyz(0.0, WATER_Y, 0.0),
+    ));
+
     // --- ÉTOILES : une multitude de petits points blancs émissifs, semés sur un dôme
     // lointain et haut (positions déterministes via un petit xorshift → même ciel à
     // chaque visite, et zéro dépendance). Plus beau de NUIT, comme demandé. ---
-    let star = materials.add(emissive(2.2, 2.3, 2.6)); // blanc bleuté qui « glow »
+    // Émissif FAIBLE (à peine au-dessus du seuil de bloom) → de vrais petits points, pas de
+    // gros disques flous. Beaucoup, petits et BIEN répartis → un vrai champ d'étoiles.
+    let star = materials.add(emissive(1.4, 1.5, 1.8));
     let mut s: u32 = 0x51ED_3F17;
     let mut rnd = || {
         s ^= s << 13;
@@ -248,17 +299,20 @@ pub fn setup_island(
         s ^= s << 5;
         s as f32 / u32::MAX as f32 // [0,1)
     };
-    for _ in 0..160 {
-        // Point sur un grand dôme : angle autour + hauteur, rayon ~70.
+    for _ in 0..500 {
+        // Dôme ÉNORME et HAUT (rayon ~620, haut 150→650) : très au-delà des sommets (~91 m)
+        // de l'île géante → jamais derrière une montagne, jamais atteignable. Répartition
+        // quasi uniforme sur la calotte (acos pour ne pas tout tasser au zénith).
         let ang = rnd() * std::f32::consts::TAU;
-        let up = 0.15 + rnd() * 0.85; // surtout en hauteur
-        let r = 70.0;
+        let up = (1.0 - rnd() * 0.85).acos() / std::f32::consts::FRAC_PI_2; // [0,1], dense vers l'horizon haut
+        let r = 620.0 * (1.0 - up * 0.35);
         let pos = Vec3::new(
-            ang.cos() * r * (1.0 - up * 0.5),
-            8.0 + up * 55.0,
-            ang.sin() * r * (1.0 - up * 0.5),
+            ang.cos() * r,
+            150.0 + up * 500.0,
+            ang.sin() * r,
         );
-        let sz = 0.15 + rnd() * 0.22;
+        // Petites, taille variée mais modeste (à ~700 m, ça reste des points).
+        let sz = 0.7 + rnd() * 1.0;
         commands.spawn((
             WorldGeometry,
             Mesh3d(ball.clone()),
@@ -267,25 +321,85 @@ pub fn setup_island(
         ));
     }
 
-    // --- CLAIR DE LUNE : lumière directionnelle douce et bleutée, avec ombres. ---
+    // --- CLAIR DE LUNE : directionnelle bleutée FORTE et RASANTE → le relief des montagnes
+    // se sculpte (ombres longues), au lieu d'un éclairage plat. C'est elle, pas l'ambiance,
+    // qui doit donner le volume ; l'ambiance (réglée par scène dans `enter_island_player`)
+    // reste basse pour que les pentes restent lisibles. ---
     commands.spawn((
         WorldGeometry,
         DirectionalLight {
-            color: Color::srgb(0.70, 0.78, 1.0),
-            illuminance: 3_500.0, // tamisé : c'est la nuit
+            // Clair de lune DOUX et nettement bleuté : ne plus « cramer » les montagnes en
+            // blanc. C'est l'ambiance (relevée) qui débouche les ombres ; la directionnelle
+            // ne fait plus que poser un volume discret.
+            color: Color::srgb(0.52, 0.64, 0.95),
+            illuminance: 3_600.0,
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(8.0, 14.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Ombres en CASCADE couvrant l'île géante (sinon relief plat). Portée ~1000 m.
+        CascadeShadowConfigBuilder {
+            num_cascades: 4,
+            first_cascade_far_bound: 30.0,
+            maximum_distance: 1000.0,
+            ..default()
+        }
+        .build(),
+        // Angle bas → lumière rasante → relief, mais douce (illuminance basse).
+        Transform::from_xyz(34.0, 14.0, 22.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    // Une LUNE visible (boule claire émissive, haut dans le ciel).
-    let moon = materials.add(emissive(1.4, 1.5, 1.8));
+    // Une LUNE visible : TRÈS loin et TRÈS haut → impossible de « monter dessus », jamais
+    // traversée par le terrain. Émissif modéré pour un disque net (pas un énorme halo).
+    let moon = materials.add(emissive(1.8, 2.0, 2.6));
     commands.spawn((
         WorldGeometry,
         Mesh3d(ball.clone()),
         MeshMaterial3d(moon),
-        Transform::from_xyz(-22.0, 34.0, -28.0).with_scale(Vec3::splat(4.0)),
+        Transform::from_xyz(-450.0, 400.0, -600.0).with_scale(Vec3::splat(48.0)),
     ));
+
+    // --- LUCIOLES : des motes vertes qui flottent près du sol et ÉCLAIRENT le terrain en vert
+    // (vraie PointLight verte). C'est la signature lumineuse de la nuit ici. `animate_fireflies`
+    // les fait dériver/respirer. Réparties sur toute l'île, à basse altitude. ---
+    let firefly_mat = materials.add(emissive(0.6, 7.0, 1.2)); // cœur vert vif (bloom → halo)
+    let half = 4.6 * ISLAND_SCALE; // demi-étendue de l'île
+    for _ in 0..40 {
+        let x = (rnd() - 0.5) * 1.4 * half;
+        let z = (rnd() - 0.5) * 1.4 * half;
+        let y = WATER_Y + 4.0 + rnd() * 55.0; // flottent au-dessus du relief
+        let phase = rnd() * std::f32::consts::TAU;
+        commands.spawn((
+            WorldGeometry,
+            Firefly { origin: Vec3::new(x, y, z), phase },
+            PointLight {
+                color: Color::srgb(0.35, 1.0, 0.45),
+                intensity: 60_000.0, // lumière VERTE locale sur le sol
+                range: 22.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Mesh3d(ball.clone()),
+            MeshMaterial3d(firefly_mat.clone()),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(0.22)),
+        ));
+    }
+
+    // --- LUEURS DE RIVE : un anneau de PointLights BLEUES posées juste au-dessus de l'eau,
+    // tout autour de l'île → le sable des côtes reçoit une douce lumière bleue (pas blanche). ---
+    let shore_r = half * 1.02; // au niveau du trait de côte
+    for i in 0..14 {
+        let a = i as f32 / 14.0 * std::f32::consts::TAU;
+        commands.spawn((
+            WorldGeometry,
+            PointLight {
+                color: Color::srgb(0.30, 0.55, 1.0),
+                intensity: 220_000.0,
+                range: 60.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(a.cos() * shore_r, WATER_Y + 3.0, a.sin() * shore_r),
+        ));
+    }
 }
 
 /// TEXTURING PROCÉDURAL du terrain de l'île (le .glb n'a aucune texture). Quand le gros
@@ -304,6 +418,13 @@ pub fn texture_island(
         let Some(mesh) = meshes.get_mut(&m3d.0) else {
             continue; // pas encore chargé
         };
+        // Le plan « eau » du glb (exactement 4 sommets) : on le MASQUE — on dessine notre
+        // propre mer animée et colorée à la place (`Water`). Marqué `IslandTextured` pour
+        // ne plus le repasser.
+        if mesh.count_vertices() == 4 {
+            commands.entity(e).insert((Visibility::Hidden, IslandTextured));
+            continue;
+        }
         // On ne vise QUE le terrain (très dense) — pas les météores/étoiles (petits meshes).
         if mesh.count_vertices() < 50_000 {
             continue;
@@ -399,25 +520,34 @@ pub fn bind_island_spawn(
 pub fn enter_hub_player(
     mut clear: ResMut<ClearColor>,
     mut spawn_done: ResMut<HubSpawnDone>,
+    ambient: Query<&mut AmbientLight>,
     q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_DARK;
+    set_ambient(ambient, Color::srgb(0.45, 0.35, 0.55), 45.0); // violet : le néon ressort
     spawn_done.0 = false; // le marqueur `spawn` du glb (re)placera le joueur
     place_player(q, Vec3::new(0.0, GROUND_Y, 2.5));
 }
 pub fn enter_arcade_player(
     mut clear: ResMut<ClearColor>,
+    ambient: Query<&mut AmbientLight>,
     q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_DARK;
+    set_ambient(ambient, Color::srgb(0.45, 0.35, 0.55), 45.0); // idem hub : surfaces sombres
     place_player(q, Vec3::new(0.0, GROUND_Y, 0.0));
 }
 pub fn enter_island_player(
     mut clear: ResMut<ClearColor>,
     mut spawn: ResMut<IslandSpawn>,
+    ambient: Query<&mut AmbientLight>,
     mut q: Query<(&mut Transform, &mut Vertical), With<Player>>,
 ) {
     clear.0 = SKY_NIGHT;
+    // Ambiance bleu-nuit RELEVÉE : débouche les ombres (plus de noir-charbon bouché) tout en
+    // restant froide et douce. La directionnelle étant faible, c'est elle qui donne le ton
+    // général « nuit lisible » ; les lucioles vertes et les lueurs de rive font les accents.
+    set_ambient(ambient, Color::srgb(0.30, 0.42, 0.72), 150.0);
     spawn.done = false; // le marqueur `spawn` du glb (re)placera le joueur
     // Placement temporaire EN HAUTEUR le temps que le terrain charge (la collision tient le
     // joueur immobile tant que le terrain n'est pas là, puis `bind_island_spawn` le pose).
@@ -428,12 +558,82 @@ pub fn enter_island_player(
     }
 }
 
+/// Règle l'ambiance GLOBALE (composant porté par la caméra) : couleur + intensité. Chaque
+/// scène a la sienne (violet « néon » au hub/arcade, bleu lunaire BAS sur l'île).
+fn set_ambient(mut ambient: Query<&mut AmbientLight>, color: Color, brightness: f32) {
+    if let Ok(mut a) = ambient.single_mut() {
+        a.color = color;
+        a.brightness = brightness;
+    }
+}
+
 /// Pose le joueur à `pos`, face à -Z, vitesse verticale remise à 0.
 fn place_player(mut q: Query<(&mut Transform, &mut Vertical), With<Player>>, pos: Vec3) {
     if let Ok((mut t, mut v)) = q.single_mut() {
         t.translation = pos;
         t.rotation = Quat::IDENTITY;
         v.vy = 0.0;
+    }
+}
+
+/// Anime la MER : on recalcule la hauteur (y) de chaque sommet du plan comme une somme de
+/// sinus qui défilent (houle), et la NORMALE analytique correspondante → le clair de lune
+/// accroche les vagues. Les x,z ne bougent pas (seul y ondule). Quelques milliers de sommets,
+/// recalculés par frame : négligeable.
+pub fn animate_water(
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    water: Query<&Mesh3d, With<Water>>,
+) {
+    use bevy::mesh::VertexAttributeValues as V;
+    let t = time.elapsed_secs();
+    // Amplitudes / longueurs d'onde / vitesses des trois trains de houle (unités monde).
+    // Houle LONGUE et ample, adaptée à la grande mer (sinon ça ondule trop serré).
+    let (a1, k1, s1) = (0.45_f32, 0.12_f32, 0.9_f32);
+    let (a2, k2, s2) = (0.32_f32, 0.17_f32, 0.7_f32);
+    let (a3, k3, s3) = (0.20_f32, 0.25_f32, 1.1_f32);
+    for m3d in &water {
+        let Some(mesh) = meshes.get_mut(&m3d.0) else {
+            continue;
+        };
+        let Some(V::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            continue;
+        };
+        let mut positions = pos.clone();
+        let mut normals = vec![[0.0_f32, 1.0, 0.0]; positions.len()];
+        for (p, n) in positions.iter_mut().zip(normals.iter_mut()) {
+            let (x, z) = (p[0], p[2]);
+            let p1 = x * k1 + t * s1;
+            let p2 = z * k2 + t * s2;
+            let p3 = (x + z) * k3 - t * s3;
+            p[1] = a1 * p1.sin() + a2 * p2.cos() + a3 * p3.sin();
+            let dx = a1 * k1 * p1.cos() + a3 * k3 * p3.cos();
+            let dz = -a2 * k2 * p2.sin() + a3 * k3 * p3.cos();
+            let inv = 1.0 / (dx * dx + dz * dz + 1.0).sqrt();
+            *n = [-dx * inv, inv, -dz * inv];
+        }
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    }
+}
+
+/// Anime les LUCIOLES : dérive lente autour de leur origine (sinus déphasés sur x/y/z) +
+/// une légère respiration de la lumière (intensité qui pulse) → ça « vit ».
+pub fn animate_fireflies(
+    time: Res<Time>,
+    mut q: Query<(&Firefly, &mut Transform, &mut PointLight)>,
+) {
+    let t = time.elapsed_secs();
+    for (f, mut tf, mut light) in &mut q {
+        let p = f.phase;
+        tf.translation = f.origin
+            + Vec3::new(
+                (t * 0.5 + p).sin() * 4.0,
+                (t * 0.7 + p * 1.3).sin() * 2.0,
+                (t * 0.4 + p * 0.7).cos() * 4.0,
+            );
+        // Respiration : l'éclat varie doucement (chaque luciole à son rythme).
+        light.intensity = 45_000.0 + 35_000.0 * (t * 2.0 + p).sin().max(0.0);
     }
 }
 

@@ -44,6 +44,19 @@
 > - **🟡 H2 — défricher SUR LE PAPIER les 2 murs les plus probables** avant de coder Phase B : **D4** (incitation au
 >   relais = problème de mécanisme) et **D26** (agrégateur/parent menteur). Si l'un est un vrai mur, le voir gratuit.
 > - **🟠 H3 — `Phase B inclusivité`** (D3/D4/D5) une fois H2 défriché. Puis NAT (D17) → voix → chiffrement → Unreal.
+>
+> **🎮 DÉCISION MOTEUR DE PRÉSENTATION (posée le 22 juin 2026, avec l'utilisateur).** Bevy est jugé pénible à itérer
+> côté rendu/game-feel → on passera à **Unreal Engine**, MAIS **PAS maintenant : réseau d'abord** (on finit d'abord
+> `C-sécu-2 ét.6`, ordre roadmap respecté). Le switch ne touche QUE la présentation : **le CŒUR RÉSEAU Rust reste
+> INTOUCHABLE** (règle n°1 — la « base » = le cœur P2P, jamais Bevy ; cf. README « la logique resterait la même avec
+> n'importe quel moteur 3D »). **Pont retenu = SIDECAR (option B)** : le cœur Rust tourne en process séparé (il fait
+> déjà du réseau → quasi rien à réécrire), Unreal = client mince sur socket local ; migration éventuelle vers un
+> binding FFI/cdylib (option A) plus tard SI la frontière IPC gêne. **Frontière mesurée (`grep bevy src/net`)** :
+> cœur PUR engine-agnostic (~3 800 l : crypto/wire/gossip/transport/message/cell/aoi/coopsim/attack/rendezvous…) =
+> ne bouge pas ; GLU Bevy (~4 400 l, surtout `netcode/` + `orb.rs` + `skin.rs`) = à refaire côté Unreal. Étapes
+> essentielles le moment venu : (1) extraire le cœur pur en crate `web3core` ; (2) figer un contrat d'interface
+> minimal (poll avatars distants {id,pos,couleur,pseudo} · push ma position · état orbe) ; (3) rebâtir hub/portails/
+> arcade/île/avatars/nameplates dans Unreal. **Tant que ét.6 n'est pas close, on ne démarre PAS Unreal.**
 
 > ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (L'ANCRE anti-dérive ; maj 21 juin 2026)
 > *Lire CE bloc + le 🎯 ci-dessus suffit pour reprendre au bon niveau. Tout ce qui suit dans §0
