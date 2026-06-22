@@ -10,7 +10,7 @@ use crate::net::control::encode_hello;
 use crate::net::crypto::PeerId;
 use crate::net::gossip::{encode_gossip, sample_cards};
 use crate::net::link::NetLink;
-use crate::net::message::{encode_signed, mark_as_relay, PlayerState};
+use crate::net::message::{encode_relay_fwd, encode_signed, mark_as_relay, PlayerState};
 use crate::net::punch::Holes;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -19,6 +19,19 @@ use std::collections::HashMap;
 /// destinataires par tic. Miroir des réglages du bot ([bot.rs]) — même protocole.
 const GOSSIP_PERIOD: f32 = 0.5;
 const GOSSIP_FANOUT: usize = 4;
+
+/// REPLI RELAIS côté client (chap. 12.3 / D17), derrière DRAPEAU. Quand le perçage vers un pair est
+/// ABANDONNÉ (NAT symétrique / box injoignable), au lieu de l'ignorer on route notre état via le
+/// rendez-vous. ÉTEINT par défaut (`RELAY_FALLBACK` absent) → comportement historique exact (on
+/// n'émet rien vers un trou fermé). Allumé sur `1`/`true`.
+fn relay_fallback_enabled() -> bool {
+    relay_fallback_on(std::env::var("RELAY_FALLBACK").ok().as_deref())
+}
+
+/// Politique du drapeau (PURE, testable sans toucher l'environnement). Défaut sûr = OFF.
+fn relay_fallback_on(v: Option<&str>) -> bool {
+    matches!(v, Some("1") | Some("true"))
+}
 
 pub fn net_send(
     time: Res<Time>,
@@ -29,6 +42,7 @@ pub fn net_send(
     mut seq: Local<u64>, // compteur anti-rejeu : +1 à chaque état émis (chap. 5.2)
     mut gossip_acc: Local<f32>,
     mut gossip_cursor: Local<usize>,
+    mut relay_fallback: Local<Option<bool>>, // 12.3 : drapeau lu UNE fois (cache)
     mut link: ResMut<NetLink>,
     avatars: Res<RemoteAvatars>,
     holes: Res<Holes>,
@@ -198,21 +212,50 @@ pub fn net_send(
     // 3) CADENCEMENT par crédit : chaque pair accumule `débit × temps` ; dès qu'il
     //    atteint 1, on lui envoie un paquet et on retire 1. C'est ce qui espace
     //    régulièrement les envois au bon rythme pour chacun.
+    // 12.3 : drapeau de repli relais, lu UNE fois (cache) — éteint par défaut → chemin intact.
+    let relay = *relay_fallback.get_or_insert_with(relay_fallback_enabled);
     for ((id, addr), rate) in peers.iter().zip(&rates) {
         // On ne diffuse l'état qu'aux pairs dont le trou NAT est OUVERT : sinon le
         // paquet mourrait dans leur box. Le perçage est fait par `net_punch` ; tant
         // que le trou n'est pas ouvert, on accumule juste un peu de crédit, prêt à
         // émettre dès que la connexion directe est établie.
-        if !holes.map.get(id).map_or(false, |h| h.open) {
+        let open = holes.map.get(id).map_or(false, |h| h.open);
+        // 12.3 — REPLI : perçage ABANDONNÉ (NAT symétrique) → au lieu d'ignorer, on route via le
+        // rendez-vous (si le drapeau est allumé). Trou ni ouvert ni abandonné = perçage en cours :
+        // on attend, exactement comme avant (défaut byte-pour-byte intact quand `relay` est faux).
+        let relayed = relay && !open && holes.map.get(id).map_or(false, |h| h.abandoned());
+        if !open && !relayed {
             continue;
         }
         let credit = credits.entry(*id).or_insert(0.0);
         *credit += rate * dt_send;
         if *credit >= 1.0 {
             *credit -= 1.0;
-            let _ = link.socket.send_to(*addr, &bytes);
+            if open {
+                let _ = link.socket.send_to(*addr, &bytes); // connexion directe (inchangé)
+            } else {
+                // Repli : on demande au rendez-vous de porter notre état SCELLÉ jusqu'à ce pair.
+                let env = encode_relay_fwd(*id, &bytes);
+                let _ = link.socket.send_to(link.rendezvous, &env);
+            }
         }
     }
     // On oublie le crédit des pairs qui ne sont plus dans l'annuaire.
     credits.retain(|id, _| link.peers.contains_key(id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 12.3 — le repli relais est ÉTEINT par défaut (drapeau absent) et ne s'allume que sur `1`/`true`.
+    /// Tant qu'il est éteint, `net_send` n'émet jamais vers un trou fermé (comportement historique).
+    #[test]
+    fn relay_fallback_eteint_par_defaut() {
+        assert!(!relay_fallback_on(None)); // absent → OFF (chemin par défaut intact)
+        assert!(!relay_fallback_on(Some("0")));
+        assert!(!relay_fallback_on(Some("nope"))); // valeur inattendue → OFF (défaut sûr)
+        assert!(relay_fallback_on(Some("1")));
+        assert!(relay_fallback_on(Some("true")));
+    }
 }

@@ -190,10 +190,8 @@ pub(crate) fn decode_relay_fwd(buf: &[u8]) -> Option<(PeerId, [u8; SIGNED_STATE_
 }
 
 /// Construit une enveloppe `KIND_RELAY_FWD` autour d'un état déjà scellé, à destination de `dest`.
-/// `#[cfg(test)]` pour l'instant : la vraie ÉMISSION par le client (au perçage abandonné, derrière
-/// le drapeau `RELAY_FALLBACK`) arrive au pas suivant. Garder ici la réciproque de `decode_relay_fwd`
-/// permet de prouver le format dès maintenant SANS code mort dans le build normal.
-#[cfg(test)]
+/// Émise par le client au perçage ABANDONNÉ (derrière le drapeau `RELAY_FALLBACK`) vers le rendez-vous,
+/// qui la route vers `dest`. Réciproque exacte de `decode_relay_fwd`.
 pub(crate) fn encode_relay_fwd(dest: PeerId, sealed: &[u8; SIGNED_STATE_SIZE]) -> [u8; RELAY_FWD_SIZE] {
     let mut out = [0u8; RELAY_FWD_SIZE];
     out[0] = KIND_RELAY_FWD;

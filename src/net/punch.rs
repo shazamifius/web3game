@@ -75,6 +75,15 @@ pub(crate) struct HoleState {
     acc: f32,
 }
 
+impl HoleState {
+    /// Le perçage vers ce pair est-il ABANDONNÉ (jamais corroboré après `PUNCH_GIVEUP` essais) ?
+    /// C'est le signal du repli relais (12.3 / D17) : on cesse de percer dans le vide, on route via
+    /// le rendez-vous. Expose la sémantique sans révéler le compteur interne `tries`.
+    pub(crate) fn abandoned(&self) -> bool {
+        !self.open && punch_abandoned(self.tries)
+    }
+}
+
 impl Default for HoleState {
     fn default() -> Self {
         // `acc` démarre à PUNCH_INTERVAL pour percer DÈS la première image.
@@ -155,5 +164,20 @@ mod tests {
     fn punch_survit_a_l_aller_retour() {
         let id = PeerId::from_bytes([42u8; PUBKEY_LEN]);
         assert_eq!(decode_punch(&encode_punch(id)), Some(id));
+    }
+
+    /// 12.3 — `HoleState::abandoned()` : vrai SEULEMENT si non-ouvert ET au-delà du seuil d'abandon.
+    /// C'est le déclencheur du repli relais — un trou ouvert (perçage réussi) n'est JAMAIS « abandonné »,
+    /// et un perçage encore en cours non plus (on attend, on ne relaie pas prématurément).
+    #[test]
+    fn hole_abandoned_seulement_si_ferme_et_au_seuil() {
+        let mut h = HoleState::default();
+        assert!(!h.abandoned()); // neuf : tries=0, on perce encore
+        h.tries = PUNCH_GIVEUP - 1;
+        assert!(!h.abandoned()); // juste avant le seuil : encore en cours
+        h.tries = PUNCH_GIVEUP;
+        assert!(h.abandoned()); // au seuil, trou fermé : ABANDONNÉ → repli relais
+        h.open = true;
+        assert!(!h.abandoned()); // trou OUVERT (perçage réussi) → jamais abandonné, même au seuil
     }
 }
