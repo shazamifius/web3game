@@ -109,7 +109,8 @@ f32 r, g, b     // couleur du skin
   - ✅ **Côté Rust PROUVÉ** (rendez-vous local + `bot wanderer` + sidecar + faux-UE) : le faux-UE voit 1 avatar
     RÉEL (id PoW `00ef…`) bouger en cercle via la vraie pile réseau ; le wanderer voit `pairs=1, acceptés=71`
     (découverte bidirectionnelle). ⚠ Dette : sidecar en identité ÉPHÉMÈRE (`Bot::new`) — passer à PERSISTANTE.
-  - 🎯 **RESTE** : le prouver dans le VRAI Unreal (ouvrir UE + Play + lancer un `bot` → voir une vraie capsule bouger).
+  - ✅ **PROUVÉ DANS LE VRAI UNREAL EN PIE** : une capsule (id PoW `005c1c06`, taille humaine) bouge dans le
+    viewport, nourrie par le bot via le vrai protocole. **→ Palier 2 RÉELLEMENT CLOS** (loopback, sans NAT).
 - **Palier 3 — preuve réelle 2 humains.** Deux joueurs (UE + sidecar chacun) via le **rendez-vous relais déjà
   prouvé**, qui se voient bouger DANS Unreal. **Juge = le log serveur** (point neutre), pas les fenêtres.
 - **Palier 4 — orbe & objets partagés.** Après nettoyage des types Bevy de [orb.rs](src/net/orb.rs)
