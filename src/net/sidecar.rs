@@ -5,13 +5,14 @@
 //! les avatars distants par une **socket locale TCP** (`127.0.0.1:47800`). Le cœur Rust
 //! garde toute l'autorité (relais NAT, anti-triche, sceau) — on lui ajoute une SORTIE.
 //!
-//! # Palier 2 — le VRAI cœur branché
-//! Le sidecar fait tourner un vrai nœud réseau (`Bot`, le code prouvé : gossip, relais,
-//! anti-triche, AoI), piloté par la position qu'Unreal pousse (`PUSH_SELF`), et il expose
-//! les avatars distants RÉELS reçus du réseau (`SNAPSHOT`). On REUTILISE `Bot` (anti-
-//! divergence D2) avec deux crochets gatés (pose externe + puits d'avatars) — le défaut
-//! bot/simu reste byte-pour-byte. Le `Bot` rejoint le rendez-vous (`RENDEZVOUS_ADDR`,
-//! défaut `127.0.0.1:4000`).
+//! # Architecture (palier 2-3) — le CŒUR tourne en CONTINU
+//! Un thread CŒUR fait tourner un vrai nœud réseau (`Bot`, code prouvé) **en permanence**,
+//! qu'Unreal soit connecté ou non — le nœud est l'autorité, il ne doit pas s'éteindre quand
+//! la fenêtre 3D se déconnecte. Le thread cœur publie en continu, dans un état partagé : les
+//! avatars distants RÉELS, et lit la pose qu'Unreal pousse. Chaque session Unreal ne fait
+//! qu'ATTACHER l'I/O (lire la pose, écrire les snapshots). On REUTILISE `Bot` (anti-divergence
+//! D2) via 2 crochets gatés (pose externe + puits d'avatars) — défaut bot/simu byte-pour-byte.
+//! Identité PERSISTANTE (`sidecar.key`) → nœud STABLE entre redémarrages.
 //!
 //! Lancer (après un `jeu rendezvous`) :  cargo run -- sidecar
 
@@ -36,13 +37,13 @@ const PONG: u8 = 130;
 
 /// Cadence d'émission des snapshots vers Unreal (miroir de `SEND_HZ` du netcode).
 const SEND_HZ: f32 = 20.0;
-/// Cadence de la boucle du cœur (on step le `Bot` à ~50 Hz ; il accumule lui-même ses périodes).
+/// Cadence de la boucle du cœur (on step le `Bot` à ~50 Hz ; il accumule ses propres périodes).
 const LOOP_HZ: f32 = 50.0;
 /// Adresse d'écoute par défaut (réglable par `SIDECAR_ADDR`).
 const DEFAULT_ADDR: &str = "127.0.0.1:47800";
 
-/// La pose que MON joueur (Unreal) nous a poussée en dernier — partagée entre le thread
-/// lecteur (qui l'écrit) et la boucle du cœur (qui l'injecte dans le `Bot`).
+/// La pose que MON joueur (Unreal) a poussée en dernier — partagée entre la session UE (qui
+/// l'écrit) et le thread cœur (qui l'injecte dans le `Bot`).
 #[derive(Clone, Copy, Default)]
 struct SelfPose {
     x: f32,
@@ -53,7 +54,14 @@ struct SelfPose {
     updates: u64, // combien de PUSH_SELF reçus (preuve que le sens UE→Rust vit)
 }
 
-/// Point d'entrée : `cargo run -- sidecar`. Écoute, et sert un client Unreal à la fois.
+/// L'état partagé entre le thread CŒUR et les sessions Unreal.
+struct Shared {
+    avatars: Mutex<Vec<PlayerState>>, // dernier instantané des distants RÉELS (publié par le cœur)
+    pose: Mutex<SelfPose>,            // la pose qu'Unreal pousse (lue par le cœur)
+    color: Mutex<(f32, f32, f32)>,    // ma couleur (fixée par le cœur, lue au WELCOME)
+}
+
+/// Point d'entrée : `cargo run -- sidecar`. Démarre le cœur (continu) puis sert Unreal.
 pub fn run_sidecar() {
     let addr = std::env::var("SIDECAR_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = match TcpListener::bind(&addr) {
@@ -63,48 +71,89 @@ pub fn run_sidecar() {
             return;
         }
     };
-    println!("[sidecar] palier 2 — j'écoute sur {addr} (TCP loopback). En attente d'Unreal…");
 
-    // Un seul client à la fois (un joueur = un UE = un cœur). On boucle pour ré-accepter si
-    // Unreal tombe et revient. Le `Bot` est (re)créé à chaque session UE (identité éphémère —
-    // ⚠ dette : le sidecar devrait à terme utiliser l'identité PERSISTANTE, cf. CONTRAT §6).
+    let shared = Arc::new(Shared {
+        avatars: Mutex::new(Vec::new()),
+        pose: Mutex::new(SelfPose::default()),
+        color: Mutex::new((0.5, 0.5, 0.5)),
+    });
+
+    // Le CŒUR tourne en continu, indépendamment d'Unreal.
+    {
+        let shared = Arc::clone(&shared);
+        std::thread::spawn(move || run_core(shared));
+    }
+
+    println!("[sidecar] j'écoute sur {addr} (TCP loopback). Le cœur réseau tourne en continu.");
+    // Une session Unreal à la fois ; on ré-accepte si elle tombe (le cœur, lui, ne s'arrête pas).
     for incoming in listener.incoming() {
         match incoming {
             Ok(stream) => {
                 let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
                 println!("[sidecar] Unreal connecté depuis {peer}.");
-                if let Err(e) = serve_client(stream) {
-                    println!("[sidecar] session terminée ({e}).");
+                if let Err(e) = serve_ue(stream, &shared) {
+                    println!("[sidecar] session Unreal terminée ({e}).");
                 }
-                println!("[sidecar] Unreal déconnecté — en attente d'une nouvelle connexion…");
+                println!("[sidecar] Unreal déconnecté (le cœur continue) — en attente d'une reconnexion…");
             }
             Err(e) => eprintln!("[sidecar] accept a échoué : {e}"),
         }
     }
 }
 
-/// Sert UN client Unreal : crée le nœud réseau, lit les messages d'Unreal dans un thread, et
-/// fait tourner le cœur + émet les SNAPSHOT depuis ce thread-ci.
-fn serve_client(stream: TcpStream) -> io::Result<()> {
+/// LE CŒUR : un vrai nœud réseau (`Bot`) qui tourne pour toujours, piloté par la pose d'Unreal,
+/// publiant les avatars distants réels dans l'état partagé.
+fn run_core(shared: Arc<Shared>) {
+    let mut bot = match Bot::new_persistent("sidecar", "sidecar") {
+        Some(b) => b,
+        None => {
+            eprintln!("[sidecar] réseau indisponible (prise non ouverte) — cœur non démarré.");
+            return;
+        }
+    };
+    bot.enable_avatar_sink();
+    *shared.color.lock().unwrap() = bot.my_color();
+
+    let start = Instant::now();
+    let mut last = Instant::now();
+    let loop_tick = Duration::from_secs_f32(1.0 / LOOP_HZ);
+    let mut log_acc = 0.0f32;
+    loop {
+        let dt = last.elapsed().as_secs_f32();
+        last = Instant::now();
+        let now = start.elapsed().as_secs_f32();
+
+        // 1) injecter la pose d'Unreal (le nœud l'émettra sur le réseau).
+        let p = *shared.pose.lock().unwrap();
+        bot.set_external_pose(Vec3::new(p.x, p.y, p.z), p.yaw, p.pitch);
+        // 2) faire tourner le vrai protocole (émission/réception/relais/gossip).
+        bot.step(dt, now);
+        // 3) publier les avatars distants RÉELS pour la session Unreal.
+        *shared.avatars.lock().unwrap() = bot.avatars(now);
+
+        log_acc += dt;
+        if log_acc >= 2.0 {
+            log_acc = 0.0;
+            let id = bot.id().map(|i| i.short()).unwrap_or_else(|| "—".to_string());
+            println!(
+                "[sidecar/cœur] t={now:.0}s | id={id} | pairs={} | avatars={} | acceptés={} rejetés={} relayés={} | PUSH_SELF={}",
+                bot.neighbors(), bot.avatars(now).len(), bot.accepted(), bot.rejected(), bot.relayed(), p.updates
+            );
+        }
+        std::thread::sleep(loop_tick);
+    }
+}
+
+/// Sert UNE session Unreal : lit ses messages (thread lecteur) et émet les SNAPSHOT à 20 Hz
+/// depuis l'état partagé. Quand Unreal se déconnecte, le cœur continue de tourner.
+fn serve_ue(stream: TcpStream, shared: &Arc<Shared>) -> io::Result<()> {
     stream.set_nodelay(true)?; // pas de Nagle : latence mini (contrat §6)
     let reader_stream = stream.try_clone()?;
     let writer = Arc::new(Mutex::new(stream));
     let alive = Arc::new(AtomicBool::new(true));
-    let pose = Arc::new(Mutex::new(SelfPose::default()));
 
-    // Le VRAI nœud réseau : il rejoint le rendez-vous, perce, émet/reçoit comme le jeu.
-    let mut bot = match Bot::new("sidecar", false, 0.0) {
-        Some(b) => b,
-        None => {
-            eprintln!("[sidecar] réseau indisponible (prise non ouverte).");
-            return Ok(());
-        }
-    };
-    bot.enable_avatar_sink(); // on veut exposer les avatars distants complets à Unreal
-
-    // WELCOME : ma couleur (l'id réel n'est connu qu'après le 1er WELCOME du rendez-vous → on
-    // envoie l'id quand on l'a ; ici on met des zéros, Unreal ne s'en sert que pour l'affichage).
-    let (r, g, b) = bot.my_color();
+    // WELCOME : ma couleur (publiée par le cœur). L'id réel n'est pas requis côté UE (affichage).
+    let (r, g, b) = *shared.color.lock().unwrap();
     let mut welcome = Vec::with_capacity(32 + 12);
     welcome.extend_from_slice(&[0u8; 32]);
     for f in [r, g, b] {
@@ -115,10 +164,10 @@ fn serve_client(stream: TcpStream) -> io::Result<()> {
         write_frame(&mut *w, WELCOME, &welcome)?;
     }
 
-    // Thread LECTEUR : décode les trames d'Unreal (HELLO / PUSH_SELF / PING).
+    // Thread LECTEUR : HELLO / PUSH_SELF / PING.
     let r_writer = Arc::clone(&writer);
     let r_alive = Arc::clone(&alive);
-    let r_pose = Arc::clone(&pose);
+    let r_shared = Arc::clone(shared);
     let reader = std::thread::spawn(move || {
         let mut rs = io::BufReader::new(reader_stream);
         loop {
@@ -129,7 +178,7 @@ fn serve_client(stream: TcpStream) -> io::Result<()> {
                 }
                 Ok((PUSH_SELF, payload)) if payload.len() >= 20 => {
                     let f = |i: usize| f32::from_le_bytes(payload[i..i + 4].try_into().unwrap());
-                    let mut p = r_pose.lock().unwrap();
+                    let mut p = r_shared.pose.lock().unwrap();
                     *p = SelfPose {
                         x: f(0), y: f(4), z: f(8), yaw: f(12), pitch: f(16),
                         updates: p.updates + 1,
@@ -148,47 +197,20 @@ fn serve_client(stream: TcpStream) -> io::Result<()> {
         r_alive.store(false, Ordering::SeqCst);
     });
 
-    // Boucle du CŒUR : step le bot avec la pose d'Unreal, et émet un SNAPSHOT des avatars réels.
-    let start = Instant::now();
-    let mut last = Instant::now();
-    let loop_tick = Duration::from_secs_f32(1.0 / LOOP_HZ);
-    let mut send_acc = 0.0f32;
-    let mut log_acc = 0.0f32;
+    // Boucle ÉMETTRICE : un SNAPSHOT des avatars partagés à 20 Hz.
+    let tick = Duration::from_secs_f32(1.0 / SEND_HZ);
     while alive.load(Ordering::SeqCst) {
-        let dt = last.elapsed().as_secs_f32();
-        last = Instant::now();
-        let now = start.elapsed().as_secs_f32();
-
-        // 1) injecter la pose d'Unreal dans le nœud (il l'émettra sur le réseau).
-        let p = *pose.lock().unwrap();
-        bot.set_external_pose(Vec3::new(p.x, p.y, p.z), p.yaw, p.pitch);
-
-        // 2) faire tourner le vrai protocole (émission/réception/relais/gossip).
-        bot.step(dt, now);
-
-        // 3) émettre un SNAPSHOT des avatars distants RÉELS vers Unreal, à 20 Hz.
-        send_acc += dt;
-        if send_acc >= 1.0 / SEND_HZ {
-            send_acc = 0.0;
-            let avatars = bot.avatars(now);
-            let snap = encode_snapshot(&avatars);
+        let snap = {
+            let avatars = shared.avatars.lock().unwrap();
+            encode_snapshot(&avatars)
+        };
+        {
             let mut w = writer.lock().unwrap();
             if write_frame(&mut *w, SNAPSHOT, &snap).is_err() {
-                break; // Unreal est parti
+                break;
             }
         }
-
-        log_acc += dt;
-        if log_acc >= 2.0 {
-            log_acc = 0.0;
-            let id = bot.id().map(|i| i.short()).unwrap_or_else(|| "—".to_string());
-            println!(
-                "[sidecar] t={now:.0}s | id={id} | avatars distants={} | PUSH_SELF reçus={}",
-                bot.avatars(now).len(),
-                p.updates
-            );
-        }
-        std::thread::sleep(loop_tick);
+        std::thread::sleep(tick);
     }
     alive.store(false, Ordering::SeqCst);
     let _ = reader.join();

@@ -125,6 +125,14 @@ impl Bot {
         Some(Bot::from_link(label, verbose, phase, link))
     }
 
+    /// Comme `new`, mais avec une identité PERSISTANTE (clé `~/.web3game/<profil>.key`) — pour le
+    /// sidecar : un nœud STABLE entre redémarrages (le pair distant le redécouvre vite, pas une
+    /// nouvelle identité à chaque relance). Mine à `pow_bits()` au 1er lancement.
+    pub(crate) fn new_persistent(label: impl Into<String>, profile: &str) -> Option<Bot> {
+        let link = NetLink::new_persistent(random_color(), false, profile).ok()?;
+        Some(Bot::from_link(label, false, 0.0, link))
+    }
+
     /// Crée un bot sur un `NetLink` DÉJÀ construit (banc bus mémoire, dette D25) : même bot que `new`,
     /// mais la prise/le rendez-vous viennent du bus. Réservé à `coopsim` sur bus.
     pub(crate) fn new_on(

@@ -111,8 +111,17 @@ f32 r, g, b     // couleur du skin
     (découverte bidirectionnelle). ⚠ Dette : sidecar en identité ÉPHÉMÈRE (`Bot::new`) — passer à PERSISTANTE.
   - ✅ **PROUVÉ DANS LE VRAI UNREAL EN PIE** : une capsule (id PoW `005c1c06`, taille humaine) bouge dans le
     viewport, nourrie par le bot via le vrai protocole. **→ Palier 2 RÉELLEMENT CLOS** (loopback, sans NAT).
-- **Palier 3 — preuve réelle 2 humains.** Deux joueurs (UE + sidecar chacun) via le **rendez-vous relais déjà
-  prouvé**, qui se voient bouger DANS Unreal. **Juge = le log serveur** (point neutre), pas les fenêtres.
+- **Palier 3 — vraie traversée NAT rendue dans Unreal.** Un nœud réellement distant (PC A, Free Mobile = NAT
+  symétrique) via le **rendez-vous relais déjà prouvé**. **Juge = le log serveur** (`🔀 RELAIS établi`).
+  - 🔧 **Restructuration (le rethink, pas une rustine)** : le **cœur tourne en CONTINU** dans son propre thread
+    (avant : il ne vivait que pendant une session UE → nœud qui s'éteint quand la fenêtre tombe = fragile) ;
+    + **identité PERSISTANTE** (`Bot::new_persistent`, `sidecar.key`) → nœud STABLE, le pair distant le
+    redécouvre vite. (Lève la dette « identité éphémère ».)
+  - ✅ **Côté Rust PROUVÉ** (vrai serveur 24/7 + A sur Free Mobile) : serveur logue `🔀 000010d6 → 00003ffc` ;
+    mon sidecar ingère l'état RÉEL de A relayé via NAT symétrique (`avatars=1, acceptés=45`, diagnostic =
+    50 paquets KIND_STATE 182 o reçus du rendez-vous). ⚠ Le ré-établissement du relais après un redémarrage du
+    sidecar (port UDP changé) prend ~15 s — A doit re-pointer ; en régime stable, ça tient.
+  - 🎯 **RESTE** : le voir dans le viewport Unreal (A relayant + UE Play → capsule de A à sa position réelle).
 - **Palier 4 — orbe & objets partagés.** Après nettoyage des types Bevy de [orb.rs](src/net/orb.rs)
   (`Vec3`/`Res<Time>`) et extension du contrat (`OBJECT` msg). Hors v1.
 
