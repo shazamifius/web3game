@@ -1,262 +1,78 @@
-//! Monde P2P en vue première personne (Rust/Bevy) — esprit « VRChat sans serveur ».
-//! On spawn dans un HUB avec 2 portails ; on entre dans un portail pour choisir
-//! l'instance : la salle arcade, ou l'île. (H : revenir au hub.)
+//! web3game — LE CŒUR RÉSEAU P2P, fait main (sans moteur 3D).
 //!
-//! Contrôles :
-//!   - ZQSD            : se déplacer (clavier AZERTY)
-//!   - Espace          : sauter
-//!   - H               : revenir au hub (depuis une instance)
-//!   - Souris          : regarder autour
-//!   - Échap           : libérer la souris
-//!   - Clic gauche     : recapturer la souris
+//! Depuis la bascule vers Unreal (juin 2026), ce binaire n'embarque plus de fenêtre
+//! de jeu : la PRÉSENTATION vit dans Unreal, qui parle au cœur via le **sidecar**
+//! (socket locale, cf. `CONTRAT_SIDECAR.md`). Ce binaire expose donc uniquement les
+//! outils headless du cœur : le rendez-vous, le sidecar, les bots, les simulations,
+//! le programme attaquant et les bancs de mesure. Aucune dépendance Bevy : toute la
+//! logique réseau est engine-agnostique (cf. `math::Vec3`, maison).
 //!
-//! Organisation :
-//!   - `scenes` : le hub, les portails, l'aiguillage Hub/Arcade/Île
-//!   - `world`  : la salle arcade (sol, murs, plafond, néon, lumière)
-//!   - `player` : le personnage, la caméra et les contrôles
+//! # Modes (premier argument)
+//!   rendezvous            l'annuaire (à lancer en premier)
+//!   sidecar               le pont vers Unreal (socket locale 127.0.0.1:47800)
+//!   bot <nom>             un client headless (le vrai protocole, sans 3D)
+//!   sim [N] [att] [s]     simulation massive : N nœuds + att attaquants
+//!   crowd <N> [s]         foule dense au même endroit (couverture de perception)
+//!   coopsim <N> [s]       N nœuds dans un thread coopératif (banc léger)
+//!   coopsim-bus <N> [s]   banc bus mémoire (temps-sim découplé du mural)
+//!   relay-test [s]        banc déterministe du relais NAT (deux sens)
+//!   attack <type>         le programme attaquant (forge|replay|flood|teleport|…)
+//!   net-demo <a|b>        la démo réseau en texte (observer les paquets)
+//!   nat-test <nom>        le hole punching en texte (pour les namespaces réseau)
 
-mod meteorites;
+mod math;
 mod net;
-mod player;
-mod scenes;
-mod world;
-
-use bevy::prelude::*;
-use scenes::Scene;
 
 fn main() {
-    // Aiguillage en fonction des arguments de la ligne de commande.
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(String::as_str);
 
-    // BANNER DE BUILD : on imprime de quel commit est ce binaire. Démasque un vieux .exe relancé
-    // par erreur (cf. les boucles de test du 22 juin) → on ne devine plus quelle version tourne.
-    println!("web3game build {} (mode: {})", env!("GIT_HASH"), mode.unwrap_or("jeu"));
+    // BANNER DE BUILD : on imprime de quel commit est ce binaire. Démasque un vieux
+    // binaire relancé par erreur → on ne devine plus quelle version tourne.
+    println!("web3game build {} (mode: {})", env!("GIT_HASH"), mode.unwrap_or("?"));
 
-    // `cargo run -- net-demo a`  lance la démo réseau en texte (sans la 3D).
-    if mode == Some("net-demo") {
-        let role = args.get(2).map(String::as_str).unwrap_or("a");
-        net::run_demo(role);
-        return;
-    }
-
-    // `cargo run -- rendezvous`  lance le serveur d'annuaire (à lancer en premier).
-    if mode == Some("rendezvous") {
-        net::run_rendezvous();
-        return;
-    }
-
-    // `cargo run -- sidecar`  lance LE PONT vers Unreal (bascule moteur, palier 1) :
-    // une socket locale TCP où Unreal pousse sa position et lit les avatars distants.
-    // Le cœur reste l'autorité ; UE = client mince. Voir CONTRAT_SIDECAR.md.
-    if mode == Some("sidecar") {
-        net::run_sidecar();
-        return;
-    }
-
-    // `cargo run -- attack <type>`  lance le PROGRAMME ATTAQUANT : de vrais paquets
-    // malveillants sur de vraies sockets, pour prouver la robustesse.
-    // Chap. 5 (neutralisées) : forge | replay | flood | orb-steal | orb-freeze.
-    // Chap. 6 (encore RÉUSSIES — trous à fermer) : teleport | sybil | orb-creep | amplify.
-    if mode == Some("attack") {
-        let kind = args.get(2).map(String::as_str).unwrap_or("forge");
-        net::run_attack(kind);
-        return;
-    }
-
-    // `cargo run -- bot alice`  lance un CLIENT HEADLESS (le vrai protocole, sans
-    // 3D) : sert à tester l'architecture à plusieurs sans GPU ni écran (chap. 6.0).
-    // C'est la « victime » honnête face au programme attaquant.
-    if mode == Some("bot") {
-        let label = args.get(2).map(String::as_str).unwrap_or("1");
-        net::run_bot(label);
-        return;
-    }
-
-    // `cargo run -- sim [bots] [attaquants] [secondes]`  lance la SIMULATION MASSIVE
-    // (chap. 6.8) : N nœuds headless + M attaquants en threads, et un rapport agrégé.
-    if mode == Some("sim") {
-        let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
-        let n_attackers = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3);
-        let secs = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(15);
-        net::run_sim(n_bots, n_attackers, secs);
-        return;
-    }
-
-    // `cargo run -- crowd <N> [secondes]`  lance une FOULE DENSE de N nœuds au même
-    // endroit (chap. 8.0) et mesure la COUVERTURE DE PERCEPTION — le mur D22 : au-delà
-    // de 32 voisins, on est AVEUGLE. Sert à CHIFFRER le problème avant de le résoudre.
-    // `cargo run -- relay-test [secondes]`  BANC DÉTERMINISTE DU RELAIS (12.3) : 2 pairs en NAT
-    // infranchissable simulé doivent se voir DANS LES DEUX SENS via le relais du rendez-vous.
-    // Reproduit/ferme le « sens unique » du sidecar trouvé en réel le 24 juin — sans 3D ni mobile.
-    if mode == Some("relay-test") {
-        let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
-        net::run_relay_test(secs);
-        return;
-    }
-
-    if mode == Some("crowd") {
-        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
-        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
-        net::run_crowd(n, secs);
-        return;
-    }
-
-    // `cargo run -- coopsim <N> [secondes]`  lance N nœuds dans UN thread coopératif
-    // (banc léger D25 : pas d'OS-thread/bot) pour mesurer la foule au-delà de ~1500.
-    if mode == Some("coopsim") {
-        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
-        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
-        net::run_coopsim(n, secs);
-        return;
-    }
-
-    // `cargo run -- coopsim-bus <N> [secondes]`  banc BUS MÉMOIRE (dette D25) : N nœuds reliés
-    // par un bus synchrone, dt fixe sans sleep → temps-sim découplé du mural, pour viser 5k-50k.
-    if mode == Some("coopsim-bus") {
-        let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
-        let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
-        net::run_coopsim_bus(n, secs);
-        return;
-    }
-
-    // `cargo run -- nat-test alice`  rejoue le hole punching en texte (sans 3D),
-    // pour le test NAT en namespaces réseau (voir tools/test-nat.sh).
-    if mode == Some("nat-test") {
-        let label = args.get(2).map(String::as_str).unwrap_or("client");
-        net::run_nat_test(label);
-        return;
-    }
-
-    // Couleur de skin aléatoire de CETTE session : le perso et le réseau
-    // utiliseront la même. Choisie une fois, au démarrage.
-    let my_color = net::random_color();
-
-    let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "web3game — monde P2P".into(),
-                    // app-id Wayland (et classe X11) : sert au compositeur (niri) à
-                    // reconnaître nos fenêtres, par ex. pour les ouvrir sur un bureau précis.
-                    name: Some("web3game".into()),
-                    ..default()
-                }),
-                ..default()
-            })
-            // Les modèles Blender (.glb) sont dans `asset/` (et non le `assets/` par défaut).
-            .set(bevy::asset::AssetPlugin { file_path: "asset".into(), ..default() }),
-    )
-    // Fond sombre violacé (cohérent avec l'ambiance néon).
-    .insert_resource(ClearColor(Color::srgb(0.02, 0.01, 0.05)))
-    .insert_resource(net::MyColor(my_color.0, my_color.1, my_color.2))
-    // Aiguillage de scènes (hub / arcade / île). On démarre dans le hub, sauf si
-    // `SCENE=arcade|ile` (auto-test 3D / foule-3d qui veut sauter le hub).
-    .insert_state(scenes::initial_scene())
-    .init_resource::<scenes::HubSpawnDone>()
-    .init_resource::<scenes::IslandSpawn>()
-    // Le joueur est créé UNE fois et survit aux changements de scène ; chaque scène
-    // est montée/démontée par OnEnter/OnExit et le joueur est téléporté à son spawn.
-    .add_systems(Startup, (player::setup_player, player::grab_cursor))
-    .add_systems(OnEnter(Scene::Hub), (scenes::setup_hub, scenes::enter_hub_player))
-    .add_systems(OnExit(Scene::Hub), scenes::despawn_world)
-    .add_systems(OnEnter(Scene::Arcade), (world::setup_room, scenes::enter_arcade_player))
-    .add_systems(OnExit(Scene::Arcade), scenes::despawn_world)
-    .add_systems(
-        OnEnter(Scene::Island),
-        (scenes::setup_island, scenes::enter_island_player, meteorites::setup_island_game),
-    )
-    .add_systems(OnExit(Scene::Island), scenes::despawn_world)
-    // Le petit jeu de l'île (météorites) ne tourne QUE sur l'île ; + le texturing du terrain.
-    .add_systems(
-        Update,
-        (
-            scenes::texture_island,
-            scenes::bind_island_spawn,
-            scenes::animate_water,
-            scenes::animate_fireflies,
-            meteorites::spawn_meteors,
-            meteorites::fall_meteors,
-            meteorites::twinkle,
-            meteorites::fade_trails,
-            meteorites::pickup_prompt,
-            meteorites::collect_meteors,
-            meteorites::update_counters,
-        )
-            .run_if(in_state(Scene::Island)),
-    )
-    .add_systems(
-        Update,
-        (
-            player::move_player,
-            // Gravité/saut sur sol plat (hub/arcade) ; sur l'île : collision raycast (relief).
-            player::jump_and_gravity.run_if(not(in_state(Scene::Island))),
-            player::island_collision.run_if(in_state(Scene::Island)),
-            player::look_around,
-            player::head_bob,
-            player::toggle_cursor,
-            // Hub : lier les portails/spawn du glb par nom, détecter l'entrée, suivre les
-            // étiquettes. Retour au hub (H) : actif ailleurs.
-            scenes::bind_gltf_hub.run_if(in_state(Scene::Hub)),
-            scenes::portal_enter.run_if(in_state(Scene::Hub)),
-            scenes::update_portal_labels.run_if(in_state(Scene::Hub)),
-            scenes::return_to_hub.run_if(not(in_state(Scene::Hub))),
-        ),
-    );
-
-    // Mode multijoueur : `cargo run -- a` (ou `b`, `play`…) sur le même PC.
-    // Tous ces arguments lancent un CLIENT (l'identifiant vient du rendez-vous,
-    // plus de rôle codé en dur). Sans argument, le jeu reste solo (aucun réseau).
-    // `weak` = un client à faible upload : il émet son état via un parent (relais)
-    // au lieu de le diffuser à tous (chapitre 4.1). Sert à tester le relais sans
-    // avoir réellement une mauvaise connexion.
-    let is_client = matches!(
-        mode,
-        Some("a") | Some("b") | Some("play") | Some("client") | Some("weak")
-    );
-    let is_weak = mode == Some("weak");
-    if is_client {
-        // Identité PERSISTANTE (chap. 10.1) : le profil = le mode (`a`/`b`/`play`…) → deux fenêtres
-        // sur un même PC gardent des identités DISTINCTES *et* stables entre sessions (a.key ≠ b.key).
-        let profile = mode.unwrap_or("player");
-        match net::NetLink::new_persistent(my_color, is_weak, profile) {
-            Ok(link) => {
-                app.insert_resource(link)
-                    .init_resource::<net::RemoteAvatars>()
-                    .init_resource::<net::Holes>()
-                    .init_resource::<net::Nameplates>()
-                    // L'orbe partagée : sa sphère 3D et la ressource d'état (Startup),
-                    // puis les systèmes qui la font vivre (Update). Client uniquement.
-                    .add_systems(Startup, net::setup_orb)
-                    .add_systems(
-                        Update,
-                        (
-                            net::net_punch,
-                            net::net_send,
-                            net::net_receive,
-                            net::net_interpolate,
-                            // La recoloration n'a de sens qu'en arcade (où `WorldNeon` existe) :
-                            // garde anti-panique quand on est au hub / sur l'île.
-                            world::apply_world_color.run_if(resource_exists::<world::WorldNeon>),
-                            // Les 4 systèmes de l'orbe s'enchaînent dans CET ordre
-                            // (`.chain()`) : on saisit, puis on migre si besoin, puis
-                            // on simule la physique, puis on émet — sinon Bevy les
-                            // ordonnerait au hasard et on perdrait une frame entre eux.
-                            (
-                                net::orb_grab,
-                                net::orb_migrate,
-                                net::orb_simulate,
-                                net::orb_send,
-                            )
-                                .chain(),
-                            net::update_nameplates,
-                        ),
-                    );
+    match mode {
+        Some("rendezvous") => net::run_rendezvous(),
+        Some("sidecar") => net::run_sidecar(),
+        Some("net-demo") => net::run_demo(args.get(2).map(String::as_str).unwrap_or("a")),
+        Some("attack") => net::run_attack(args.get(2).map(String::as_str).unwrap_or("forge")),
+        Some("bot") => net::run_bot(args.get(2).map(String::as_str).unwrap_or("1")),
+        Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
+        Some("sim") => {
+            let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
+            let n_attackers = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3);
+            let secs = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(15);
+            net::run_sim(n_bots, n_attackers, secs);
+        }
+        Some("crowd") => {
+            let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+            let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+            net::run_crowd(n, secs);
+        }
+        Some("coopsim") => {
+            let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+            let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+            net::run_coopsim(n, secs);
+        }
+        Some("coopsim-bus") => {
+            let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+            let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+            net::run_coopsim_bus(n, secs);
+        }
+        Some("relay-test") => {
+            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+            net::run_relay_test(secs);
+        }
+        other => {
+            if let Some(m) = other {
+                eprintln!("Mode inconnu : « {m} ».");
             }
-            Err(e) => eprintln!("Réseau désactivé ({e}) — le jeu démarre en solo."),
+            eprintln!(
+                "Usage : jeu <rendezvous|sidecar|bot|sim|crowd|coopsim|coopsim-bus|\
+                 relay-test|attack|net-demo|nat-test> [args…]\n\
+                 (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
+            );
+            std::process::exit(2);
         }
     }
-
-    app.run();
 }

@@ -449,7 +449,7 @@ fn attack_sybil_frame() {
     println!("[attaquant] SYBIL-FRAMING (9.1) : faire taire un INNOCENT avec un quorum de Sybils bon marché.");
 
     // Un TÉMOIN honnête (un nœud quelconque du réseau) et un INNOCENT qu'on veut bannir CHEZ LUI.
-    let mut temoin = NetLink::new((0.5, 0.5, 0.5), false).expect("témoin honnête");
+    let mut temoin = NetLink::new((0.5, 0.5, 0.5)).expect("témoin honnête");
     let innocent = Identity::generate_pow(pow_bits()).id();
     println!("[attaquant]   cible : l'innocent {} — il n'a JAMAIS triché.", innocent.short());
 

@@ -18,7 +18,6 @@ use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::NetLink;
 use super::message::{claimed_id, decode_canonical, encode_relay_fwd, encode_signed, sig_ok, PlayerState};
-use super::netcode::relay_fallback_enabled;
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
@@ -29,10 +28,22 @@ use super::wire::{
     kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_GOSSIP, KIND_ORB, KIND_PUNCH,
     KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
 };
-use bevy::prelude::Vec3;
+use crate::math::Vec3;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+
+/// Le repli relais NAT est-il ACTIF ? (lu dans l'environnement, `RELAY_FALLBACK`.) Relogé ici
+/// depuis l'ancien `netcode/send.rs` (le client Bevy retiré) : le `Bot` est désormais le seul à
+/// décider d'émettre, donc le seul à lire ce drapeau.
+pub(crate) fn relay_fallback_enabled() -> bool {
+    relay_fallback_on(std::env::var("RELAY_FALLBACK").ok().as_deref())
+}
+
+/// Politique du drapeau (PURE, testable sans toucher l'environnement). Défaut sûr = OFF.
+fn relay_fallback_on(v: Option<&str>) -> bool {
+    matches!(v, Some("1") | Some("true"))
+}
 
 /// 12.3 (sidecar) — DÉCISION D'ÉMISSION par pair, **pure et testable**. C'est le portage EXACT
 /// dans le `Bot` headless de la logique de [netcode/send.rs] : sans elle, le sidecar RECEVAIT un
@@ -170,7 +181,7 @@ impl Bot {
     /// se prépare à rejoindre le rendez-vous. `None` si la prise ne s'ouvre pas.
     /// `phase` décale la position de départ de chaque nœud (pour étaler la « foule »).
     pub(crate) fn new(label: impl Into<String>, verbose: bool, phase: f32) -> Option<Bot> {
-        let link = NetLink::new(random_color(), false).ok()?;
+        let link = NetLink::new(random_color()).ok()?;
         Some(Bot::from_link(label, verbose, phase, link))
     }
 
@@ -178,7 +189,7 @@ impl Bot {
     /// sidecar : un nœud STABLE entre redémarrages (le pair distant le redécouvre vite, pas une
     /// nouvelle identité à chaque relance). Mine à `pow_bits()` au 1er lancement.
     pub(crate) fn new_persistent(label: impl Into<String>, profile: &str) -> Option<Bot> {
-        let link = NetLink::new_persistent(random_color(), false, profile).ok()?;
+        let link = NetLink::new_persistent(random_color(), profile).ok()?;
         Some(Bot::from_link(label, false, 0.0, link))
     }
 
@@ -191,7 +202,7 @@ impl Bot {
         socket: super::transport::Socket,
         rendezvous: std::net::SocketAddr,
     ) -> Bot {
-        let link = NetLink::new_on(socket, rendezvous, random_color(), false);
+        let link = NetLink::new_on(socket, rendezvous, random_color());
         Bot::from_link(label, verbose, phase, link)
     }
 
@@ -855,7 +866,18 @@ pub fn run_bot(label: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{bot_send_kind, SendKind};
+    use super::{bot_send_kind, relay_fallback_on, SendKind};
+
+    /// Le drapeau de repli relais : par défaut OFF (chemin direct historique intact), ON seulement
+    /// sur `1`/`true`. Relogé depuis l'ancien `netcode/send.rs` avec sa logique.
+    #[test]
+    fn relay_fallback_eteint_par_defaut() {
+        assert!(!relay_fallback_on(None)); // absent → OFF (chemin par défaut intact)
+        assert!(!relay_fallback_on(Some("0")));
+        assert!(!relay_fallback_on(Some("nope"))); // valeur inattendue → OFF (défaut sûr)
+        assert!(relay_fallback_on(Some("1")));
+        assert!(relay_fallback_on(Some("true")));
+    }
 
     /// 12.3 — la DÉCISION d'émission du `Bot` headless. Le défaut (repli OFF, force OFF) doit
     /// reproduire EXACTEMENT l'historique : `Direct` si le trou est ouvert, sinon `Skip` (le bot

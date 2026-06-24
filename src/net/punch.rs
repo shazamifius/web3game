@@ -19,16 +19,8 @@
 //! trou est « ouvert » et on arrête de percer.
 
 use super::crypto::{PeerId, PUBKEY_LEN};
-use super::link::NetLink;
 use super::wire::{KIND_PUNCH, PROTO_VERSION};
-use bevy::prelude::*;
-use std::collections::HashMap;
 
-/// Intervalle entre deux tentatives de perçage vers un même pair (s).
-const PUNCH_INTERVAL: f32 = 0.25;
-/// Au-delà de ce nombre d'essais sans réponse, on cesse de logguer (le perçage, lui,
-/// continue jusqu'à `PUNCH_GIVEUP`).
-const PUNCH_LOG_LIMIT: u32 = 8;
 /// ABANDON DU PERÇAGE (chap. 8.1b, ferme D23) : au-delà de ce nombre d'essais jamais
 /// corroborés (≈ `PUNCH_GIVEUP × PUNCH_INTERVAL` = 10 s), on CESSE de percer cette
 /// adresse. Avant, on martelait à VIE → une carte de gossip empoisonnée pointant vers
@@ -67,94 +59,12 @@ pub(crate) fn decode_punch(buf: &[u8]) -> Option<PeerId> {
     Some(PeerId::from_bytes(pk))
 }
 
-/// L'état d'un « trou » vers un pair : confirmé ouvert ou non, nombre d'essais, et
-/// le temps écoulé depuis le dernier essai (pour cadencer les tentatives).
-pub(crate) struct HoleState {
-    pub(crate) open: bool,
-    /// Le pair nous JOINT via le relais (on a reçu son état relayé par le rendez-vous) → preuve que le
-    /// direct échoue de son côté → on doit le relayer EN RETOUR tout de suite, sans attendre nos 40
-    /// perçages. Ferme la fenêtre de ré-armement de ~10 s à la reconnexion (12.3, étude du 22 juin).
-    pub(crate) relays_to_us: bool,
-    tries: u32,
-    acc: f32,
-}
-
-impl HoleState {
-    /// Le perçage vers ce pair est-il ABANDONNÉ (jamais corroboré après `PUNCH_GIVEUP` essais) ?
-    /// C'est le signal du repli relais (12.3 / D17) : on cesse de percer dans le vide, on route via
-    /// le rendez-vous. Expose la sémantique sans révéler le compteur interne `tries`.
-    pub(crate) fn abandoned(&self) -> bool {
-        !self.open && punch_abandoned(self.tries)
-    }
-
-    /// Doit-on RELAYER notre état vers ce pair ? Oui (tant que le direct n'est pas ouvert) si : soit
-    /// on a abandonné notre perçage, SOIT le pair nous joint déjà par relais (réciprocité immédiate →
-    /// plus de fenêtre aveugle de 10 s à la reconnexion). Le direct, dès qu'il s'ouvre, reprend la main.
-    pub(crate) fn wants_relay(&self) -> bool {
-        self.abandoned() || (!self.open && self.relays_to_us)
-    }
-}
-
-impl Default for HoleState {
-    fn default() -> Self {
-        // `acc` démarre à PUNCH_INTERVAL pour percer DÈS la première image.
-        HoleState { open: false, relays_to_us: false, tries: 0, acc: PUNCH_INTERVAL }
-    }
-}
-
-/// Les trous vers chaque pair connu, par identifiant. C'est `receive.rs` qui passe
-/// un trou à `open = true` quand un paquet du pair nous parvient.
-#[derive(Resource, Default)]
-pub struct Holes {
-    pub(crate) map: HashMap<PeerId, HoleState>,
-}
-
-/// SYSTÈME : pour chaque pair dont le trou n'est PAS confirmé ouvert, envoyer un
-/// PUNCH à intervalle régulier (la salve de perçage). Chaque PUNCH ouvre, dans
-/// NOTRE box, le trou de retour vers ce pair. Quand le pair fait de même, les deux
-/// trous coïncident et nos paquets commencent à passer.
-pub fn net_punch(time: Res<Time>, link: Res<NetLink>, mut holes: ResMut<Holes>) {
-    // Tant que le rendez-vous ne nous a pas donné d'id, on n'a personne à percer.
-    let Some(my_id) = link.my_id else {
-        return;
-    };
-    let dt = time.delta_secs();
-    let punch = encode_punch(my_id);
-
-    for (id, addr) in &link.peers {
-        let hole = holes.map.entry(*id).or_default();
-        // Trou ouvert (corroboré) OU abandonné (jamais corroboré → carte empoisonnée ou
-        // NAT symétrique) : on ne perce plus. L'abandon est l'anti-réflexion du 8.1b.
-        if hole.open || punch_abandoned(hole.tries) {
-            continue;
-        }
-        hole.acc += dt;
-        if hole.acc < PUNCH_INTERVAL {
-            continue;
-        }
-        hole.acc = 0.0;
-        hole.tries += 1;
-        let _ = link.socket.send_to(*addr, &punch);
-
-        if hole.tries <= PUNCH_LOG_LIMIT {
-            println!("PUNCH vers le pair {} (essai {}) — j'ouvre mon trou de retour.", id.short(), hole.tries);
-            if hole.tries == PUNCH_LOG_LIMIT {
-                println!(
-                    "Pair {} : toujours pas de réponse ; on continue (en silence) jusqu'à l'abandon (NAT symétrique ? → relais plus tard).",
-                    id.short()
-                );
-            }
-        } else if hole.tries == PUNCH_GIVEUP {
-            println!(
-                "Pair {} : jamais corroboré après {PUNCH_GIVEUP} essais — ABANDON du perçage (carte de gossip empoisonnée ? NAT symétrique ?). On cesse d'arroser cette adresse (anti-réflexion 8.1b).",
-                id.short()
-            );
-        }
-    }
-
-    // On oublie les trous des pairs qui ont quitté l'annuaire.
-    holes.map.retain(|id, _| link.peers.contains_key(id));
-}
+// NOTE — LE SUIVI DES TROUS (qui est ouvert, qui requiert un relais, cadence du perçage)
+// vivait dans un système client (`net_punch` + ressource `Holes`/`HoleState`). Le nœud
+// headless (`Bot`) en porte sa PROPRE version (cf. `bot.rs` : `holes` + `relays_to_us` +
+// la décision de repli relais), et le client Unreal ne perce pas lui-même (le cœur le fait
+// dans son thread). Ne reste donc ici que la frontière WIRE pure du perçage (encode/decode
+// + la règle d'abandon `punch_abandoned`), partagée par tous les chemins.
 
 #[cfg(test)]
 mod tests {
@@ -175,35 +85,5 @@ mod tests {
     fn punch_survit_a_l_aller_retour() {
         let id = PeerId::from_bytes([42u8; PUBKEY_LEN]);
         assert_eq!(decode_punch(&encode_punch(id)), Some(id));
-    }
-
-    /// 12.3 — `HoleState::abandoned()` : vrai SEULEMENT si non-ouvert ET au-delà du seuil d'abandon.
-    /// C'est le déclencheur du repli relais — un trou ouvert (perçage réussi) n'est JAMAIS « abandonné »,
-    /// et un perçage encore en cours non plus (on attend, on ne relaie pas prématurément).
-    #[test]
-    fn hole_abandoned_seulement_si_ferme_et_au_seuil() {
-        let mut h = HoleState::default();
-        assert!(!h.abandoned()); // neuf : tries=0, on perce encore
-        h.tries = PUNCH_GIVEUP - 1;
-        assert!(!h.abandoned()); // juste avant le seuil : encore en cours
-        h.tries = PUNCH_GIVEUP;
-        assert!(h.abandoned()); // au seuil, trou fermé : ABANDONNÉ → repli relais
-        h.open = true;
-        assert!(!h.abandoned()); // trou OUVERT (perçage réussi) → jamais abandonné, même au seuil
-    }
-
-    /// 12.3 — `wants_relay()` : on relaie si on a abandonné OU si le pair nous joint déjà par relais
-    /// (réciprocité immédiate → ferme la fenêtre de reconnexion). Le direct ouvert reprend toujours la main.
-    #[test]
-    fn hole_wants_relay_abandon_ou_pair_relaie() {
-        let mut h = HoleState::default();
-        assert!(!h.wants_relay()); // neuf : perçage en cours, ni abandon ni pair-relais → on attend
-        h.relays_to_us = true;
-        assert!(h.wants_relay()); // le pair nous joint par relais → on relaie TOUT DE SUITE (sans 40 essais)
-        h.relays_to_us = false;
-        h.tries = PUNCH_GIVEUP;
-        assert!(h.wants_relay()); // abandon du perçage → relais
-        h.open = true;
-        assert!(!h.wants_relay()); // direct OUVERT → jamais de relais, même si abandon/pair-relais
     }
 }

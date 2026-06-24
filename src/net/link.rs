@@ -11,12 +11,10 @@ use super::crypto::{load_or_create_identity, Identity, PeerId, pow_bits};
 use super::message::{decode_canonical, sig_ok};
 use super::transport::Socket;
 use super::wire::RENDEZVOUS_PORT;
-use bevy::prelude::Resource;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-#[derive(Resource)]
 pub struct NetLink {
     pub(crate) socket: Socket,
     pub(crate) rendezvous: SocketAddr,
@@ -29,7 +27,6 @@ pub struct NetLink {
     /// Notre identité cryptographique (paire de clés). On SIGNE nos paquets avec ;
     /// notre clé publique EST notre identité, portée dans chaque paquet.
     pub(crate) identity: Identity,
-    pub(crate) world_hue: Option<u16>, // couleur de salle donnée par le serveur (None = pas connecté)
     pub(crate) peers: HashMap<PeerId, SocketAddr>, // les autres joueurs : identité → adresse
     /// DERNIÈRE POSITION (x, z) INDICATIVE de chaque pair (chap. 8.1). Alimentée par les états
     /// reçus ET par les cartes de gossip — donc une partie est NON CORROBORÉE (un tiers a pu la
@@ -117,7 +114,6 @@ pub struct NetLink {
     /// livre pas les résumés » (reçus ≈ 0) de « les résumés arrivent mais sont rejetés » (D26 couche 1
     /// : `émetteur≠hôte` à découverte sparse). Demandé le 20 juin pour trancher le mur à 5000.
     pub(crate) summary_stats: SummaryStats,
-    pub(crate) weak: bool, // faible upload : on émet notre état via un parent (relais) au lieu de tous
 }
 
 /// Compteurs d'INGESTION DE RÉSUMÉ (D25, instrumentation pure). Chaque appel à `ingest_summary`
@@ -384,10 +380,8 @@ impl ReplayWindow {
 
 impl NetLink {
     /// Prépare le réseau d'un client : prise sur un port éphémère (choisi par
-    /// l'OS), et adresse du rendez-vous local. `weak` = mode « faible upload » :
-    /// on n'émet plus son état à tous les pairs, mais une seule fois à un parent
-    /// (relais) qui le recopie à notre place.
-    pub fn new(color: (f32, f32, f32), weak: bool) -> std::io::Result<NetLink> {
+    /// l'OS), et adresse du rendez-vous local.
+    pub fn new(color: (f32, f32, f32)) -> std::io::Result<NetLink> {
         // Identité ÉPHÉMÈRE minée à chaque lancement (preuve de travail anti-Sybil, chap. 6.2/9.1).
         // Réservé à la simu / aux bots / aux attaques : PAS de fichier sur disque (1000 bots → 1000
         // clés serait absurde). Le VRAI JEU utilise `new_persistent` (chap. 10.1) pour garder la
@@ -397,7 +391,7 @@ impl NetLink {
         let identity = Identity::generate();
         #[cfg(not(test))]
         let identity = Identity::generate_pow(pow_bits());
-        Self::with_identity(color, weak, identity)
+        Self::with_identity(color, identity)
     }
 
     /// Comme `new`, mais avec une IDENTITÉ PERSISTANTE (chap. 10.1, ferme D14) : la clé du `profile`
@@ -405,28 +399,23 @@ impl NetLink {
     /// (perms 600, comme une clé SSH). Le joueur garde donc la MÊME identité — même `0000…`, même
     /// réputation — entre deux sessions. `profile` = le mode (`a`/`b`/…) → deux fenêtres sur un même
     /// PC restent DISTINCTES (`a.key` ≠ `b.key`). Réservé au vrai jeu (la simu garde `new`, éphémère).
-    pub fn new_persistent(color: (f32, f32, f32), weak: bool, profile: &str) -> std::io::Result<NetLink> {
+    pub fn new_persistent(color: (f32, f32, f32), profile: &str) -> std::io::Result<NetLink> {
         let (identity, path, fresh) = load_or_create_identity(profile, pow_bits())?;
         if fresh {
             println!("Identité PERSISTANTE créée et minée : {} → {}", identity.id().short(), path.display());
         } else {
             println!("Identité PERSISTANTE rechargée : {} ← {}", identity.id().short(), path.display());
         }
-        Self::with_identity(color, weak, identity)
+        Self::with_identity(color, identity)
     }
 
     /// Cœur partagé par `new` / `new_persistent` (anti-divergence D2 : UNE seule construction du
     /// `NetLink`, quelle que soit la provenance de l'identité) : ouvre la prise et assemble l'état.
-    fn with_identity(color: (f32, f32, f32), weak: bool, identity: Identity) -> std::io::Result<NetLink> {
+    fn with_identity(color: (f32, f32, f32), identity: Identity) -> std::io::Result<NetLink> {
         let socket = Socket::bind(0)?; // 0 = l'OS choisit un port libre
         let rendezvous = rendezvous_addr();
-        println!(
-            "Client réseau : port local {}, rendez-vous {}{}.",
-            socket.local_addr()?,
-            rendezvous,
-            if weak { " (faible upload : via un parent)" } else { "" }
-        );
-        Ok(Self::assemble(socket, rendezvous, color, weak, identity))
+        println!("Client réseau : port local {}, rendez-vous {}.", socket.local_addr()?, rendezvous);
+        Ok(Self::assemble(socket, rendezvous, color, identity))
     }
 
     /// Construit un `NetLink` sur une PRISE et un RENDEZ-VOUS donnés (banc bus mémoire, dette D25).
@@ -435,24 +424,23 @@ impl NetLink {
     /// ⚠ BUS_DOUTE — on réutilise `assemble` (même état que le vrai client) → la SEULE différence
     /// avec un nœud UDP est la prise sous-jacente ; à confirmer qu'aucun comportement ne dépend
     /// d'une vraie adresse routable (jusqu'ici tout passe par `peers`/`rendezvous`, pas l'OS).
-    pub(crate) fn new_on(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), weak: bool) -> NetLink {
+    pub(crate) fn new_on(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32)) -> NetLink {
         #[cfg(test)]
         let identity = Identity::generate();
         #[cfg(not(test))]
         let identity = Identity::generate_pow(pow_bits());
-        Self::assemble(socket, rendezvous, color, weak, identity)
+        Self::assemble(socket, rendezvous, color, identity)
     }
 
     /// Assemble l'état d'un `NetLink` à partir de ses briques (anti-divergence D2 : UNE seule
     /// construction, partagée par `with_identity` (UDP) et `new_on` (bus)).
-    fn assemble(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), weak: bool, identity: Identity) -> NetLink {
+    fn assemble(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), identity: Identity) -> NetLink {
         NetLink {
             socket,
             rendezvous,
             my_id: None,
             my_color: color,
             identity,
-            world_hue: None,
             peers: HashMap::new(),
             peer_pos: HashMap::new(),
             confirmed_pos: HashMap::new(),
@@ -470,7 +458,6 @@ impl NetLink {
             cell_claims: HashMap::new(),
             verified_proofs: HashMap::new(),
             summary_stats: SummaryStats::default(),
-            weak,
         }
     }
 
@@ -1156,7 +1143,7 @@ mod tests {
     use super::*;
 
     fn link_de_test() -> NetLink {
-        NetLink::new((1.0, 1.0, 1.0), false).expect("socket de test")
+        NetLink::new((1.0, 1.0, 1.0)).expect("socket de test")
     }
 
     fn pid(seed: u8) -> PeerId {

@@ -1,12 +1,7 @@
 //! LA COULEUR DE SKIN : une couleur vive aléatoire, choisie une fois au lancement.
 //!
-//! Le perso local ET le réseau utilisent la même (rangée dans une ressource Bevy).
-
-use bevy::prelude::Resource;
-
-/// La couleur de skin de CETTE session, choisie au démarrage.
-#[derive(Resource, Clone, Copy)]
-pub struct MyColor(pub f32, pub f32, pub f32);
+//! Le réseau la porte dans chaque paquet d'état (les 3 octets `r,g,b`) : c'est donc
+//! du cœur, pas du rendu — aucune dépendance moteur ici.
 
 /// Tire une couleur vive aléatoire (rouge/vert/bleu, valeurs faites pour « glow »).
 /// On évite toute dépendance externe : petit générateur pseudo-aléatoire maison.

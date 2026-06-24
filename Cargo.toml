@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Moteur de jeu, 100 % Rust.
-bevy = { version = "0.18.1" }
-
 # CRYPTO (chapitre 5) : signatures à clé publique Ed25519. C'est la SEULE
 # « boîte noire » du projet, et c'est volontaire : on ne code JAMAIS sa propre
 # crypto (l'arithmétique sur courbe elliptique est un nid à failles, même pour
@@ -19,19 +16,6 @@ ed25519-dalek = "2"
 # `/dev/urandom` (qui plantait sous Windows). Crate minimale, déjà tirée transitivement.
 getrandom = "0.3"
 
-# La feature "wayland" n'existe QUE sur Linux (session dev en Wayland) ; sur Windows/macOS
-# elle n'existe pas → on ne l'active que pour la cible Linux. Cargo UNIONNE les features de
-# `[dependencies]` et de la cible : Linux = bevy+wayland (inchangé), Windows = bevy sans wayland.
-# ⚠ Cette section de cible doit rester APRÈS toutes les deps de `[dependencies]` (un en-tête de
-# table TOML referme la table précédente) — sinon les deps suivantes tomberaient dans la cible.
-[target.'cfg(target_os = "linux")'.dependencies]
-bevy = { version = "0.18.1", features = ["wayland"] }
-
-# On compile les dépendances (dont Bevy) en optimisé même en mode debug :
-# la première compilation est longue, mais le jeu tourne ensuite de façon fluide.
-[profile.dev.package."*"]
-opt-level = 3
-
-# Notre propre code reste peu optimisé pour garder une compilation rapide.
-[profile.dev]
-opt-level = 1
+# Plus de moteur 3D : depuis la bascule vers Unreal (juin 2026), ce binaire est le CŒUR
+# RÉSEAU headless. La présentation vit dans Unreal, branchée via le mode `sidecar` (socket
+# locale, cf. CONTRAT_SIDECAR.md). Le cœur ne dépend donc que de la crypto + l'entropie OS.

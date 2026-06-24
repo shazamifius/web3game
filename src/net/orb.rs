@@ -19,24 +19,11 @@
 //! entrant s'il SUPPLANTE le nôtre (version plus haute, ou égale mais id plus petit).
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::link::NetLink;
-use super::message::encode_relay_fwd;
-use super::netcode::relay_fallback_enabled;
-use super::punch::Holes;
 use super::wire::{KIND_ORB, PROTO_VERSION};
-use crate::world::{ROOM_HEIGHT, ROOM_SIZE};
-use bevy::prelude::*;
+use crate::math::Vec3;
 
-/// Rayon de l'orbe (m) : sert au rendu, aux rebonds et à la détection de contact.
-const ORB_RADIUS: f32 = 0.35;
 /// Position de repos de l'orbe (au centre, à hauteur des yeux), avant toute prise.
 const ORB_START: Vec3 = Vec3::new(0.0, 1.5, 0.0);
-/// Vitesse imprimée à l'orbe quand on la frappe (m/s).
-const HIT_SPEED: f32 = 5.0;
-/// Demi-largeur du joueur pour le test de contact (≈ celle du module `player`).
-const PLAYER_RADIUS: f32 = 0.30;
-/// Fréquence à laquelle le maître diffuse l'état de l'orbe (paquets/s).
-const ORB_SEND_HZ: f32 = 20.0;
 /// Délai sans nouvelle du maître au-delà duquel on le présume parti (s). Généreux
 /// exprès (règle des vrais systèmes type Raft) : sinon une micro-coupure ferait
 /// basculer l'orbe à tort.
@@ -176,26 +163,20 @@ pub(crate) enum OrbApply {
     NoContact,   // refusé : se proclame maître sans avoir été près de l'orbe → faute (6.4)
 }
 
-/// L'état logique de l'orbe, partagé par tout le client (une seule par monde).
-#[derive(Resource)]
+/// L'état logique de l'orbe — PUR (aucun type moteur). La présentation 3D (sphère,
+/// couleur, rebonds visuels) est reconstruite côté client (Unreal) à partir de cet état.
 pub struct Orb {
     pub(crate) pos: Vec3,
     pub(crate) vel: Vec3,
     pub(crate) owner: Option<PeerId>, // None = personne ne l'a encore touchée
     pub(crate) version: u16,
     pub(crate) color: (f32, f32, f32),
-    mat: Handle<StandardMaterial>,  // pour recolorer l'orbe au changement de maître
-    shown: Option<(f32, f32, f32)>, // dernière couleur réellement appliquée
-    last_heard: f32,                // instant du dernier paquet reçu du maître (migration)
+    last_heard: f32, // instant du dernier paquet reçu du maître (migration)
 }
 
-/// Marque l'entité 3D (la sphère) qui matérialise l'orbe à l'écran.
-#[derive(Component)]
-pub struct OrbBall;
-
 impl Orb {
-    /// Construit une `Orb` minimale pour un client SANS rendu 3D (le bot de test
-    /// headless du chapitre 6.0). Même logique d'autorité que le jeu.
+    /// Construit une `Orb` au repos (état initial : sans maître). Utilisée par le nœud
+    /// headless (`Bot`) et le sidecar — même logique d'autorité que partout.
     pub(crate) fn headless() -> Orb {
         Orb {
             pos: ORB_START,
@@ -203,8 +184,6 @@ impl Orb {
             owner: None,
             version: 0,
             color: NEUTRAL_COLOR,
-            mat: Handle::default(),
-            shown: None,
             last_heard: 0.0,
         }
     }
@@ -219,199 +198,6 @@ fn supersedes(in_ver: u16, in_owner: PeerId, cur_ver: u16, cur_owner: Option<Pee
     match cur_owner {
         None => true, // pas encore de maître : le premier paquet fait foi
         Some(cur) => in_ver > cur_ver || (in_ver == cur_ver && in_owner <= cur),
-    }
-}
-
-/// STARTUP (client) : crée la sphère néon de l'orbe et installe la ressource `Orb`.
-pub fn setup_orb(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mesh = meshes.add(Sphere::new(ORB_RADIUS));
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::BLACK,
-        emissive: LinearRgba::rgb(NEUTRAL_COLOR.0, NEUTRAL_COLOR.1, NEUTRAL_COLOR.2),
-        ..default()
-    });
-
-    commands.spawn((
-        OrbBall,
-        Mesh3d(mesh),
-        MeshMaterial3d(mat.clone()),
-        Transform::from_translation(ORB_START),
-    ));
-
-    commands.insert_resource(Orb {
-        pos: ORB_START,
-        vel: Vec3::ZERO,
-        owner: None,
-        version: 0,
-        color: NEUTRAL_COLOR,
-        mat,
-        shown: Some(NEUTRAL_COLOR),
-        last_heard: 0.0,
-    });
-}
-
-/// UPDATE (client) : détecte le CONTACT entre notre joueur et l'orbe, et déclenche
-/// le transfert de propriété — on devient maître, on imprime une vitesse, on
-/// incrémente la version. On ne frappe qu'au FRONT du contact (booléen `touching`).
-pub fn orb_grab(
-    link: Res<NetLink>,
-    mut orb: ResMut<Orb>,
-    player: Query<&Transform, With<crate::player::Player>>,
-    mut touching: Local<bool>,
-) {
-    let Some(my_id) = link.my_id else {
-        return;
-    };
-    let Ok(pt) = player.single() else {
-        return;
-    };
-    let pc = pt.translation;
-
-    let closest = Vec3::new(pc.x, orb.pos.y.clamp(0.2, 1.4), pc.z);
-    let touch = orb.pos.distance(closest) < ORB_RADIUS + PLAYER_RADIUS;
-
-    if touch && !*touching {
-        let dir = (orb.pos - Vec3::new(pc.x, 0.9, pc.z)).normalize_or_zero();
-        let dir = if dir == Vec3::ZERO { Vec3::Y } else { dir };
-        orb.vel = dir * HIT_SPEED;
-        orb.owner = Some(my_id);
-        orb.version = orb.version.wrapping_add(1);
-        orb.color = link.my_color;
-        println!("Orbe frappée — tu en es le maître (v{}).", orb.version);
-    }
-    *touching = touch;
-}
-
-/// UPDATE (client) : fait vivre l'orbe et l'affiche.
-///   - si JE suis le maître  → je simule la physique (avance + rebonds sur 6 faces) ;
-///   - sinon → j'EXTRAPOLE (pos += vitesse·dt), recalé à chaque paquet reçu.
-pub fn orb_simulate(
-    time: Res<Time>,
-    link: Res<NetLink>,
-    mut orb: ResMut<Orb>,
-    mut ball: Query<&mut Transform, With<OrbBall>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let dt = time.delta_secs();
-    let am_owner = orb.owner.is_some() && orb.owner == link.my_id;
-
-    if orb.owner.is_some() {
-        let step = orb.vel * dt;
-        orb.pos += step;
-
-        let h = ROOM_SIZE / 2.0 - ORB_RADIUS;
-        let (lo, hi) = (ORB_RADIUS, ROOM_HEIGHT - ORB_RADIUS);
-        if am_owner {
-            if orb.pos.x < -h {
-                orb.pos.x = -h;
-                orb.vel.x = orb.vel.x.abs();
-            } else if orb.pos.x > h {
-                orb.pos.x = h;
-                orb.vel.x = -orb.vel.x.abs();
-            }
-            if orb.pos.z < -h {
-                orb.pos.z = -h;
-                orb.vel.z = orb.vel.z.abs();
-            } else if orb.pos.z > h {
-                orb.pos.z = h;
-                orb.vel.z = -orb.vel.z.abs();
-            }
-            if orb.pos.y < lo {
-                orb.pos.y = lo;
-                orb.vel.y = orb.vel.y.abs();
-            } else if orb.pos.y > hi {
-                orb.pos.y = hi;
-                orb.vel.y = -orb.vel.y.abs();
-            }
-        } else {
-            orb.pos.x = orb.pos.x.clamp(-h, h);
-            orb.pos.z = orb.pos.z.clamp(-h, h);
-            orb.pos.y = orb.pos.y.clamp(lo, hi);
-        }
-    }
-
-    if let Ok(mut tf) = ball.single_mut() {
-        tf.translation = orb.pos;
-        tf.rotate_y(dt * 1.5);
-    }
-
-    if orb.shown != Some(orb.color) {
-        if let Some(mat) = materials.get_mut(&orb.mat) {
-            let (r, g, b) = orb.color;
-            mat.emissive = LinearRgba::rgb(r, g, b);
-        }
-        orb.shown = Some(orb.color);
-    }
-}
-
-/// UPDATE (client) : si JE suis le maître, diffuser l'état de l'orbe à tous les
-/// pairs joignables (trou NAT ouvert), à `ORB_SEND_HZ`. Les non-maîtres se taisent.
-pub fn orb_send(
-    time: Res<Time>,
-    mut acc: Local<f32>,
-    mut relay_fallback: Local<Option<bool>>, // 12.3-G : drapeau lu UNE fois (cache), comme net_send
-    link: Res<NetLink>,
-    holes: Res<Holes>,
-    orb: Res<Orb>,
-) {
-    let Some(my_id) = link.my_id else {
-        return;
-    };
-    if orb.owner != Some(my_id) {
-        return; // autorité unique : seul le maître émet
-    }
-
-    *acc += time.delta_secs();
-    let interval = 1.0 / ORB_SEND_HZ;
-    if *acc < interval {
-        return;
-    }
-    *acc = 0.0;
-
-    let bytes = encode_orb_signed(
-        &OrbWire {
-            owner: my_id,
-            version: orb.version,
-            x: orb.pos.x,
-            y: orb.pos.y,
-            z: orb.pos.z,
-            vx: orb.vel.x,
-            vy: orb.vel.y,
-            vz: orb.vel.z,
-            r: orb.color.0,
-            g: orb.color.1,
-            b: orb.color.2,
-        },
-        &link.identity,
-    );
-
-    // 12.3-G : repli relais lu UNE fois (cache). Éteint → on n'émet QUE vers les trous ouverts
-    // (comportement historique exact : aucun changement byte-pour-byte quand RELAY_FALLBACK absent).
-    let relay = match *relay_fallback {
-        Some(v) => v,
-        None => {
-            let on = relay_fallback_enabled();
-            *relay_fallback = Some(on);
-            on
-        }
-    };
-
-    for (id, addr) in &link.peers {
-        // Comme net_send : direct si le trou est OUVERT, sinon (drapeau allumé) on emballe l'orbe
-        // SCELLÉE en KIND_RELAY_FWD(dest) vers le rendez-vous, qui la porte au pair non-perçable. Ainsi
-        // l'orbe traverse le NAT comme l'avatar → plus de double maître entre deux pairs relayés.
-        let open = holes.map.get(id).map_or(false, |h| h.open);
-        let relayed = relay && holes.map.get(id).map_or(false, |h| h.wants_relay());
-        if open {
-            let _ = link.socket.send_to(*addr, &bytes); // connexion directe (inchangé)
-        } else if relayed {
-            let env = encode_relay_fwd(*id, &bytes);
-            let _ = link.socket.send_to(link.rendezvous, &env);
-        }
     }
 }
 
@@ -456,43 +242,11 @@ pub(crate) fn apply_incoming(orb: &mut Orb, w: OrbWire, now: f32, claimer_pos: O
     OrbApply::Applied
 }
 
-/// UPDATE (client) : la MIGRATION D'HÔTE de l'orbe (cœur du chapitre 4).
-///
-/// Si le maître se tait depuis `MASTER_TIMEOUT`, on élit son remplaçant de façon
-/// **déterministe** : le plus petit id (clé) parmi {soi} ∪ {pairs connus}, l'ancien
-/// maître exclu. Tout le monde a la même liste et la même règle → même gagnant, sans
-/// vote. Seul le gagnant se proclame ; il incrémente la version (règle le split-brain).
-pub fn orb_migrate(time: Res<Time>, link: Res<NetLink>, mut orb: ResMut<Orb>) {
-    let Some(my_id) = link.my_id else {
-        return;
-    };
-    let Some(owner) = orb.owner else {
-        return;
-    };
-    if owner == my_id {
-        return;
-    }
-    let now = time.elapsed_secs();
-    if now - orb.last_heard < MASTER_TIMEOUT {
-        return;
-    }
-
-    // ÉLECTION déterministe : le plus petit id (clé), l'ancien maître écarté.
-    let mut winner = my_id;
-    for id in link.peers.keys() {
-        if *id != owner && *id < winner {
-            winner = *id;
-        }
-    }
-
-    if winner == my_id {
-        orb.owner = Some(my_id);
-        orb.version = orb.version.wrapping_add(1);
-        orb.color = link.my_color;
-        orb.last_heard = now;
-        println!("Maître {} disparu — je reprends l'orbe (v{}).", owner.short(), orb.version);
-    }
-}
+// NOTE — MIGRATION D'HÔTE. La RÉCEPTION d'une migration (adopter un nouveau maître après
+// que l'ancien s'est tu > `MASTER_TIMEOUT`) vit dans `apply_incoming` ci-dessus. L'AUTO-
+// ÉLECTION (se proclamer soi-même remplaçant : plus petit id, version +1) était portée par
+// un système client ; elle reviendra ici, en fonction pure, quand le jeu (Unreal) câblera
+// l'autorité d'objet — aucun nœud headless ne s'auto-élit aujourd'hui.
 
 #[cfg(test)]
 mod tests {
@@ -575,8 +329,7 @@ mod tests {
     fn orb_test(owner: Option<PeerId>, version: u16) -> Orb {
         Orb {
             pos: Vec3::ZERO, vel: Vec3::ZERO, owner, version,
-            color: NEUTRAL_COLOR, mat: Handle::default(),
-            shown: None, last_heard: 0.0,
+            color: NEUTRAL_COLOR, last_heard: 0.0,
         }
     }
 

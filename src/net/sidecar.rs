@@ -19,7 +19,7 @@
 use super::bot::Bot;
 use super::crypto::PeerId;
 use super::message::PlayerState;
-use bevy::prelude::Vec3;
+use crate::math::Vec3;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};

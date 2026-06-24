@@ -5,7 +5,7 @@
 //! est refusé ET compté comme faute ATTRIBUABLE (c'est bien le détenteur de la clé
 //! qui l'a signé). C'est le pendant « monde » des bornes déjà posées sur l'orbe.
 
-use bevy::prelude::Vec3;
+use crate::math::Vec3;
 
 /// Vitesse maximale plausible d'un joueur (m/s). Très généreuse : un humain sprinte
 /// à ~10 m/s ; on laisse de la marge pour un dash, une chute, un saut. Au-delà, c'est

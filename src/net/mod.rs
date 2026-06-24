@@ -1,4 +1,4 @@
-//! La couche réseau du jeu — faite main : transport UDP brut + intégration Bevy.
+//! LE CŒUR RÉSEAU — fait main : transport UDP brut, engine-agnostique (aucun moteur 3D).
 //! Aucune « boîte noire » : on voit chaque octet partir et revenir.
 //!
 //! # Organisation (un sous-fichier = une responsabilité)
@@ -19,14 +19,12 @@
 //!   - `demo`       : le mode texte `net-demo` (observer les paquets sans la 3D)
 //!   - `attack`     : un VRAI programme attaquant (`cargo run -- attack …`) qui prouve
 //!                    la robustesse en envoyant de vrais paquets malveillants (chap. 5)
-//!   - `link`       : `NetLink`, la ressource qui relie le réseau au jeu
-//!   - `netcode/`   : le rattrapage de latence (interpolation, prédiction,
-//!                    réconciliation, horloge adaptative)
+//!   - `link`       : `NetLink`, l'état réseau d'un nœud (table de pairs, réputation…)
 //!
-//! # Jouer à plusieurs (même PC)
+//! # Lancer (headless ; la 3D vit dans Unreal, branchée au mode `sidecar`)
 //!   Terminal 1 :  nix-shell --run "cargo run -- rendezvous"
-//!   Terminal 2 :  nix-shell --run "cargo run -- a"
-//!   Terminal 3 :  nix-shell --run "cargo run -- b"   (… et autant qu'on veut)
+//!   Terminal 2 :  nix-shell --run "cargo run -- bot alice"
+//!   Terminal 3 :  nix-shell --run "cargo run -- sidecar"
 
 mod accuse;
 mod anticheat;
@@ -42,7 +40,6 @@ mod gossip;
 mod link;
 mod message;
 mod natdemo;
-mod netcode;
 mod orb;
 mod probe;
 mod punch;
@@ -53,19 +50,12 @@ mod skin;
 mod transport;
 mod wire;
 
-// L'API publique du module réseau, utilisée par le reste du jeu (main, player).
+// L'API publique du cœur, utilisée par `main` (aiguillage des modes headless).
 pub use attack::run_attack;
 pub use bot::run_bot;
 pub use coopsim::{run_coopsim, run_coopsim_bus};
 pub use demo::run_demo;
-pub use link::NetLink;
 pub use natdemo::run_nat_test;
-pub use netcode::{
-    net_interpolate, net_receive, net_send, update_nameplates, Nameplates, RemoteAvatars,
-};
-pub use orb::{orb_grab, orb_migrate, orb_send, orb_simulate, setup_orb};
-pub use punch::{net_punch, Holes};
 pub use rendezvous::run_rendezvous;
 pub use sidecar::run_sidecar;
 pub use sim::{run_crowd, run_relay_test, run_sim};
-pub use skin::{random_color, MyColor};

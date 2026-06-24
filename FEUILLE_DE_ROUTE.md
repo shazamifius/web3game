@@ -58,10 +58,21 @@
 > minimal (poll avatars distants {id,pos,couleur,pseudo} · push ma position · état orbe) ; (3) rebâtir hub/portails/
 > arcade/île/avatars/nameplates dans Unreal. **Tant que ét.6 n'est pas close, on ne démarre PAS Unreal.**
 
-> ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (L'ANCRE anti-dérive ; maj 21 juin 2026)
+> ### ⏱️ ÉTAT COURANT + PROCHAINE ACTION (L'ANCRE anti-dérive ; maj 25 juin 2026)
 > *Lire CE bloc + le 🎯 ci-dessus suffit pour reprendre au bon niveau. Tout ce qui suit dans §0
 > est un JOURNAL d'archive — ne le relire qu'au besoin, via `grep`. Anti-collapse : on s'ancre ici,
 > on ne se rejoue pas tout l'historique à chaque session.*
+>
+> **🧹 DÉ-BEVY (Étape A) FAIT — 25 juin 2026.** Le **client Bevy (la fenêtre de jeu) est RETIRÉ** et le
+> **cœur ne dépend plus d'aucun moteur 3D** : `bevy::Vec3` → un `Vec3` maison (`src/math.rs`) ; derives
+> `Resource`/`Component` retirés ; systèmes ECS de l'orbe/punch supprimés (la **logique pure ORBE+OWN** —
+> `supersedes`/`apply_incoming`/wire signé — est GARDÉE, propre et réutilisable, exercée par le `Bot` + tests) ;
+> `netcode/` (interpolation/prédiction) supprimé (c'est Unreal qui interpole, cf. `CONTRAT_SIDECAR.md` §4).
+> Supprimés aussi : `world/player/scenes/meteorites` + champs morts `world_hue`/`weak`. **Cœur byte-pour-byte
+> intact** : compile **0 warning** (Bevy retiré → build ~1 s vs interminable), **108 tests verts** (106 +4 `math`
+> −2 `HoleState` dont le seul consommateur, `net_punch`, disparaît), `sim` = orbe intègre, `relay-test` = relais
+> deux sens, `sidecar` démarre. **Reste (Étape B, optionnelle) :** extraire le cœur en crate lib `web3core` (workspace) —
+> plumbing cosmétique, le sidecar marche déjà ; à faire SI ça sert, sinon prioriser le petit jeu.
 >
 > **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense » Phase A
 > BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule), **10.1 identité PERSISTANTE FAIT**

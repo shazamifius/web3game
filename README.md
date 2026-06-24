@@ -9,11 +9,17 @@ Un petit univers social en **vue première personne** où l'on veut connecter de
 centaines de joueurs **sans aucun serveur de jeu central**, en pur pair-à-pair
 (P2P). Le but n'est pas un jeu de tir : c'est un espace social, comme VRChat.
 
-> ⚠️ **Important** : ce projet est écrit en **Rust + Bevy**, pas en Unreal
-> Engine. On a choisi Rust pour tout contrôler nous-mêmes — chaque octet qui
-> part sur le réseau est écrit à la main, aucune « boîte noire ». L'architecture
-> réseau décrite plus bas (Own+Shields, BFT, AoI…) est de la **logique**, elle
-> resterait la même avec n'importe quel moteur 3D.
+> ⚠️ **Important** : le **cœur réseau** est écrit en **Rust pur**, sans aucun moteur
+> 3D — chaque octet qui part sur le réseau est écrit à la main, aucune « boîte noire ».
+> Depuis juin 2026 la **présentation** est faite dans **Unreal Engine** (client mince
+> branché au cœur via un *sidecar* socket-locale, cf. [`CONTRAT_SIDECAR.md`](CONTRAT_SIDECAR.md)) :
+> le **client Bevy d'origine a été retiré**, et le cœur ne dépend plus de Bevy (seulement
+> de la crypto Ed25519). L'architecture réseau décrite plus bas (Own+Shields, BFT, AoI…)
+> est de la **logique** : elle reste la même quel que soit le moteur 3D.
+>
+> *(Note d'honnêteté : ce README a des sections antérieures à la bascule qui parlent encore
+> du « jeu Bevy » / d'un `cargo run` qui ouvre une fenêtre — elles seront repassées au fil
+> de la reconstruction du monde dans Unreal. La section « Comment lancer » ci-dessous est, elle, à jour.)*
 
 ---
 
@@ -70,43 +76,33 @@ sans rien arrondir. Le détail vit dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE
 
 ---
 
-## Comment lancer le jeu
+## Comment lancer le cœur (headless)
 
-Le projet se construit dans un environnement reproductible (`nix-shell`).
-Toujours se placer **dans le dossier du projet d'abord** :
+Le binaire `jeu` n'embarque plus de fenêtre 3D : c'est le **cœur réseau headless**.
+La présentation 3D vit dans Unreal, qui se branche au mode `sidecar`. Le projet se
+construit dans un environnement reproductible (`nix-shell`) — se placer **dans le
+dossier du projet d'abord** :
 
 ```fish
 cd "/home/shaza/Documents/projet web 3"
 ```
 
-**Jouer en solo** (une seule fenêtre, sans réseau) :
-
-```fish
-nix-shell --run "cargo run"
-```
-
-**Jouer à plusieurs sur le même PC** (multijoueur local). On lance d'abord le
-**serveur de rendez-vous** (l'annuaire), puis autant de clients qu'on veut :
+**Le pont vers Unreal** (le cas normal). On lance le **rendez-vous** (l'annuaire), puis
+le **sidecar** auquel Unreal se connecte (socket locale `127.0.0.1:47800`) :
 
 ```fish
 nix-shell --run "cargo run -- rendezvous"   # terminal 1  (l'annuaire — à lancer en premier)
-nix-shell --run "cargo run -- a"            # terminal 2  (un joueur)
-nix-shell --run "cargo run -- b"            # terminal 3  (un autre)
-nix-shell --run "cargo run -- play"         # terminal 4  (… et autant qu'on veut)
-nix-shell --run "cargo run -- weak"         # un client à FAIBLE upload (passe par un relais)
+nix-shell --run "cargo run -- sidecar"      # terminal 2  (le pont ; lancer Unreal ensuite)
 ```
 
-Les identifiants sont attribués par le rendez-vous (plus de rôle codé en dur) ;
-chaque client prend un port libre tout seul. `a`, `b`, `play`, `client` font
-tous la même chose : lancer un client. `weak` lance un client à **faible upload** :
-il n'émet plus son état à tous, mais une seule fois à un **parent** (relais) qui le
-recopie aux autres à sa place (chapitre 4.1).
+**Tester le réseau sans Unreal** (clients headless + bancs de mesure) :
 
-> 💡 **Indice de connexion** : la **couleur de la salle** est donnée par le
-> serveur de rendez-vous. Deux fenêtres de **même couleur** = connectées au même
-> serveur. Une fenêtre d'une **autre couleur** (sa couleur aléatoire de départ)
-> = pas connectée. Pratique pour vérifier d'un coup d'œil, sans chercher un
-> avatar dans la salle.
+```fish
+nix-shell --run "cargo run -- bot alice"        # un client headless (le vrai protocole, sans 3D)
+nix-shell --run "cargo run -- sim 50 3 15"      # 50 nœuds + 3 attaquants, 15 s, rapport agrégé
+nix-shell --run "cargo run -- relay-test 6"     # banc déterministe du relais NAT (deux sens)
+nix-shell --run "cargo run -- crowd 200"        # foule dense (couverture de perception)
+```
 
 **Voir le réseau seul, en texte** (sans la 3D, pour observer les paquets) :
 
@@ -124,29 +120,19 @@ sudo ./tools/test-nat.sh          # monte 2 NAT + 2 clients, observe les trous s
 sudo ./tools/test-nat.sh --clean  # nettoyer un essai interrompu
 ```
 
-> Le mode `nat-test` (lancé par le script) rejoue le scénario réseau du jeu en
-> texte, car les fenêtres 3D ne peuvent pas tourner dans un namespace sans écran.
+> Le mode `nat-test` (lancé par le script) rejoue le scénario réseau en texte, car
+> les fenêtres 3D ne peuvent pas tourner dans un namespace sans écran.
 
-**Développer avec relance automatique** (le jeu se recompile et redémarre à
-chaque sauvegarde — confort de dev, via `cargo-watch`) :
+**Développer avec relance automatique** (le cœur se recompile et redémarre à chaque
+sauvegarde — confort de dev, via `cargo-watch`) :
 
 ```fish
 nix-shell --run "cargo watch -x 'run -- rendezvous'"  # terminal 1 (annuaire)
-nix-shell --run "cargo watch -x 'run -- a'"           # terminal 2
-nix-shell --run "cargo watch -x 'run -- b'"           # terminal 3
+nix-shell --run "cargo watch -x 'run -- sidecar'"     # terminal 2 (le pont Unreal)
 ```
 
-> La fenêtre se ferme/rouvre à chaque reload (la position est donc remise à
-> zéro, et un clic gauche recapture la souris). C'est de la relance auto, pas du
-> hot-patch : largement suffisant pour régler le netcode.
-
-### Contrôles
-| Touche        | Action                          |
-|---------------|---------------------------------|
-| ZQSD          | se déplacer                     |
-| Souris        | regarder autour                 |
-| Échap         | libérer la souris               |
-| Clic gauche   | recapturer la souris            |
+> *(Les **contrôles** du joueur — ZQSD, souris, saut — vivent désormais côté Unreal,
+> cf. le dépôt privé `spike01-unreal`. Le binaire `jeu` n'a plus d'entrée clavier.)*
 
 ---
 
@@ -157,10 +143,9 @@ qu'un gros).
 
 ```
 src/
-├── main.rs              point d'entrée, aiguillage des modes (solo / a / b / net-demo)
-├── world.rs             la salle (sol, murs, plafond néon, lumière)
-├── player.rs            le personnage, la caméra 1re personne, les contrôles
-└── net/                 LE RÉSEAU, fait main
+├── main.rs              point d'entrée, aiguillage des modes headless (rendezvous/sidecar/bot/sim/…)
+├── math.rs              Vec3 maison (sans moteur 3D) — la brique maths du cœur
+└── net/                 LE RÉSEAU, fait main (engine-agnostique, aucun moteur 3D)
     ├── mod.rs           assemble le module et expose l'API publique
     ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
     ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
@@ -168,26 +153,23 @@ src/
     ├── anticheat.rs     le « Shield local » : règles de plausibilité physique (chap. 6.3+)
     ├── accuse.rs        accusations signées + quorum : réputation partagée (chap. 6.7)
     ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
-    ├── punch.rs         hole punching (percer les NAT pour une connexion directe)
-    ├── orb.rs           l'orbe partagée : objet à maître unique + migration d'hôte
+    ├── punch.rs         hole punching : frontière wire (encode/decode/abandon du perçage)
+    ├── orb.rs           l'orbe partagée : logique PURE d'autorité (ORBE+OWN, encode/decode signé, apply_incoming)
     ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
-    ├── skin.rs          la couleur de skin aléatoire
+    ├── skin.rs          la couleur de skin aléatoire (portée dans le paquet d'état)
     ├── demo.rs          le mode texte net-demo (observer les paquets)
     ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5 & 6
     ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) + brique `Bot` réutilisable (6.0/6.8)
     ├── sim.rs           la SIMULATION MASSIVE (cargo run -- sim N M T) : N nœuds + M attaquants (chap. 6.8)
+    ├── coopsim.rs       bancs de foule en thread coopératif / bus mémoire (coopsim, coopsim-bus)
     ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
-    ├── link.rs          NetLink, la ressource qui relie le réseau au jeu
-    └── netcode/         LE RATTRAPAGE DE LATENCE
-        ├── mod.rs       assemble le sous-module
-        ├── state.rs     instantanés, file par joueur, RÉGLAGES (constantes)
-        ├── send.rs      émettre notre état (débit limité + vraie vitesse)
-        ├── receive.rs   ranger les paquets reçus (et créer l'avatar)
-        ├── nameplates.rs  étiquettes de rôle (texte) au-dessus des avatars
-        ├── interpolate.rs   animer chaque image (horloge adaptative + ressort)
-        ├── predict.rs   calculer l'état voulu (interpolation ou prédiction)
-        └── smooth.rs    le ressort amorti (SmoothDamp) + helpers d'angles
+    ├── sidecar.rs       LE PONT vers Unreal (cargo run -- sidecar) : socket locale, cf. CONTRAT_SIDECAR.md
+    └── link.rs          NetLink : l'état réseau d'un nœud (table de pairs, réputation, cellules…)
 ```
+
+> Le **rattrapage de latence** (interpolation, prédiction, ressort amorti) qui vivait dans
+> `net/netcode/` côté client Bevy a été **retiré** : c'est désormais Unreal qui interpole
+> les avatars distants à partir de la vitesse reçue (cf. [`CONTRAT_SIDECAR.md`](CONTRAT_SIDECAR.md) §4).
 
 **En-tête commun à TOUS les paquets** : octet 0 = `type` (KIND), octet 1 =
 `version du protocole` (`PROTO_VERSION`). Un récepteur d'une autre version rejette
