@@ -6,7 +6,13 @@
 ## 0. ▶️ POINT DE REPRISE (lis ça en premier, surtout si nouvelle session)
 
 > ### 🎯 LE POURQUOI + RÈGLES + PLAN D'ATTAQUE (posé le 20 juin 2026 — lire EN PREMIER)
-> **Le but ultime :** un **événement P2P sans serveur réunissant ~55 000 personnes** sur Unreal Engine, pour fêter
+> **⤴ MAJ 25 juin 2026 — la VISION a grandi :** le projet n'est plus « un espace social VRChat-like » mais une
+> **PLATEFORME de jeux P2P façon gamejolt** (multi-moteur, mondes téléchargés, hub 3D — détail dans
+> [VISION.md](VISION.md)). Le **« 55K » ci-dessous reste le TEST DE STRESS du CŒUR** (prouver que le P2P sans serveur
+> passe l'échelle), pas le produit lui-même. Le produit immédiat = un **1er petit jeu** jouable à ~10 potes (l'« île aux
+> étoiles ») pour récolter bugs/critiques. *Toute mention « espace social / VRChat » plus bas = le 1er monde, pas tout le projet.*
+>
+> **Le but ultime (cœur) :** un **événement P2P sans serveur réunissant ~55 000 personnes** sur Unreal Engine, pour fêter
 > le « départ du web3 » (décentralisé / identité possédée — PAS un token) ET prouver qu'on casse la limite du
 > serveur. **55K = la jauge réelle de la plus grande salle de concert au monde**, jamais réuni dans un jeu (les MMO
 > shardent ; Fortnite = instances de ~100 ; EVE ~6-8K sur gros serveurs). Version réalisable = **présence par LOD**

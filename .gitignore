@@ -2,10 +2,7 @@
 /graphify-out
 # Tampon de sortie de simu/tests collé par l'utilisateur (voir flux ch.7) — jamais versionné.
 result.md
-# Reprise PRIVÉE : infra (IP maison/mobile, serveur, repo de logs), récap de session et
-# chantier en cours. Contient des infos sensibles → JAMAIS poussé. (Index + notes éclatées.)
+# Notes PRIVÉES (infos sensibles : IP maison/mobile, serveur, repos ; récap de session ;
+# chantier Unreal ; carnet « où trouver quoi ») → JAMAIS poussées. Index + notes dans prive/.
 REPRISE-PRIVEE.md
 /prive/
-# Carnet de compréhension Unreal : OÙ on a trouvé chaque réglage/mécanisme (anti re-fouille,
-# économie de tokens). Note de travail perso, hors du dépôt public.
-COMPREHENSION_UNREAL.md

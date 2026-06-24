@@ -25,7 +25,7 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 🏗️ L'organisation du code (`src/`), l'en-tête de paquet, l'archi cible « Own + Shields ». | Pour comprendre le code en profondeur. |
 | [docs/TESTS.md](docs/TESTS.md) | 🧪 Comment **lancer & tester** (cœur headless, `tc netem`, NAT en namespaces). | Pour reproduire une mesure / monter un banc. |
 | [docs/JOURNAL.md](docs/JOURNAL.md) | 📒 Le **journal de bord** daté (ce qui a été bâti, chapitres 0→6 + le « où on en est »). | À relire au besoin (via `grep`) ; on n'y rejoue pas tout l'historique. |
-| [CONTRAT_SIDECAR.md](CONTRAT_SIDECAR.md) | 🔌 Le contrat de l'interface cœur-Rust ↔ Unreal (sidecar : transport, messages, paliers). | Quand on touche au pont Unreal. |
+| [docs/CONTRAT_SIDECAR.md](docs/CONTRAT_SIDECAR.md) | 🔌 Le contrat de l'interface cœur-Rust ↔ Unreal (sidecar : transport, messages, paliers). | Quand on touche au pont Unreal. |
 
 > Le **[README.md](README.md)** est, lui, une **intro simple** du projet (sans détails de test) — pour les nouveaux.
-> Les notes PRIVÉES (infra, sessions, Unreal « où trouver quoi ») sont gitignorées : `prive/*` et `COMPREHENSION_UNREAL.md`.
+> Les notes PRIVÉES (infra, sessions, Unreal « où trouver quoi » = `prive/COMPREHENSION_UNREAL.md`) sont gitignorées : dossier `prive/*`.

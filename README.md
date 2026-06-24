@@ -8,15 +8,19 @@
 
 ## C'est quoi ?
 
-Un petit **univers social** où des gens se retrouvent, se voient et se parlent **sans aucun
-serveur de jeu central** — en pur **pair-à-pair**. Pas un jeu de tir : un espace de présence,
-dans l'esprit de VRChat, mais où ce sont **les joueurs eux-mêmes** qui forment le réseau.
+Une R&D pour bâtir une **plateforme de jeux en pair-à-pair** : on rejoindrait des **mondes partagés
+sans aucun serveur de jeu central** — chaque joueur est un nœud du réseau. La direction visée (façon
+**gamejolt**, pas Roblox ni VRChat) : un launcher qui héberge des mondes faits dans **n'importe quel
+moteur** (Unreal/Unity/Godot), qu'on découvre dans un hub 3D et que **n'importe qui** pourra un jour
+publier. Le **cœur réseau P2P** (ce dépôt, en Rust) est le **liant commun** à tous ces mondes.
 
-La vraie question qu'explore ce dépôt : **le « web3 » au sens décentralisé — pas de serveur
-central, une identité qu'on possède vraiment — peut-il *réellement* fonctionner pour un monde
-vivant à plusieurs, ou n'est-ce qu'une utopie ?** On ne répond pas par des slogans : on l'écrit
-en **Rust**, octet par octet, on l'attaque nous-mêmes, et on tient un inventaire honnête de ce
-qui tient et de ce qui ne tient pas.
+Le **tout premier monde** est un **espace social** (dans l'esprit de VRChat, mais P2P) : c'est par lui
+qu'on teste si « ça vit » vraiment, à plusieurs, et qu'on débusque les bugs.
+
+La vraie question qu'explore ce dépôt : **le « web3 » au sens décentralisé — pas de serveur central,
+une identité qu'on possède vraiment — peut-il *réellement* fonctionner pour un monde vivant à plusieurs,
+ou n'est-ce qu'une utopie ?** On ne répond pas par des slogans : on l'écrit en **Rust**, octet par octet,
+on l'attaque nous-mêmes, et on tient un inventaire honnête de ce qui tient et de ce qui ne tient pas.
 
 ## L'architecture P2P, en clair
 
