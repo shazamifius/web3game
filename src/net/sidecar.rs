@@ -139,7 +139,7 @@ fn fake_crowd(n: usize, now: f32) -> Vec<PlayerState> {
         out.push(PlayerState {
             id: PeerId::from_bytes(idb),
             x,
-            y: 0.0,
+            y: 0.88, // centre du corps à 0,88 m (demi-hauteur capsule UE = 88 cm) → pieds au sol, pas enterré
             z,
             vx,
             vy: 0.0,
