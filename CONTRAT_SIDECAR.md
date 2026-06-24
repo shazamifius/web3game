@@ -96,10 +96,13 @@ f32 r, g, b     // couleur du skin
   engine-agnostic, **sans extraire de crate** pour l'instant).
   - ✅ **Côté Rust PROUVÉ** (`jeu sidecar`, faux-UE Python) : les deux sens vivent (61 SNAPSHOT/3 s à 20 Hz,
     177 PUSH_SELF reçus), **RTT IPC loopback = médian 47 µs / p95 67 µs / max 95 µs**. L'IPC n'est PAS un mur
-    (~0,05 ms ≪ le budget réseau dizaines de ms / rendu 16 ms). ⚠ Mesuré avec un faux-UE Python, pas encore le
-    vrai client C++ Unreal.
-  - 🎯 **RESTE** : client C++ Unreal qui se connecte, bouge des capsules depuis les `SNAPSHOT`, pousse
-    `PUSH_SELF` depuis le perso, et affiche le RTT `PING→PONG` à l'écran → palier 1 réellement clos.
+    (~0,05 ms ≪ le budget réseau dizaines de ms / rendu 16 ms).
+  - ✅ **Côté Unreal PROUVÉ EN PIE** (`USpike01SidecarClient`, repo `spike01-unreal`) : 3 capsules colorées
+    tournent en cercle avec leur nom hex, RTT affiché, et la pose du perso remonte au cœur (log sidecar :
+    3397 PUSH_SELF reçus). Le RTT affiché par UE (~8 ms) = la **cadence de frame** (UE ne lit le PONG qu'à la
+    frame suivante), PAS le coût socket (toujours ~0,05 ms). **→ Palier 1 RÉELLEMENT CLOS.**
+  - 🔸 Cosmétique reporté au palier 2 (recompile commun) : taille des capsules (trop grandes vs le perso) ;
+    de toute façon ces capsules de debug seront remplacées par de vrais avatars.
 - **Palier 2 — vrai cœur branché.** `PUSH_SELF` alimente l'émission réelle (gossip/relais) ; `SNAPSHOT` vient
   des vrais `last_state`. Testable en loopback réseau sur une machine.
 - **Palier 3 — preuve réelle 2 humains.** Deux joueurs (UE + sidecar chacun) via le **rendez-vous relais déjà
