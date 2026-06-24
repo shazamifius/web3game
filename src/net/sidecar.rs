@@ -17,6 +17,7 @@
 //! Lancer (après un `jeu rendezvous`) :  cargo run -- sidecar
 
 use super::bot::Bot;
+use super::crypto::PeerId;
 use super::message::PlayerState;
 use bevy::prelude::Vec3;
 use std::io::{self, Read, Write};
@@ -101,6 +102,60 @@ pub fn run_sidecar() {
     }
 }
 
+/// FAUSSE FOULE (banc de rendu, gaté `SIDECAR_FAKE_CROWD=N`, défaut 0 = OFF). Fabrique N avatars
+/// SYNTHÉTIQUES crédibles (répartis en tournesol autour de l'origine, chacun flânant en petit cercle
+/// à vitesse variée) → de quoi DÉVELOPPER et MESURER le rendu foule-LOD dans Unreal (focus net +
+/// imposteurs) SANS avoir des centaines de vrais humains. C'est l'équivalent UE de `tools/foule-3d.sh`.
+/// Purement local : ces avatars ne passent PAS par le réseau (injectés dans l'état partagé), donc
+/// aucune interaction avec le protocole/anti-rejeu. La VRAIE vie (rejeu incarné) viendra à part.
+fn fake_crowd(n: usize, now: f32) -> Vec<PlayerState> {
+    const GOLDEN: f32 = 2.399_963_2; // angle d'or → répartition régulière (tournesol)
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let bi = i as f32;
+        // Position de BASE : disque en tournesol (étalement ~ sqrt(i)).
+        let base_r = bi.sqrt() * 2.2;
+        let base_a = bi * GOLDEN;
+        let bx = base_r * base_a.cos();
+        let bz = base_r * base_a.sin();
+        // FLÂNERIE : petit cercle de rayon 1,2 m, vitesse angulaire variée par individu.
+        let w = 0.6 + (i % 5) as f32 * 0.15;
+        let phase = bi * 0.7;
+        let ang = now * w + phase;
+        let wr = 1.2;
+        let x = bx + wr * ang.cos();
+        let z = bz + wr * ang.sin();
+        let vx = -wr * w * ang.sin(); // dérivée analytique → vitesse réelle pour l'interpolation UE
+        let vz = wr * w * ang.cos();
+        let yaw = ang + std::f32::consts::FRAC_PI_2; // regarde dans le sens du mouvement
+        // Couleur stable par individu (palette douce).
+        let r = 0.5 + 0.5 * (bi * 0.30).sin();
+        let g = 0.5 + 0.5 * (bi * 0.30 + 2.0).sin();
+        let b = 0.5 + 0.5 * (bi * 0.30 + 4.0).sin();
+        // Id synthétique DISTINCT (UE en dérive un nom court). Marqueur 0xFA pour « faux ».
+        let mut idb = [0u8; 32];
+        idb[0] = 0xFA;
+        idb[1..5].copy_from_slice(&(i as u32).to_le_bytes());
+        out.push(PlayerState {
+            id: PeerId::from_bytes(idb),
+            x,
+            y: 0.0,
+            z,
+            vx,
+            vy: 0.0,
+            vz,
+            yaw,
+            pitch: 0.0,
+            r,
+            g,
+            b,
+            parent: None,
+            seq: 0,
+        });
+    }
+    out
+}
+
 /// LE CŒUR : un vrai nœud réseau (`Bot`) qui tourne pour toujours, piloté par la pose d'Unreal,
 /// publiant les avatars distants réels dans l'état partagé.
 fn run_core(shared: Arc<Shared>) {
@@ -113,6 +168,15 @@ fn run_core(shared: Arc<Shared>) {
     };
     bot.enable_avatar_sink();
     *shared.color.lock().unwrap() = bot.my_color();
+
+    // Banc de rendu (gaté) : injecter N avatars synthétiques pour développer la foule-LOD dans UE.
+    let fake_n: usize = std::env::var("SIDECAR_FAKE_CROWD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if fake_n > 0 {
+        println!("[sidecar] ⚠ FAUSSE FOULE active : {fake_n} avatars synthétiques (banc de rendu foule-LOD, SIDECAR_FAKE_CROWD).");
+    }
 
     let start = Instant::now();
     let mut last = Instant::now();
@@ -128,8 +192,12 @@ fn run_core(shared: Arc<Shared>) {
         bot.set_external_pose(Vec3::new(p.x, p.y, p.z), p.yaw, p.pitch);
         // 2) faire tourner le vrai protocole (émission/réception/relais/gossip).
         bot.step(dt, now);
-        // 3) publier les avatars distants RÉELS pour la session Unreal.
-        *shared.avatars.lock().unwrap() = bot.avatars(now);
+        // 3) publier les avatars distants RÉELS (+ fausse foule de banc si activée) pour Unreal.
+        let mut avs = bot.avatars(now);
+        if fake_n > 0 {
+            avs.extend(fake_crowd(fake_n, now));
+        }
+        *shared.avatars.lock().unwrap() = avs;
 
         log_acc += dt;
         if log_acc >= 2.0 {
