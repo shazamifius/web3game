@@ -121,7 +121,15 @@ f32 r, g, b     // couleur du skin
     mon sidecar ingère l'état RÉEL de A relayé via NAT symétrique (`avatars=1, acceptés=45`, diagnostic =
     50 paquets KIND_STATE 182 o reçus du rendez-vous). ⚠ Le ré-établissement du relais après un redémarrage du
     sidecar (port UDP changé) prend ~15 s — A doit re-pointer ; en régime stable, ça tient.
-  - 🎯 **RESTE** : le voir dans le viewport Unreal (A relayant + UE Play → capsule de A à sa position réelle).
+  - 🐞 **VRAI BUG TROUVÉ & CORRIGÉ (dette reprise §4)** : un pair distant relaie ses claims d'orbe légitimes ;
+    le sidecar, ne partageant pas l'historique de CONTACT, répondait `NoContact` → `punish` → 5 strikes → pair
+    MUET → avatar invisible (états jetés silencieusement par `is_muted`). Diagnostic : les états arrivaient
+    (`sig_ok=true, pow=true`) mais `muted=true`. **Fix aligné contrat** : le sidecar IGNORE l'orbe (= palier 4)
+    quand `avatar_sink` est actif → plus de punition → `avatars=1, acceptés=52`. Gaté, 103 tests verts.
+  - ⚠ **2e enseignement (AoI)** : A ne relaie qu'aux pairs à < `CANDIDATE_RADIUS` (500 u) → le perso UE doit être
+    dans le voisinage de A (espace du cœur). Limite de fond : A (monde Bevy) et UE (OpenWorld) sont des mondes
+    AUX REPÈRES DISTINCTS → à terme il faut un repère PARTAGÉ (quand on rebâtit le monde dans Unreal).
+  - 🎯 **RESTE** : le voir dans le viewport Unreal (UE Play près de l'origine → capsule de A à sa position).
 - **Palier 4 — orbe & objets partagés.** Après nettoyage des types Bevy de [orb.rs](src/net/orb.rs)
   (`Vec3`/`Res<Time>`) et extension du contrat (`OBJECT` msg). Hors v1.
 

@@ -136,8 +136,9 @@ fn run_core(shared: Arc<Shared>) {
             log_acc = 0.0;
             let id = bot.id().map(|i| i.short()).unwrap_or_else(|| "—".to_string());
             println!(
-                "[sidecar/cœur] t={now:.0}s | id={id} | pairs={} | avatars={} | acceptés={} rejetés={} relayés={} | PUSH_SELF={}",
-                bot.neighbors(), bot.avatars(now).len(), bot.accepted(), bot.rejected(), bot.relayed(), p.updates
+                "[sidecar/cœur] t={now:.0}s | id={id} | pairs={} | avatars={} | acceptés={} rejetés={} relayés={} | ma_pos=({:.0},{:.0},{:.0}) PUSH_SELF={}",
+                bot.neighbors(), bot.avatars(now).len(), bot.accepted(), bot.rejected(), bot.relayed(),
+                p.x, p.y, p.z, p.updates
             );
         }
         std::thread::sleep(loop_tick);

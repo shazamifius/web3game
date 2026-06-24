@@ -509,6 +509,13 @@ impl Bot {
                     }
                 }
                 Some(KIND_ORB) => {
+                    // SIDECAR (palier 2-3) : l'orbe est PALIER 4 → on ne la traite pas encore. Surtout :
+                    // un pair distant relaie ses claims d'orbe légitimes, mais le sidecar ne partage pas
+                    // l'historique de CONTACT → `apply_incoming` répondrait NoContact → punition → 5 strikes
+                    // → le pair MUET → son avatar invisible. On ignore donc l'orbe tant qu'on rend des avatars.
+                    if self.avatar_sink.is_some() {
+                        continue;
+                    }
                     if !orb_sig_ok(&bytes) {
                         continue;
                     }
