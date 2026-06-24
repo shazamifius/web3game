@@ -129,7 +129,9 @@ f32 r, g, b     // couleur du skin
   - ⚠ **2e enseignement (AoI)** : A ne relaie qu'aux pairs à < `CANDIDATE_RADIUS` (500 u) → le perso UE doit être
     dans le voisinage de A (espace du cœur). Limite de fond : A (monde Bevy) et UE (OpenWorld) sont des mondes
     AUX REPÈRES DISTINCTS → à terme il faut un repère PARTAGÉ (quand on rebâtit le monde dans Unreal).
-  - 🎯 **RESTE** : le voir dans le viewport Unreal (UE Play près de l'origine → capsule de A à sa position).
+  - ✅ **VU DANS UNREAL EN PIE (confirmé par l'utilisateur)** : une capsule étiquetée `000010d6` (= l'identité
+    réelle de A) s'affiche dans le viewport, à la position réelle de A. **→ Palier 3 RÉELLEMENT CLOS.**
+    Un vrai humain, derrière un NAT symétrique, de l'autre côté d'Internet, rendu dans Unreal via le relais P2P.
 - **Palier 4 — orbe & objets partagés.** Après nettoyage des types Bevy de [orb.rs](src/net/orb.rs)
   (`Vec3`/`Res<Time>`) et extension du contrat (`OBJECT` msg). Hors v1.
 
