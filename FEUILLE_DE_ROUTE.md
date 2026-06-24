@@ -1820,6 +1820,13 @@ cohérente par tous les nœuds.
 > précompilé, Vulkan prouvé sur RTX 4070, projet **C++** qui compile — fix CPATH). **Détail complet +
 > recette de relance + objectifs : `REPRISE-PRIVEE.md` §6.** *(Réordonne H3 : NAT/D17 ✅ → Unreal MAINTENANT
 > → voix → chiffrement plus tard.)*
+>
+> **AVANCEMENT (24 juin) :** projet Unreal `Spike01` = **dépôt GitHub PRIVÉ séparé**
+> `shazamifius/spike01-unreal` (pas livré publiquement tant que pas solide — règle 4 ; ce n'est pas un
+> secret, juste pas exposé). Le cœur réseau reste sur `web3game` (public). Fait côté client : **perso FP
+> jouable + déplacement ZQSD** (Enhanced Input 100 % C++, prouvé), fix souris inversée, **regard clavier
+> OKLM** (O haut/L bas/K droite/M gauche, axe additif). En cours : **menu Contrôles** (sensibilités,
+> inversion, remap touches, manettes). Carnet technique « où on trouve quoi » = `COMPREHENSION_UNREAL.md` (gitignoré).
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
