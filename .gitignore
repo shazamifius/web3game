@@ -5,3 +5,6 @@ result.md
 # Reprise PRIVÉE : infra (IP maison/mobile, serveur, repo de logs), récap de session et
 # chantier en cours. Contient des infos sensibles → JAMAIS poussé.
 REPRISE-PRIVEE.md
+# Carnet de compréhension Unreal : OÙ on a trouvé chaque réglage/mécanisme (anti re-fouille,
+# économie de tokens). Note de travail perso, hors du dépôt public.
+COMPREHENSION_UNREAL.md

@@ -1797,6 +1797,29 @@ cohérente par tous les nœuds.
 > D4 reste) ; ne résout PAS l'orbe « repère mort » (bug île séparé, cf. REPRISE §4) ; testé à 2 pairs, pas
 > à l'échelle ; le gossip/autres objets ne passeront que quand on câblera LEUR émission (le format les
 > portera, mais Pas B ne branche QUE l'orbe).
+>
+> **✅ 12.3-G PROUVÉ EN RÉEL (22-23 juin 2026, nuit) — l'orbe traverse le NAT.** Test A (Windows/mobile) ↔
+> B (NixOS/maison), relayés des deux côtés : **une seule orbe, maître cohérent, les deux deviennent maître
+> à tour de rôle.** Juge neutre = log serveur : 🔀 des DEUX sens (relais avatar NON régressé). Poussé `main`
+> `56c237e` (Pas A `2878bea`, Pas B `56c237e`). 103 tests, 0 warning, défaut byte-pour-byte intact.
+> - **Ce que ça NE prouve PAS / observé en réel :** (a) **convergence lente** ~10 s au connect (seuil
+>   d'abandon de perçage) + phase asymétrique transitoire → connu (même fenêtre que le relais avatar),
+>   s'auto-répare, améliorable plus tard (papier d'abord). (b) **L'orbe GÈLE si la fenêtre est occultée**
+>   (niri/Wayland coupe les frame-callbacks → la sim, couplée au rendu, s'arrête → le pair voit l'orbe
+>   revenir en arrière en boucle). **Dette renvoyée au SIDECAR** (le cœur en process séparé tourne hors
+>   boucle de rendu → disparaît par construction). (c) v1 centralisé (D4 reste) ; testé à 2 pairs.
+> - **Météorites désynchronisées** (observé Île) = seed RNG LOCAL (`subsec_nanos`, [meteorites.rs](src/meteorites.rs)) →
+>   chacun son champ. Fix cheap = **seed PARTAGÉ** (objets procéduraux = déterministe local, pas de stream).
+
+> ### 🎮 BASCULE UNREAL — réordonnée AVANT voix/chiffrement (décidé 22-23 juin 2026)
+> *La preuve corrige le plan (pas de cases à cocher). Bevy bloque la créativité ; le cœur réseau est
+> solide. On passe à Unreal pour la PRÉSENTATION ; **le cœur Rust reste INTOUCHABLE (Règle 1)** via le
+> pont SIDECAR (process séparé, socket locale). Voix + chiffrement = chantiers du cœur, APRÈS (additifs).*
+>
+> **FAIT (22-23 juin) :** UE 5.8 installé et fonctionnel sur NixOS+niri (flake NixOSUnreal, binaire Epic
+> précompilé, Vulkan prouvé sur RTX 4070, projet **C++** qui compile — fix CPATH). **Détail complet +
+> recette de relance + objectifs : `REPRISE-PRIVEE.md` §6.** *(Réordonne H3 : NAT/D17 ✅ → Unreal MAINTENANT
+> → voix → chiffrement plus tard.)*
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
