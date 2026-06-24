@@ -92,9 +92,14 @@ f32 r, g, b     // couleur du skin
 
 - **Palier 0 — CE fichier.** Contrat figé sur le papier. ✅
 - **Palier 1 — preuve de vie IPC + MESURE de latence.** Sidecar Rust **bidon** : 2-3 faux avatars en cercle,
-  `SNAPSHOT` à 20 Hz, accepte `PUSH_SELF`, répond `PONG`. UE bouge des capsules + affiche le **RTT `PING→PONG`**.
-  Objectif réel = **chiffrer la latence/jitter de la socket** (l'inconnue de fond) AVANT de brancher le réseau.
-  Sous-commande `jeu sidecar` (réutilise le cœur déjà engine-agnostic, **sans extraire de crate** pour l'instant).
+  `SNAPSHOT` à 20 Hz, accepte `PUSH_SELF`, répond `PONG`. Sous-commande `jeu sidecar` (réutilise le cœur déjà
+  engine-agnostic, **sans extraire de crate** pour l'instant).
+  - ✅ **Côté Rust PROUVÉ** (`jeu sidecar`, faux-UE Python) : les deux sens vivent (61 SNAPSHOT/3 s à 20 Hz,
+    177 PUSH_SELF reçus), **RTT IPC loopback = médian 47 µs / p95 67 µs / max 95 µs**. L'IPC n'est PAS un mur
+    (~0,05 ms ≪ le budget réseau dizaines de ms / rendu 16 ms). ⚠ Mesuré avec un faux-UE Python, pas encore le
+    vrai client C++ Unreal.
+  - 🎯 **RESTE** : client C++ Unreal qui se connecte, bouge des capsules depuis les `SNAPSHOT`, pousse
+    `PUSH_SELF` depuis le perso, et affiche le RTT `PING→PONG` à l'écran → palier 1 réellement clos.
 - **Palier 2 — vrai cœur branché.** `PUSH_SELF` alimente l'émission réelle (gossip/relais) ; `SNAPSHOT` vient
   des vrais `last_state`. Testable en loopback réseau sur une machine.
 - **Palier 3 — preuve réelle 2 humains.** Deux joueurs (UE + sidecar chacun) via le **rendez-vous relais déjà

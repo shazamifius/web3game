@@ -46,6 +46,14 @@ fn main() {
         return;
     }
 
+    // `cargo run -- sidecar`  lance LE PONT vers Unreal (bascule moteur, palier 1) :
+    // une socket locale TCP où Unreal pousse sa position et lit les avatars distants.
+    // Le cœur reste l'autorité ; UE = client mince. Voir CONTRAT_SIDECAR.md.
+    if mode == Some("sidecar") {
+        net::run_sidecar();
+        return;
+    }
+
     // `cargo run -- attack <type>`  lance le PROGRAMME ATTAQUANT : de vrais paquets
     // malveillants sur de vraies sockets, pour prouver la robustesse.
     // Chap. 5 (neutralisées) : forge | replay | flood | orb-steal | orb-freeze.

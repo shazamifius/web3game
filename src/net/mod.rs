@@ -47,6 +47,7 @@ mod orb;
 mod probe;
 mod punch;
 mod rendezvous;
+mod sidecar;
 mod sim;
 mod skin;
 mod transport;
@@ -65,5 +66,6 @@ pub use netcode::{
 pub use orb::{orb_grab, orb_migrate, orb_send, orb_simulate, setup_orb};
 pub use punch::{net_punch, Holes};
 pub use rendezvous::run_rendezvous;
+pub use sidecar::run_sidecar;
 pub use sim::{run_crowd, run_sim};
 pub use skin::{random_color, MyColor};
