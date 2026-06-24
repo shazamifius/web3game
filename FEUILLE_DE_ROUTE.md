@@ -1825,8 +1825,10 @@ cohérente par tous les nœuds.
 > `shazamifius/spike01-unreal` (pas livré publiquement tant que pas solide — règle 4 ; ce n'est pas un
 > secret, juste pas exposé). Le cœur réseau reste sur `web3game` (public). Fait côté client : **perso FP
 > jouable + déplacement ZQSD** (Enhanced Input 100 % C++, prouvé), fix souris inversée, **regard clavier
-> OKLM** (O haut/L bas/K droite/M gauche, axe additif). En cours : **menu Contrôles** (sensibilités,
-> inversion, remap touches, manettes). Carnet technique « où on trouve quoi » = `COMPREHENSION_UNREAL.md` (gitignoré).
+> OKLM** (O haut/L bas/K gauche/M droite, axe additif), **menu Contrôles v1** (UMG, ouvert par Tab :
+> sliders sensibilité souris/OKLM + inverser souris, persistés via `UGameUserSettings`). Reste pour le
+> menu : **remap des touches (clavier + manette/Steam Deck)** via Enhanced Input Player Mappable Keys.
+> Carnet technique « où on trouve quoi » = `COMPREHENSION_UNREAL.md` (gitignoré).
 
 ### Chapitre 13 — Voix spatiale
 **But :** chat vocal P2P, priorité au volume (loudness priority), spatialisé. Profite du
