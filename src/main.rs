@@ -86,6 +86,15 @@ fn main() {
     // `cargo run -- crowd <N> [secondes]`  lance une FOULE DENSE de N nœuds au même
     // endroit (chap. 8.0) et mesure la COUVERTURE DE PERCEPTION — le mur D22 : au-delà
     // de 32 voisins, on est AVEUGLE. Sert à CHIFFRER le problème avant de le résoudre.
+    // `cargo run -- relay-test [secondes]`  BANC DÉTERMINISTE DU RELAIS (12.3) : 2 pairs en NAT
+    // infranchissable simulé doivent se voir DANS LES DEUX SENS via le relais du rendez-vous.
+    // Reproduit/ferme le « sens unique » du sidecar trouvé en réel le 24 juin — sans 3D ni mobile.
+    if mode == Some("relay-test") {
+        let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+        net::run_relay_test(secs);
+        return;
+    }
+
     if mode == Some("crowd") {
         let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
         let secs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);

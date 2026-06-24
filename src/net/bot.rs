@@ -17,7 +17,8 @@ use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::NetLink;
-use super::message::{claimed_id, decode_canonical, encode_signed, sig_ok, PlayerState};
+use super::message::{claimed_id, decode_canonical, encode_relay_fwd, encode_signed, sig_ok, PlayerState};
+use super::netcode::relay_fallback_enabled;
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
@@ -29,9 +30,47 @@ use super::wire::{
     KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
 };
 use bevy::prelude::Vec3;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+
+/// 12.3 (sidecar) — DÉCISION D'ÉMISSION par pair, **pure et testable**. C'est le portage EXACT
+/// dans le `Bot` headless de la logique de [netcode/send.rs] : sans elle, le sidecar RECEVAIT un
+/// état relayé mais ne RENVOYAIT jamais le sien → sens unique observé en RÉEL le 24 juin (A voit
+/// le sidecar… non, l'inverse : le sidecar voit A, A ne voit rien). Les bancs sur `lo` ne l'ont
+/// jamais vu car le perçage y réussit toujours (trou ouvert → branche relais jamais prise).
+///
+/// Défaut (`relay_fallback=false`, `force_relay=false`) : `Direct` si le trou est ouvert, sinon
+/// `Skip` — comportement HISTORIQUE byte-pour-byte (le `Bot` n'émettait QUE vers les trous ouverts).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum SendKind {
+    Direct,
+    Relay,
+    Skip,
+}
+
+pub(crate) fn bot_send_kind(
+    open: bool,
+    abandoned: bool,
+    relays_to_us: bool,
+    relay_fallback: bool,
+    force_relay: bool,
+) -> SendKind {
+    // Banc déterministe : NAT infranchissable simulé → tout l'état part par le relais.
+    if force_relay {
+        return SendKind::Relay;
+    }
+    // Trou direct ouvert → on émet en direct (inchangé).
+    if open {
+        return SendKind::Direct;
+    }
+    // Repli (gaté) : on relaie via le rendez-vous dès que le pair le VEUT — perçage abandonné OU
+    // pair qui nous joint déjà par relais (réciprocité immédiate, ferme la fenêtre de reconnexion).
+    if relay_fallback && (abandoned || relays_to_us) {
+        return SendKind::Relay;
+    }
+    SendKind::Skip
+}
 
 // Miroir des réglages de réception du jeu (cf. netcode/receive.rs et state.rs).
 const BUCKET_RATE: f32 = 150.0;
@@ -82,6 +121,16 @@ pub(crate) struct Bot {
     punch_tries: HashMap<PeerId, u32>,
     buckets: HashMap<SocketAddr, f32>,
     relay_credits: HashMap<PeerId, f32>,
+    /// 12.3 (sidecar) — pairs qui nous joignent par le RELAIS du rendez-vous (état reçu FROM le
+    /// rendez-vous, pas en direct) : on doit relayer NOTRE état en RETOUR (réciprocité). Vide par
+    /// défaut → chemin direct intact.
+    relays_to_us: HashSet<PeerId>,
+    /// 12.3 (sidecar) — repli relais activé (`RELAY_FALLBACK`), lu UNE fois à la construction.
+    /// `false` par défaut → le `Bot` n'émet jamais vers un trou fermé (byte-pour-byte historique).
+    relay_fallback: bool,
+    /// Banc déterministe — simule un NAT infranchissable (perçage jamais « ouvert » côté émission →
+    /// tout passe par le relais), pour PROUVER le repli bidirectionnel sans vrai mobile. `false` par défaut.
+    force_relay: bool,
     /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
     /// que le vrai client ([netcode/send.rs]). Chaque pair accumule `débit × dt` ; à 1,
     /// on lui envoie un paquet. C'est ce qui fait que le bot mesure DÉSORMAIS le coût
@@ -157,6 +206,9 @@ impl Bot {
             punch_tries: HashMap::new(),
             buckets: HashMap::new(),
             relay_credits: HashMap::new(),
+            relays_to_us: HashSet::new(),
+            relay_fallback: relay_fallback_enabled(),
+            force_relay: false,
             send_credits: HashMap::new(),
             last_state: HashMap::new(),
             heard_count: HashMap::new(),
@@ -192,6 +244,13 @@ impl Bot {
         if self.avatar_sink.is_none() {
             self.avatar_sink = Some(HashMap::new());
         }
+    }
+
+    /// BANC DÉTERMINISTE (12.3) : simule un NAT infranchissable — le perçage n'« ouvre » jamais côté
+    /// émission, tout l'état part par le RELAIS du rendez-vous. Prouve le repli bidirectionnel SANS
+    /// vrai mobile (les bancs sur `lo` perçaient toujours → la branche relais n'était jamais testée).
+    pub(crate) fn enable_force_relay(&mut self) {
+        self.force_relay = true;
     }
 
     /// SIDECAR (palier 2) : les avatars distants FRAIS (PlayerState copiés, filtrés ≤ REMOTE_TIMEOUT).
@@ -442,7 +501,15 @@ impl Bot {
                                     if let Some(sink) = self.avatar_sink.as_mut() {
                                         sink.insert(state.id, (state, now)); // sidecar : avatar complet
                                     }
-                                    self.holes.insert(state.id, true);
+                                    // 12.3 (fix REPRISE §2 porté dans Bot) : un état RELAYÉ arrive
+                                    // FROM le rendez-vous → NE PAS croire à un trou direct (sinon on
+                                    // émettrait en direct dans le vide ET on ne relaierait jamais en
+                                    // retour = le sens unique observé en réel). On note la réciprocité.
+                                    if from == self.link.rendezvous {
+                                        self.relays_to_us.insert(state.id);
+                                    } else {
+                                        self.holes.insert(state.id, true);
+                                    }
                                     *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                                     self.accepted += 1;
                                 }
@@ -599,16 +666,33 @@ impl Bot {
                 //    la conscience (le reste) en basse fidélité — comme le vrai client.
                 let is_focus: Vec<bool> = peers.iter().map(|(id, _)| self.link.is_focus(id)).collect();
                 let rates = allocate_tiers(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ);
-                // c) CADENCEMENT par crédit, vers les pairs au trou OUVERT seulement.
+                // c) CADENCEMENT par crédit. Direct vers les trous OUVERTS ; REPLI (gaté) via le
+                //    rendez-vous vers les pairs qui ne percent pas. Défaut : trou ouvert seulement
+                //    (byte-pour-byte). Décision isolée et testée dans `bot_send_kind`.
                 for ((id, addr), rate) in peers.iter().zip(&rates) {
-                    if !*self.holes.get(id).unwrap_or(&false) {
+                    let open = *self.holes.get(id).unwrap_or(&false);
+                    let abandoned = punch_abandoned(*self.punch_tries.get(id).unwrap_or(&0));
+                    let relays_back = self.relays_to_us.contains(id);
+                    let decision =
+                        bot_send_kind(open, abandoned, relays_back, self.relay_fallback, self.force_relay);
+                    if decision == SendKind::Skip {
                         continue;
                     }
                     let credit = self.send_credits.entry(*id).or_insert(0.0);
                     *credit += rate * dt_send;
                     if *credit >= 1.0 {
                         *credit -= 1.0;
-                        let _ = self.link.socket.send_to(*addr, &bytes);
+                        match decision {
+                            SendKind::Direct => {
+                                let _ = self.link.socket.send_to(*addr, &bytes);
+                            }
+                            SendKind::Relay => {
+                                // On demande au rendez-vous de porter notre état SCELLÉ jusqu'à ce pair.
+                                let env = encode_relay_fwd(*id, &bytes);
+                                let _ = self.link.socket.send_to(self.link.rendezvous, &env);
+                            }
+                            SendKind::Skip => {}
+                        }
                     }
                 }
                 self.send_credits.retain(|id, _| self.link.peers.contains_key(id));
@@ -766,5 +850,40 @@ pub fn run_bot(label: &str) {
         }
 
         std::thread::sleep(TICK);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bot_send_kind, SendKind};
+
+    /// 12.3 — la DÉCISION d'émission du `Bot` headless. Le défaut (repli OFF, force OFF) doit
+    /// reproduire EXACTEMENT l'historique : `Direct` si le trou est ouvert, sinon `Skip` (le bot
+    /// n'émettait que vers les trous ouverts). Le repli ne s'active QUE sous `RELAY_FALLBACK`.
+    #[test]
+    fn bot_send_kind_defaut_byte_pour_byte() {
+        // Repli ÉTEINT : exactement l'ancien comportement.
+        assert_eq!(bot_send_kind(true, false, false, false, false), SendKind::Direct); // trou ouvert
+        assert_eq!(bot_send_kind(false, false, false, false, false), SendKind::Skip); // fermé → on attend
+        assert_eq!(bot_send_kind(false, true, false, false, false), SendKind::Skip); // abandonné mais repli OFF
+        assert_eq!(bot_send_kind(false, false, true, false, false), SendKind::Skip); // pair-relais mais repli OFF
+    }
+
+    #[test]
+    fn bot_send_kind_repli_relaie_quand_le_pair_le_veut() {
+        // Repli ALLUMÉ : on relaie dès que le perçage est abandonné OU que le pair nous joint par relais.
+        assert_eq!(bot_send_kind(false, true, false, true, false), SendKind::Relay); // abandonné → relais
+        assert_eq!(bot_send_kind(false, false, true, true, false), SendKind::Relay); // pair-relais → relais (réciprocité)
+        // Trou direct ouvert → JAMAIS de relais, même repli ON (on a une vraie connexion directe).
+        assert_eq!(bot_send_kind(true, true, true, true, false), SendKind::Direct);
+        // Repli ON mais ni abandon ni pair-relais → perçage en cours, on attend (pas de relais prématuré).
+        assert_eq!(bot_send_kind(false, false, false, true, false), SendKind::Skip);
+    }
+
+    #[test]
+    fn bot_send_kind_force_relais_du_banc() {
+        // Le banc déterministe force le relais quoi qu'il arrive (NAT infranchissable simulé).
+        assert_eq!(bot_send_kind(true, false, false, false, true), SendKind::Relay);
+        assert_eq!(bot_send_kind(false, false, false, false, true), SendKind::Relay);
     }
 }

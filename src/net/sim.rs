@@ -240,3 +240,73 @@ fn report(stats: &[NodeStat], n_bots: usize, n_attackers: usize, secs: u64) {
         println!("⚠ Orbe compromise sur {stolen} nœud(s) — à investiguer.");
     }
 }
+
+/// BANC DÉTERMINISTE DU RELAIS (12.3) — prouve, **sans vrai mobile et sans 3D**, que deux pairs qui
+/// ne percent pas leur NAT se voient **DANS LES DEUX SENS** via le relais du rendez-vous. Reproduit
+/// puis FERME le « sens unique » du sidecar débusqué en réel le 24 juin (le `Bot` recevait un état
+/// relayé mais ne renvoyait jamais le sien). Les bancs ordinaires sur `lo` ne pouvaient pas le voir :
+/// le perçage y réussit toujours, donc la branche relais n'était jamais prise. Ici on FORCE le relais
+/// (`enable_force_relay`) → NAT infranchissable simulé. Juge : chaque pair voit l'AUTRE (puits d'avatars).
+///
+/// Lancement :  cargo run -- relay-test [secondes]
+pub fn run_relay_test(secs: u64) {
+    println!("=== BANC RELAIS DÉTERMINISTE : 2 pairs en NAT infranchissable (force-relais), {secs}s ===");
+    println!("(rendez-vous en MODE RELAIS ; AUCUN perçage direct utilisé — tout l'état passe par le relais)");
+
+    // 1) Rendez-vous local EN MODE RELAIS (sinon il ne route pas les enveloppes KIND_RELAY_FWD).
+    //    SÛR : on est tout au début du banc, AVANT le moindre `thread::spawn` (process mono-thread ici).
+    unsafe {
+        std::env::set_var("RENDEZVOUS_RELAY", "1");
+    }
+    thread::spawn(run_rendezvous);
+    thread::sleep(Duration::from_millis(500));
+
+    // 2) Deux bots : identité minée, relais FORCÉ (NAT infranchissable simulé), capture des avatars
+    //    distants (puits, exactement comme le sidecar).
+    let tick = Duration::from_millis(50);
+    let seen: Arc<Mutex<Vec<(String, usize, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+    for i in 0..2usize {
+        let seen = Arc::clone(&seen);
+        handles.push(thread::spawn(move || {
+            let Some(mut bot) = Bot::new(format!("relai{i}"), false, i as f32 * 0.5) else {
+                return;
+            };
+            bot.enable_force_relay();
+            bot.enable_avatar_sink();
+            let start = Instant::now();
+            let mut last = Instant::now();
+            while start.elapsed().as_secs() < secs {
+                let dt = last.elapsed().as_secs_f32();
+                last = Instant::now();
+                bot.step(dt, start.elapsed().as_secs_f32());
+                thread::sleep(tick);
+            }
+            let now = start.elapsed().as_secs_f32();
+            let id = bot.id().map(|x| x.short()).unwrap_or_else(|| "—".to_string());
+            seen.lock().unwrap().push((id, bot.avatars(now).len(), bot.accepted()));
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+
+    // 3) VERDICT : chaque pair doit avoir VU l'autre (≥ 1 avatar distant reçu PAR RELAIS).
+    let report = seen.lock().unwrap();
+    println!("\n========== VERDICT BANC RELAIS ==========");
+    let mut tous_voient = report.len() == 2;
+    for (id, avs, acc) in report.iter() {
+        let ok = *avs >= 1;
+        tous_voient &= ok;
+        println!(
+            "  pair {id} : avatars distants vus = {avs}, états acceptés = {acc}  {}",
+            if ok { "✓" } else { "✗ AVEUGLE" }
+        );
+    }
+    if tous_voient {
+        println!("✓ RELAIS BIDIRECTIONNEL : les deux pairs se voient via le relais (sens unique FERMÉ).");
+    } else {
+        println!("✗ ÉCHEC : au moins un pair est AVEUGLE — le relais-retour ne passe pas.");
+    }
+    println!("=========================================");
+}
