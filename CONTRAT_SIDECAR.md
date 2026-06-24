@@ -104,7 +104,12 @@ f32 r, g, b     // couleur du skin
   - 🔸 Cosmétique reporté au palier 2 (recompile commun) : taille des capsules (trop grandes vs le perso) ;
     de toute façon ces capsules de debug seront remplacées par de vrais avatars.
 - **Palier 2 — vrai cœur branché.** `PUSH_SELF` alimente l'émission réelle (gossip/relais) ; `SNAPSHOT` vient
-  des vrais `last_state`. Testable en loopback réseau sur une machine.
+  des vrais avatars distants. Le sidecar fait tourner un `Bot` (code prouvé) via 2 crochets gatés (pose externe
+  + puits d'avatars), défaut OFF → `sim`/`bot`/`coopsim` byte-pour-byte (103 tests verts).
+  - ✅ **Côté Rust PROUVÉ** (rendez-vous local + `bot wanderer` + sidecar + faux-UE) : le faux-UE voit 1 avatar
+    RÉEL (id PoW `00ef…`) bouger en cercle via la vraie pile réseau ; le wanderer voit `pairs=1, acceptés=71`
+    (découverte bidirectionnelle). ⚠ Dette : sidecar en identité ÉPHÉMÈRE (`Bot::new`) — passer à PERSISTANTE.
+  - 🎯 **RESTE** : le prouver dans le VRAI Unreal (ouvrir UE + Play + lancer un `bot` → voir une vraie capsule bouger).
 - **Palier 3 — preuve réelle 2 humains.** Deux joueurs (UE + sidecar chacun) via le **rendez-vous relais déjà
   prouvé**, qui se voient bouger DANS Unreal. **Juge = le log serveur** (point neutre), pas les fenêtres.
 - **Palier 4 — orbe & objets partagés.** Après nettoyage des types Bevy de [orb.rs](src/net/orb.rs)

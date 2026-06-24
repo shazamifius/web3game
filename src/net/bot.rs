@@ -67,6 +67,8 @@ const K_PROOF: usize = 4;
 const FOCUS_RATE_MIN: f32 = 5.0;
 const TICK: Duration = Duration::from_millis(50);
 const WANDER_RADIUS: f32 = 3.0;
+/// Sans nouvel état d'un distant depuis ce délai (s) on cesse de l'exposer (miroir netcode/state.rs).
+const REMOTE_TIMEOUT: f32 = 5.0;
 
 /// Un nœud headless : tout l'état d'un client de jeu, SANS le rendu. Réutilisé par le
 /// mode `bot` (un seul, bavard) et par la simulation `sim` (des centaines, silencieux).
@@ -106,6 +108,12 @@ pub(crate) struct Bot {
     accepted: u64,
     rejected: u64,
     relayed: u64,
+    /// SIDECAR (palier 2) : pose imposée de l'EXTÉRIEUR (Unreal). None = balade par défaut →
+    /// chemin bot/simu strictement INCHANGÉ (byte-pour-byte).
+    external_pose: Option<(Vec3, f32, f32)>,
+    /// SIDECAR (palier 2) : puits des avatars distants COMPLETS (PlayerState + instant), pour les
+    /// exposer à Unreal. None = désactivé (défaut) → aucune écriture, comportement inchangé.
+    avatar_sink: Option<HashMap<PeerId, (PlayerState, f32)>>,
 }
 
 impl Bot {
@@ -160,7 +168,40 @@ impl Bot {
             accepted: 0,
             rejected: 0,
             relayed: 0,
+            external_pose: None,
+            avatar_sink: None,
         }
+    }
+
+    /// SIDECAR (palier 2) : impose la pose émise depuis l'extérieur (Unreal). Tant qu'appelée, le
+    /// bot émet CETTE position au lieu du cercle de balade.
+    pub(crate) fn set_external_pose(&mut self, pos: Vec3, yaw: f32, pitch: f32) {
+        self.external_pose = Some((pos, yaw, pitch));
+    }
+
+    /// SIDECAR (palier 2) : active la capture des avatars distants complets (pour Unreal).
+    pub(crate) fn enable_avatar_sink(&mut self) {
+        if self.avatar_sink.is_none() {
+            self.avatar_sink = Some(HashMap::new());
+        }
+    }
+
+    /// SIDECAR (palier 2) : les avatars distants FRAIS (PlayerState copiés, filtrés ≤ REMOTE_TIMEOUT).
+    /// Vide si le puits n'est pas activé.
+    pub(crate) fn avatars(&self, now: f32) -> Vec<PlayerState> {
+        match &self.avatar_sink {
+            Some(sink) => sink
+                .values()
+                .filter(|(_, t)| now - t < REMOTE_TIMEOUT)
+                .map(|(st, _)| *st)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// La couleur de skin de ce nœud (pour le WELCOME du sidecar).
+    pub(crate) fn my_color(&self) -> (f32, f32, f32) {
+        self.link.my_color
     }
 
     pub(crate) fn neighbors(&self) -> usize {
@@ -244,14 +285,22 @@ impl Bot {
     /// confiance que le jeu), émission de notre état, perçage NAT.
     pub(crate) fn step(&mut self, dt: f32, now: f32) {
         self.wander += dt * 0.6;
-        // Foule centrée au CENTRE d'une cellule (chap. 8.3d) : le cercle de rayon `WANDER_RADIUS`
-        // (≪ CELL_SIZE) tient alors dans UNE seule cellule (0,0) → un hôte unique la résume (count ≈ N),
-        // au lieu de déborder sur 4 cellules autour d'un coin de grille (l'origine). Headless only.
-        let pos = Vec3::new(
-            CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.cos(),
-            0.7,
-            CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.sin(),
-        );
+        // Position émise : soit IMPOSÉE de l'extérieur (sidecar piloté par Unreal, palier 2), soit le
+        // cercle de balade par défaut. Foule centrée au CENTRE d'une cellule (chap. 8.3d) : le cercle
+        // de rayon `WANDER_RADIUS` (≪ CELL_SIZE) tient dans UNE cellule (0,0) → un hôte unique la résume
+        // (count ≈ N). Headless only. Le chemin par défaut (external_pose = None) est INCHANGÉ.
+        let (pos, send_yaw, send_pitch) = match self.external_pose {
+            Some((p, yaw, pitch)) => (p, yaw, pitch),
+            None => (
+                Vec3::new(
+                    CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.cos(),
+                    0.7,
+                    CELL_SIZE * 0.5 + WANDER_RADIUS * self.wander.sin(),
+                ),
+                self.wander,
+                0.0,
+            ),
+        };
 
         // 1) HELLO vers le rendez-vous (porte notre identité = notre clé).
         self.hello_acc += dt;
@@ -382,6 +431,9 @@ impl Bot {
                                     self.last_state.insert(state.id, (np, now));
                                     self.link.note_pos(state.id, (np.x, np.z));
                                     self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
+                                    if let Some(sink) = self.avatar_sink.as_mut() {
+                                        sink.insert(state.id, (state, now)); // sidecar : avatar complet
+                                    }
                                     self.holes.insert(state.id, true);
                                     *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                                     self.accepted += 1;
@@ -417,6 +469,9 @@ impl Bot {
                                 self.last_state.insert(state.id, (np, now));
                                 self.link.note_pos(state.id, (np.x, np.z));
                                 self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
+                                if let Some(sink) = self.avatar_sink.as_mut() {
+                                    sink.insert(state.id, (state, now)); // sidecar : avatar complet (relais)
+                                }
                                 let rc = self.relay_credits.entry(state.id).or_insert(RELAY_CAP);
                                 let mut n = 0u32;
                                 if *rc >= 1.0 {
@@ -499,7 +554,7 @@ impl Bot {
                     id: my_id,
                     x: pos.x, y: pos.y, z: pos.z,
                     vx: velocity.x, vy: velocity.y, vz: velocity.z,
-                    yaw: self.wander, pitch: 0.0,
+                    yaw: send_yaw, pitch: send_pitch,
                     r, g, b,
                     parent: None, seq: self.seq,
                 };

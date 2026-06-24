@@ -1,23 +1,23 @@
-//! LE SIDECAR — le pont entre le cœur réseau Rust et Unreal Engine (palier 1).
+//! LE SIDECAR — le pont entre le cœur réseau Rust et Unreal Engine.
 //!
 //! # Pourquoi ce fichier existe (bascule Unreal, voir CONTRAT_SIDECAR.md)
-//! Unreal sera un CLIENT MINCE : il ne fait pas de réseau, il pousse SA position et
-//! lit les avatars distants par une **socket locale TCP** (`127.0.0.1:47800`). Le cœur
-//! Rust garde toute l'autorité (relais NAT, anti-triche, sceau) — on lui ajoute juste
-//! une SORTIE, on ne le change pas (Règle 1).
+//! Unreal est un CLIENT MINCE : il ne fait pas de réseau, il pousse SA position et lit
+//! les avatars distants par une **socket locale TCP** (`127.0.0.1:47800`). Le cœur Rust
+//! garde toute l'autorité (relais NAT, anti-triche, sceau) — on lui ajoute une SORTIE.
 //!
-//! # Ce palier (PALIER 1 — preuve de vie + MESURE de latence)
-//! Sidecar **bidon** : il n'y a PAS encore de vrai réseau ici. On fabrique 2-3 faux
-//! avatars qui tournent en cercle, on les envoie en `SNAPSHOT` à 20 Hz, on accepte les
-//! `PUSH_SELF` d'Unreal, et on répond au `PING` par un `PONG` immédiat. **Le but réel
-//! n'est pas joli : c'est de CHIFFRER la latence/jitter de la socket** (l'inconnue de
-//! fond) AVANT de brancher le vrai cœur au palier 2. Le transport ici est NON-JETABLE :
-//! le palier 2 le réutilise tel quel, il remplace juste « faux avatars » par « vrais ».
+//! # Palier 2 — le VRAI cœur branché
+//! Le sidecar fait tourner un vrai nœud réseau (`Bot`, le code prouvé : gossip, relais,
+//! anti-triche, AoI), piloté par la position qu'Unreal pousse (`PUSH_SELF`), et il expose
+//! les avatars distants RÉELS reçus du réseau (`SNAPSHOT`). On REUTILISE `Bot` (anti-
+//! divergence D2) avec deux crochets gatés (pose externe + puits d'avatars) — le défaut
+//! bot/simu reste byte-pour-byte. Le `Bot` rejoint le rendez-vous (`RENDEZVOUS_ADDR`,
+//! défaut `127.0.0.1:4000`).
 //!
-//! Lancer :  cargo run -- sidecar     (puis Unreal se connecte en client)
+//! Lancer (après un `jeu rendezvous`) :  cargo run -- sidecar
 
-use super::skin::random_color;
-use std::f32::consts::PI;
+use super::bot::Bot;
+use super::message::PlayerState;
+use bevy::prelude::Vec3;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,13 +34,15 @@ const WELCOME: u8 = 128;
 const SNAPSHOT: u8 = 129;
 const PONG: u8 = 130;
 
-/// Cadence d'émission des snapshots (miroir de `SEND_HZ` du netcode).
+/// Cadence d'émission des snapshots vers Unreal (miroir de `SEND_HZ` du netcode).
 const SEND_HZ: f32 = 20.0;
+/// Cadence de la boucle du cœur (on step le `Bot` à ~50 Hz ; il accumule lui-même ses périodes).
+const LOOP_HZ: f32 = 50.0;
 /// Adresse d'écoute par défaut (réglable par `SIDECAR_ADDR`).
 const DEFAULT_ADDR: &str = "127.0.0.1:47800";
 
-/// La pose que MON joueur (Unreal) nous a poussée en dernier. Au palier 2, c'est elle
-/// qu'on émettra sur le réseau ; au palier 1 on se contente de la journaliser.
+/// La pose que MON joueur (Unreal) nous a poussée en dernier — partagée entre le thread
+/// lecteur (qui l'écrit) et la boucle du cœur (qui l'injecte dans le `Bot`).
 #[derive(Clone, Copy, Default)]
 struct SelfPose {
     x: f32,
@@ -61,10 +63,11 @@ pub fn run_sidecar() {
             return;
         }
     };
-    println!("[sidecar] palier 1 — j'écoute sur {addr} (TCP loopback). En attente d'Unreal…");
+    println!("[sidecar] palier 2 — j'écoute sur {addr} (TCP loopback). En attente d'Unreal…");
 
-    // Un seul client à la fois (un joueur = un UE = un cœur). On boucle pour ré-accepter
-    // si Unreal tombe et revient (reconnexion propre : on garde notre identité).
+    // Un seul client à la fois (un joueur = un UE = un cœur). On boucle pour ré-accepter si
+    // Unreal tombe et revient. Le `Bot` est (re)créé à chaque session UE (identité éphémère —
+    // ⚠ dette : le sidecar devrait à terme utiliser l'identité PERSISTANTE, cf. CONTRAT §6).
     for incoming in listener.incoming() {
         match incoming {
             Ok(stream) => {
@@ -80,23 +83,30 @@ pub fn run_sidecar() {
     }
 }
 
-/// Sert UN client Unreal : envoie WELCOME, lit ses messages dans un thread, et émet les
-/// SNAPSHOT à 20 Hz depuis ce thread-ci. Toutes les ÉCRITURES passent par le même mutex
-/// (sérialise les trames : pas d'entrelacement WELCOME/SNAPSHOT/PONG).
+/// Sert UN client Unreal : crée le nœud réseau, lit les messages d'Unreal dans un thread, et
+/// fait tourner le cœur + émet les SNAPSHOT depuis ce thread-ci.
 fn serve_client(stream: TcpStream) -> io::Result<()> {
-    stream.set_nodelay(true)?; // pas de Nagle : on veut la latence la plus basse (contrat §6)
+    stream.set_nodelay(true)?; // pas de Nagle : latence mini (contrat §6)
     let reader_stream = stream.try_clone()?;
     let writer = Arc::new(Mutex::new(stream));
     let alive = Arc::new(AtomicBool::new(true));
     let pose = Arc::new(Mutex::new(SelfPose::default()));
 
-    // WELCOME : mon identité (clé pub) + ma couleur. Au palier 1 l'id est un faux stable ;
-    // au palier 2 ce sera ma vraie clé persistante (a.key).
-    let (r, g, b) = random_color();
+    // Le VRAI nœud réseau : il rejoint le rendez-vous, perce, émet/reçoit comme le jeu.
+    let mut bot = match Bot::new("sidecar", false, 0.0) {
+        Some(b) => b,
+        None => {
+            eprintln!("[sidecar] réseau indisponible (prise non ouverte).");
+            return Ok(());
+        }
+    };
+    bot.enable_avatar_sink(); // on veut exposer les avatars distants complets à Unreal
+
+    // WELCOME : ma couleur (l'id réel n'est connu qu'après le 1er WELCOME du rendez-vous → on
+    // envoie l'id quand on l'a ; ici on met des zéros, Unreal ne s'en sert que pour l'affichage).
+    let (r, g, b) = bot.my_color();
     let mut welcome = Vec::with_capacity(32 + 12);
-    let mut my_id = [0u8; 32];
-    my_id[0] = 0xEE; // marqueur « MOI » (faux id du palier 1)
-    welcome.extend_from_slice(&my_id);
+    welcome.extend_from_slice(&[0u8; 32]);
     for f in [r, g, b] {
         welcome.extend_from_slice(&f.to_le_bytes());
     }
@@ -126,78 +136,73 @@ fn serve_client(stream: TcpStream) -> io::Result<()> {
                     };
                 }
                 Ok((PING, payload)) if payload.len() >= 8 => {
-                    // PONG immédiat, même nonce : c'est lui qui mesure le RTT côté UE.
                     let mut w = r_writer.lock().unwrap();
                     if write_frame(&mut *w, PONG, &payload[0..8]).is_err() {
                         break;
                     }
                 }
-                Ok(_) => {} // trame inconnue ou trop courte : on ignore (robustesse)
+                Ok(_) => {}
                 Err(_) => break, // Unreal a fermé la socket
             }
         }
         r_alive.store(false, Ordering::SeqCst);
     });
 
-    // Boucle ÉMETTRICE : un SNAPSHOT de faux avatars toutes les 50 ms, + un log/s de vie.
+    // Boucle du CŒUR : step le bot avec la pose d'Unreal, et émet un SNAPSHOT des avatars réels.
     let start = Instant::now();
-    let tick = Duration::from_secs_f32(1.0 / SEND_HZ);
+    let mut last = Instant::now();
+    let loop_tick = Duration::from_secs_f32(1.0 / LOOP_HZ);
+    let mut send_acc = 0.0f32;
     let mut log_acc = 0.0f32;
     while alive.load(Ordering::SeqCst) {
-        let t = start.elapsed().as_secs_f32();
-        let snap = build_fake_snapshot(t);
-        {
+        let dt = last.elapsed().as_secs_f32();
+        last = Instant::now();
+        let now = start.elapsed().as_secs_f32();
+
+        // 1) injecter la pose d'Unreal dans le nœud (il l'émettra sur le réseau).
+        let p = *pose.lock().unwrap();
+        bot.set_external_pose(Vec3::new(p.x, p.y, p.z), p.yaw, p.pitch);
+
+        // 2) faire tourner le vrai protocole (émission/réception/relais/gossip).
+        bot.step(dt, now);
+
+        // 3) émettre un SNAPSHOT des avatars distants RÉELS vers Unreal, à 20 Hz.
+        send_acc += dt;
+        if send_acc >= 1.0 / SEND_HZ {
+            send_acc = 0.0;
+            let avatars = bot.avatars(now);
+            let snap = encode_snapshot(&avatars);
             let mut w = writer.lock().unwrap();
             if write_frame(&mut *w, SNAPSHOT, &snap).is_err() {
                 break; // Unreal est parti
             }
         }
-        log_acc += 1.0 / SEND_HZ;
-        if log_acc >= 1.0 {
+
+        log_acc += dt;
+        if log_acc >= 2.0 {
             log_acc = 0.0;
-            let p = *pose.lock().unwrap();
+            let id = bot.id().map(|i| i.short()).unwrap_or_else(|| "—".to_string());
             println!(
-                "[sidecar] t={t:.0}s | 3 faux avatars émis à {SEND_HZ:.0} Hz | \
-                 PUSH_SELF reçus={} (dernier: x={:.1} y={:.1} z={:.1} yaw={:.2} pitch={:.2})",
-                p.updates, p.x, p.y, p.z, p.yaw, p.pitch
+                "[sidecar] t={now:.0}s | id={id} | avatars distants={} | PUSH_SELF reçus={}",
+                bot.avatars(now).len(),
+                p.updates
             );
         }
-        std::thread::sleep(tick);
+        std::thread::sleep(loop_tick);
     }
     alive.store(false, Ordering::SeqCst);
     let _ = reader.join();
     Ok(())
 }
 
-/// Fabrique le payload d'un SNAPSHOT : 3 faux avatars qui tournent en cercle (rayons et
-/// phases distincts). Format exact = CONTRAT_SIDECAR.md §3 (u16 count + N×AvatarRec 76 o).
-fn build_fake_snapshot(t: f32) -> Vec<u8> {
-    // (index, rayon, phase, couleur RVB)
-    let avatars: [(u8, f32, f32, (f32, f32, f32)); 3] = [
-        (0, 4.0, 0.0, (1.0, 0.25, 0.25)),
-        (1, 6.0, 2.0, (0.25, 1.0, 0.35)),
-        (2, 3.0, 4.0, (0.35, 0.5, 1.0)),
-    ];
+/// Sérialise un SNAPSHOT : `u16 count` + N×AvatarRec (76 o), miroir de `PlayerState` sans
+/// `parent`/`seq`. Format exact = CONTRAT_SIDECAR.md §3.
+fn encode_snapshot(avatars: &[PlayerState]) -> Vec<u8> {
     let mut p = Vec::with_capacity(2 + avatars.len() * 76);
     p.extend_from_slice(&(avatars.len() as u16).to_le_bytes());
-    let w = 0.5f32; // vitesse angulaire (rad/s)
-    for (i, radius, phase, (r, g, b)) in avatars {
-        let a = w * t + phase;
-        let (sa, ca) = a.sin_cos();
-        let x = radius * ca;
-        let z = radius * sa;
-        let y = 0.7;
-        // vitesse analytique = dérivée du cercle (sert à l'interpolation côté UE)
-        let vx = -radius * w * sa;
-        let vz = radius * w * ca;
-        let vy = 0.0;
-        let yaw = a + PI / 2.0; // face dans le sens de la marche (tangente)
-        let pitch = 0.0;
-        let mut id = [0u8; 32];
-        id[0] = i;
-        id[1] = 0xA1; // marqueur « faux avatar palier 1 »
-        p.extend_from_slice(&id);
-        for f in [x, y, z, vx, vy, vz, yaw, pitch, r, g, b] {
+    for a in avatars {
+        p.extend_from_slice(a.id.bytes());
+        for f in [a.x, a.y, a.z, a.vx, a.vy, a.vz, a.yaw, a.pitch, a.r, a.g, a.b] {
             p.extend_from_slice(&f.to_le_bytes());
         }
     }
