@@ -74,6 +74,11 @@
 > 2. **Fix dette anti-triche « sur-punition »** (téléport/claim légitime → `NoContact` → mute) — AVANT de refaire circuler des objets.
 > 3. **Palier 4 — les objets partagés dans le contrat sidecar** (réveiller l'orbe proprement) : le chaînon « avatars » → « jeu avec des choses ».
 > 4. **Étoiles déterministes (graine partagée) + ramassage = événement d'autorité** (réutilise ORBE+OWN) + cristaux.
+>    - ✅ **Moitié SPAWN faite (25 juin) :** `src/net/stars.rs` (cœur pur, sans réseau) — graine + temps → même
+>      champ d'étoiles pour tous, sans réseau-ter chaque étoile (terre/eau, PRNG splitmix64). Preuve reproductible :
+>      `jeu stars <seed> [secs]` (2 runs = sortie identique). +6 tests, 0 warning, 114 tests. Commit `3437ef3` (à pousser).
+>    - 🔜 **Reste la moitié DURE : le RAMASSAGE = événement d'AUTORITÉ** (qui prend l'étoile, une seule fois, pas de
+>      double-ramassage) → réutilise `orb.rs` (`supersedes`/`apply_incoming`) + nouveau KIND wire + palier 4 sidecar.
 > 5. **Chat texte** de proximité.
 > 6. **TEST avec de vrais potes** (+ vocal Discord pour dé-risquer la prémisse sociale) → ferme **D27** « est-ce vivant ».
 > *On ne décide races/stats/**persistance (D28)** qu'APRÈS ce test. La plateforme reste une étoile lointaine.*
