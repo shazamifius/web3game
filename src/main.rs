@@ -16,6 +16,7 @@
 //!   coopsim <N> [s]       N nœuds dans un thread coopératif (banc léger)
 //!   coopsim-bus <N> [s]   banc bus mémoire (temps-sim découplé du mural)
 //!   relay-test [s]        banc déterministe du relais NAT (deux sens)
+//!   stars <seed> [secs]   champ d'étoiles déterministe (preuve : 2 runs = sortie identique)
 //!   attack <type>         le programme attaquant (forge|replay|flood|teleport|…)
 //!   net-demo <a|b>        la démo réseau en texte (observer les paquets)
 //!   nat-test <nom>        le hole punching en texte (pour les namespaces réseau)
@@ -63,13 +64,17 @@ fn main() {
             let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             net::run_relay_test(secs);
         }
+        Some("stars") => net::run_stars(
+            args.get(2).map(String::as_str).unwrap_or("1"),
+            args.get(3).map(String::as_str).unwrap_or("30"),
+        ),
         other => {
             if let Some(m) = other {
                 eprintln!("Mode inconnu : « {m} ».");
             }
             eprintln!(
                 "Usage : jeu <rendezvous|sidecar|bot|sim|crowd|coopsim|coopsim-bus|\
-                 relay-test|attack|net-demo|nat-test> [args…]\n\
+                 relay-test|stars|attack|net-demo|nat-test> [args…]\n\
                  (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
             );
             std::process::exit(2);
