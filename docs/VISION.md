@@ -3,6 +3,33 @@
 > Le launcher façon gamejolt (multi-moteur), le hub, et le 1er jeu « île aux étoiles » + l'ordre des jalons.
 > *(Doc éclaté depuis l'ancienne `FEUILLE_DE_ROUTE.md` le 25 juin 2026 — voir l'index `FEUILLE_DE_ROUTE.md` pour la carte complète.)*
 
+---
+
+## 🧭 LE CAP — une boussole VIVANTE (⚠ PAS une checklist)
+
+> **⚠⚠ LIRE D'ABORD — ce que cette liste EST et N'EST PAS.** Ce n'est **pas** une liste de cases à cocher.
+> C'est une **boussole** : un cap flou, volontairement imparfait, qui **doit évoluer, changer, se métamorphoser**
+> au fil des preuves. **Règle d'or de l'utilisateur (25 juin 2026) :** *on ne coche JAMAIS un truc en disant « ça
+> passe à peu près ».* On fait les choses **bien**, on prend le **temps** ; **si on doit faire un détour de 400 ans,
+> on le fait.** Un item qui « tient à peu près » n'est pas fait — il est en dette (cf. [docs/DOUTES.md](DOUTES.md)).
+> Chaque ⚠ ci-dessous est un **déclencheur de remise en cause** : si la condition arrive, on REPENSE, on ne rustine pas.
+
+- **★ La seule chose qui compte : prouver que c'est VIVANT** (D27). Tout le reste sert ça. ⚠ Si un test avec de vrais
+  potes montre que ce n'est pas *vivant/fun*, on **repense le jeu** — on ne rajoute pas des features par-dessus un cœur mort.
+- **Le LIEU avant la boucle ; le RÉEL avant le joli.** On bâtit l'espace partagé d'abord, en vrai sur Unreal (pas de
+  faux murs de proto). ⚠ Si « se retrouver au même endroit » coince, c'est prioritaire sur tout gameplay.
+- **La persistance (D28) est une QUESTION OUVERTE, pas un acquis.** ⚠ Elle peut nous forcer à accepter un petit serveur
+  de sauvegarde, OU un modèle « ta clé signe ton état », OU l'éphémère assumé. À trancher *par la preuve*, plus tard.
+- **Le vocal se DÉ-RISQUE avant de se bâtir.** Tester la prémisse sociale avec un vocal externe (Discord). ⚠ Si « être
+  ensemble » est fun sans vocal P2P, on peut le repousser longtemps ; si le fun en dépend, on saura que ça vaut le coût.
+- **L'onboarding/distribution deviendra un mur** dès qu'on dépasse 2-3 potes (installer, sidecar, NAT, rendez-vous=SPOF).
+  ⚠ Ne pas le sous-estimer : « partageable vite à 10 potes » est un vrai chantier, pas un détail.
+- **Le cœur réseau reste INTOUCHABLE** ; tout ajout est **additif et prouvé** (Règle 1). ⚠ Si un pas menace le cœur, on ne le fait pas.
+- **La PLATEFORME (gamejolt multi-moteur) reste une ÉTOILE LOINTAINE.** ⚠ On protège le focus : on n'en code pas une
+  ligne tant que le 1er jeu n'a pas prouvé que « c'est vivant ». La sirène du scope est le danger n°1.
+
+> *Cette liste se relit et se réécrit à chaque fois qu'une preuve déplace un mur. Si elle a l'air figée, c'est qu'on a oublié de la faire vivre.*
+
 ## VISION PLATEFORME + LE PREMIER JEU (posé avec l'utilisateur, 25 juin 2026)
 
 > Le « pourquoi » au-dessus du netcode. À garder comme boussole du travail Unreal ; on n'en code qu'un

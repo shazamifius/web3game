@@ -65,7 +65,20 @@
 > deux sens, `sidecar` démarre. **Reste (Étape B, optionnelle) :** extraire le cœur en crate lib `web3core` (workspace) —
 > plumbing cosmétique, le sidecar marche déjà ; à faire SI ça sert, sinon prioriser le petit jeu.
 >
-> **OÙ ON EN EST :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense » Phase A
+> **🟢 JALON 1 FAIT (25 juin) :** vrais avatars dans Unreal (au lieu des capsules debug), prouvé en `-game` (un avatar
+> nommé bouge sur la map via le réseau). Repère partagé ~gratuit (deux UE = même niveau). *(dépôt UE `spike01-unreal`.)*
+>
+> **▶️ COURT TERME — la liste « MVP : est-ce vivant ? » (PAS une checklist — cf. la boussole vivante dans [VISION.md](VISION.md)).**
+> On fait chaque pas BIEN, dans l'ordre que la preuve dicte ; on ne coche jamais « ça passe à peu près ». Pas à pas :
+> 1. **Jalon 2 — l'île + les avatars dessus** (utilisateur = niveau/visuel/assets ; moi = câblage). Un vrai sol, une origine claire.
+> 2. **Fix dette anti-triche « sur-punition »** (téléport/claim légitime → `NoContact` → mute) — AVANT de refaire circuler des objets.
+> 3. **Palier 4 — les objets partagés dans le contrat sidecar** (réveiller l'orbe proprement) : le chaînon « avatars » → « jeu avec des choses ».
+> 4. **Étoiles déterministes (graine partagée) + ramassage = événement d'autorité** (réutilise ORBE+OWN) + cristaux.
+> 5. **Chat texte** de proximité.
+> 6. **TEST avec de vrais potes** (+ vocal Discord pour dé-risquer la prémisse sociale) → ferme **D27** « est-ce vivant ».
+> *On ne décide races/stats/**persistance (D28)** qu'APRÈS ce test. La plateforme reste une étoile lointaine.*
+>
+> **OÙ ON EN EST (cœur, avant le virage jeu) :** chapitres **0→7 faits**, **ch.9 (confiance dure) tenu**, **ch.8 « foule dense » Phase A
 > BOUCLÉE** (FOCUS ~32 / CONSCIENCE LOD / gossip / résumés de cellule), **10.1 identité PERSISTANTE FAIT**
 > (D14 fermé). **Investigation 8.3★ EN COURS** (perception à grande échelle) : un **banc bus mémoire** (D25,
 > dette de harnais levée) mesure désormais jusqu'à 5000+ nœuds sur un PC. Il a **séparé DEUX murs**, et le

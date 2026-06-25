@@ -399,5 +399,19 @@ personne. *Piste (= la seule honnête) :* deux humains, deux vrais NAT, le vrai 
 pré-enregistré AVANT le test, conditions hostiles incluses (lien mobile, NAT symétrique). *Vérif :* (b) chiffrée en
 direct, taux de connexion mesuré par type de NAT. **Ferme aussi, par ricochet, ce que D17/R1 cachaient.**
 
+**D28 — La PERSISTANCE d'état JOUEUR en P2P sans serveur.** 🔴 `[doute de conception, ouvert — posé le 25 juin]`
+*Constat :* le 1er jeu suppose une **progression PERSISTANTE et LENTE** (cristaux, race animale, stats faim/stamina
+qui montent au fil des sessions). Or « **pas de serveur de jeu** » + « **progression long terme** » sont en **tension
+de fond** : sans magasin canonique, **où vit l'état d'un joueur entre deux sessions, et qui empêche de le forger ?**
+Le proto Bevy le sauvait dans un **fichier LOCAL** (`~/.web3game/ile_score.txt`) → trivialement trichable ET ne
+synchronise rien. *Distinct de D14* (qui ne persiste que l'**identité** = la clé, pas l'**état de jeu**). *Pistes
+non tranchées (= un fork qui touche la vision, pas juste la technique) :* (a) **éphémère assumé** (l'état ne survit
+pas à la session — simple et honnête, mais tue la « progression lente ») ; (b) **« ta clé signe ton état »** (tu
+portes ton état signé, les pairs corroborent — anti-forge partielle, mais le vol/dup d'objets *uniques* reste dur en
+P2P) ; (c) **petit serveur de SAUVEGARDE assumé** (un astérisque de plus à « sans serveur », comme le rendez-vous) ;
+(d) un mélange (perso éphémère pour le MVP, persistance corroborée plus tard). *Vérif (quand on tranchera) :* un
+joueur revient avec son état d'avant, et un état forgé/dupliqué est rejeté/borné. **À NE PAS résoudre maintenant** :
+pour le MVP « 10 potes » l'éphémère/local suffit ; ce doute existe pour ne pas se mentir sur « progression » + « sans serveur ».
+
 ---
 
