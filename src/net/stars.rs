@@ -23,7 +23,9 @@
 //! On utilise `splitmix64`, un générateur déterministe minuscule et de bonne qualité de
 //! dispersion, suffisant pour disperser des positions (ce n'est PAS de la crypto).
 
+use super::crypto::{PeerId, PUBKEY_LEN};
 use crate::math::Vec3;
+use std::collections::HashMap;
 
 /// Secondes entre deux apparitions d'étoile. **Volontairement lent** (cf. la DA : évolution
 /// lente pour forcer le social). Une étoile toutes les 5 s.
@@ -141,9 +143,150 @@ pub fn run_stars(seed_arg: &str, secs_arg: &str) {
     }
 }
 
+// ───────────────────────── LE RAMASSAGE (événement d'AUTORITÉ, P2P sans arbitre) ─────────────────────────
+//
+// Une étoile se ramasse UNE fois (terminal). En P2P, deux joueurs peuvent la revendiquer
+// quasi simultanément → il faut que TOUS les pairs convergent sur le même gagnant, sans
+// serveur. Parade (esprit de `orb::supersedes`) : un RANG déterministe par (étoile, pair) ;
+// le plus petit rang gagne. C'est un argmin sur un ensemble → INDÉPENDANT DE L'ORDRE de
+// réception (convergent), et le rang dépend de l'étoile → ÉQUITABLE (pas toujours le même
+// gagnant aux égalités, contrairement à « plus petit id gagne »). En cas d'égalité de rang
+// (collision de hash, ~impossible en 64 bits), on départage par l'id du pair → ordre TOTAL.
+
+/// Une revendication de ramassage. Sur le wire elle sera SIGNÉE (anti-forge, comme l'orbe) ;
+/// ici on isole la LOGIQUE PURE de résolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Claim {
+    pub star_id: u64,
+    pub claimer: PeerId,
+}
+
+/// Rang déterministe d'une revendication (le plus PETIT gagne). Mêle l'étoile et l'identité.
+fn claim_rank(star_id: u64, claimer: &PeerId) -> u64 {
+    let mut h: u64 = 0xD1B5_4A32_D192_ED03;
+    for chunk in claimer.bytes().chunks(8) {
+        let mut x = [0u8; 8];
+        x[..chunk.len()].copy_from_slice(chunk);
+        h = splitmix64(h ^ u64::from_le_bytes(x));
+    }
+    splitmix64(star_id ^ h)
+}
+
+/// L'état des étoiles ramassées — convergent quel que soit l'ordre de réception des claims.
+#[derive(Default)]
+pub struct Harvest {
+    claimed: HashMap<u64, (PeerId, u64)>, // star_id -> (gagnant, son rang)
+}
+
+impl Harvest {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Intègre une revendication. Garde le pair de plus petit (rang, id) → argmin ordre-indépendant.
+    /// Renvoie `true` si le gagnant de cette étoile a changé (1re prise OU correction par un meilleur).
+    pub fn apply(&mut self, c: Claim) -> bool {
+        let rank = claim_rank(c.star_id, &c.claimer);
+        match self.claimed.get(&c.star_id) {
+            // Ordre TOTAL (rang, id) : on ne remplace que par strictement meilleur.
+            Some(&(cur_id, cur_rank)) if (cur_rank, cur_id) <= (rank, c.claimer) => false,
+            _ => {
+                self.claimed.insert(c.star_id, (c.claimer, rank));
+                true
+            }
+        }
+    }
+
+    /// Cette étoile a-t-elle été prise (→ la retirer du champ actif / ne plus l'afficher).
+    pub fn is_taken(&self, star_id: u64) -> bool {
+        self.claimed.contains_key(&star_id)
+    }
+
+    /// Le gagnant convergent de cette étoile, s'il y en a un.
+    pub fn winner(&self, star_id: u64) -> Option<PeerId> {
+        self.claimed.get(&star_id).map(|&(p, _)| p)
+    }
+
+    /// Combien d'étoiles ce pair a gagnées = ses cristaux.
+    pub fn crystals_for(&self, me: &PeerId) -> usize {
+        self.claimed.values().filter(|&&(p, _)| p == *me).count()
+    }
+
+    /// Nombre total d'étoiles ramassées (toutes prises confondues).
+    pub fn taken_count(&self) -> usize {
+        self.claimed.len()
+    }
+}
+
+/// Sous-commande `stars-race <seed> <peers> [secs]` : PREUVE de CONVERGENCE du ramassage.
+/// On fabrique des revendications déterministes (dont des CONFLITS : 2 joueurs sur la même
+/// étoile), on les applique dans l'ordre PUIS dans l'ordre INVERSE → les deux doivent donner
+/// EXACTEMENT le même décompte de cristaux. (Juge neutre du « sans arbitre, ça converge ».)
+pub fn run_stars_race(seed_arg: &str, peers_arg: &str, secs_arg: &str) {
+    let seed: u64 = seed_arg.parse().unwrap_or(1);
+    let peers: u8 = peers_arg.parse().unwrap_or(4).max(1);
+    let secs: f64 = secs_arg.parse().unwrap_or(120.0);
+
+    let pid = |i: u8| PeerId::from_bytes([i; PUBKEY_LEN]);
+    let champ = field_window(seed, 0.0, secs);
+
+    // Revendications déterministes : un ramasseur principal par étoile, + un conflit 1 fois sur 3.
+    let mut claims = Vec::new();
+    for s in &champ {
+        let a = (splitmix64(s.id) % peers as u64) as u8;
+        claims.push(Claim { star_id: s.id, claimer: pid(a) });
+        if splitmix64(s.id ^ 0xBEEF) % 3 == 0 {
+            let b = (splitmix64(s.id ^ 0x1234) % peers as u64) as u8;
+            claims.push(Claim { star_id: s.id, claimer: pid(b) }); // 2e joueur sur la même étoile
+        }
+    }
+
+    let mut h1 = Harvest::new();
+    for c in &claims {
+        h1.apply(*c);
+    }
+    let mut h2 = Harvest::new();
+    for c in claims.iter().rev() {
+        h2.apply(*c);
+    }
+
+    let tally = |h: &Harvest| (0..peers).map(|i| h.crystals_for(&pid(i))).collect::<Vec<_>>();
+    let (t1, t2) = (tally(&h1), tally(&h2));
+    println!(
+        "Course aux étoiles — seed={seed}, {peers} joueurs, {} étoiles, {} revendications ({} conflits)",
+        champ.len(),
+        claims.len(),
+        claims.len() - champ.len()
+    );
+    for i in 0..peers {
+        println!("  joueur {i} : {} cristaux", t1[i as usize]);
+    }
+    println!("  → {} étoiles prises au total", h1.taken_count());
+    // Sanity lisible : qui a gagné la 1re étoile (exerce is_taken/winner).
+    if let Some(first) = champ.first() {
+        if h1.is_taken(first.id) {
+            let w = h1.winner(first.id).unwrap();
+            let k = (0..peers).find(|&i| pid(i) == w);
+            println!(
+                "  (étoile #{:016x} → joueur {})",
+                first.id,
+                k.map(|i| i.to_string()).unwrap_or_else(|| "?".into())
+            );
+        }
+    }
+    println!(
+        "CONVERGENCE (ordre vs ordre inverse) : {}",
+        if t1 == t2 { "✅ IDENTIQUE" } else { "❌ DIVERGENT" }
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pid(i: u8) -> PeerId {
+        PeerId::from_bytes([i; PUBKEY_LEN])
+    }
 
     /// Le déterminisme PUR : même graine → champ identique au bit près (rejouable partout).
     #[test]
@@ -205,5 +348,78 @@ mod tests {
         let eau = champ.iter().filter(|s| s.in_water).count();
         let terre = champ.len() - eau;
         assert!(eau > 0 && terre > 0, "on veut des étoiles sur la terre ET dans l'eau (eau={eau}, terre={terre})");
+    }
+
+    // ───────── RAMASSAGE ─────────
+
+    /// Une étoile non revendiquée n'est pas prise ; après une revendication, elle l'est.
+    #[test]
+    fn prise_simple() {
+        let mut h = Harvest::new();
+        assert!(!h.is_taken(42));
+        assert!(h.apply(Claim { star_id: 42, claimer: pid(7) }));
+        assert!(h.is_taken(42));
+        assert_eq!(h.winner(42), Some(pid(7)));
+        assert_eq!(h.crystals_for(&pid(7)), 1);
+        assert_eq!(h.crystals_for(&pid(3)), 0);
+    }
+
+    /// Conflit : deux pairs revendiquent la MÊME étoile → gagnant DÉTERMINISTE, et identique
+    /// quel que soit l'ORDRE de réception (le cœur de la convergence sans arbitre).
+    #[test]
+    fn conflit_gagnant_independant_de_l_ordre() {
+        let c1 = Claim { star_id: 99, claimer: pid(2) };
+        let c2 = Claim { star_id: 99, claimer: pid(5) };
+        let mut a = Harvest::new();
+        a.apply(c1);
+        a.apply(c2);
+        let mut b = Harvest::new();
+        b.apply(c2); // ordre inverse
+        b.apply(c1);
+        assert_eq!(a.winner(99), b.winner(99), "le gagnant doit être indépendant de l'ordre");
+        // un seul gagne le cristal, jamais les deux.
+        let g = a.winner(99).unwrap();
+        assert_eq!(a.crystals_for(&pid(2)) + a.crystals_for(&pid(5)), 1);
+        assert!(g == pid(2) || g == pid(5));
+    }
+
+    /// Convergence à grande échelle : un lot de revendications conflictuelles appliqué dans
+    /// l'ordre PUIS inversé → décomptes de cristaux STRICTEMENT identiques (reproductible).
+    #[test]
+    fn convergence_lot_melange() {
+        let champ = field_window(7, 0.0, 600.0);
+        let peers = 5u8;
+        let mut claims = Vec::new();
+        for s in &champ {
+            claims.push(Claim { star_id: s.id, claimer: pid((splitmix64(s.id) % peers as u64) as u8) });
+            if splitmix64(s.id ^ 0xBEEF) % 3 == 0 {
+                claims.push(Claim { star_id: s.id, claimer: pid((splitmix64(s.id ^ 0x1234) % peers as u64) as u8) });
+            }
+        }
+        let mut h1 = Harvest::new();
+        for c in &claims { h1.apply(*c); }
+        let mut h2 = Harvest::new();
+        for c in claims.iter().rev() { h2.apply(*c); }
+        let t1: Vec<_> = (0..peers).map(|i| h1.crystals_for(&pid(i))).collect();
+        let t2: Vec<_> = (0..peers).map(|i| h2.crystals_for(&pid(i))).collect();
+        assert_eq!(t1, t2, "le ramassage doit converger quel que soit l'ordre");
+        // somme des cristaux = nombre d'étoiles prises (pas de double-comptage).
+        assert_eq!(t1.iter().sum::<usize>(), h1.taken_count());
+        assert_eq!(h1.taken_count(), champ.len(), "chaque étoile est prise une fois");
+    }
+
+    /// Re-revendiquer une étoile déjà gagnée par un MEILLEUR rang ne change rien (terminal stable).
+    #[test]
+    fn revendication_plus_faible_ignoree() {
+        let mut h = Harvest::new();
+        // on cherche deux pairs dont on connaît l'ordre de rang sur une étoile donnée
+        let star = 12345u64;
+        let (mut lo, mut hi) = (pid(1), pid(2));
+        if claim_rank(star, &lo) > claim_rank(star, &hi) {
+            std::mem::swap(&mut lo, &mut hi);
+        }
+        assert!(h.apply(Claim { star_id: star, claimer: lo })); // le meilleur d'abord
+        assert!(!h.apply(Claim { star_id: star, claimer: hi }), "un rang moins bon ne supplante pas");
+        assert_eq!(h.winner(star), Some(lo));
     }
 }

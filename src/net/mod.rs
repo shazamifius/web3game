@@ -60,4 +60,4 @@ pub use natdemo::run_nat_test;
 pub use rendezvous::run_rendezvous;
 pub use sidecar::run_sidecar;
 pub use sim::{run_crowd, run_relay_test, run_sim};
-pub use stars::run_stars;
+pub use stars::{run_stars, run_stars_race};

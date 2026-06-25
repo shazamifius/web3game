@@ -77,8 +77,14 @@
 >    - ✅ **Moitié SPAWN faite (25 juin) :** `src/net/stars.rs` (cœur pur, sans réseau) — graine + temps → même
 >      champ d'étoiles pour tous, sans réseau-ter chaque étoile (terre/eau, PRNG splitmix64). Preuve reproductible :
 >      `jeu stars <seed> [secs]` (2 runs = sortie identique). +6 tests, 0 warning, 114 tests. Commit `3437ef3` (à pousser).
->    - 🔜 **Reste la moitié DURE : le RAMASSAGE = événement d'AUTORITÉ** (qui prend l'étoile, une seule fois, pas de
->      double-ramassage) → réutilise `orb.rs` (`supersedes`/`apply_incoming`) + nouveau KIND wire + palier 4 sidecar.
+>    - ✅ **Moitié RAMASSAGE faite (25 juin) — logique pure CONVERGENTE :** `stars.rs` `Harvest`/`Claim`. Ramassage =
+>      événement d'autorité résolu SANS arbitre par un **rang déterministe** par (étoile, pair) — argmin → indépendant
+>      de l'ordre de réception (convergent) + équitable. Preuve : `jeu stars-race <seed> <joueurs> [secs]` (2 ordres =
+>      décompte de cristaux IDENTIQUE). +4 tests (118 total), 0 warning. *(Cristaux = `crystals_for(moi)`.)*
+>    - 🔜 **Reste = le CÂBLAGE :** signer le `Claim` sur le wire (nouveau KIND, anti-forge comme l'orbe) + l'exposer dans
+>      le contrat sidecar (palier 4) → UE émet « j'ai touché l'étoile #id », le cœur résout, l'étoile disparaît pour tous.
+>      ⚠ Dette assumée : la résolution fait confiance au `Claim` (anti-forge = signature) mais ne vérifie pas encore la
+>      PREUVE DE CONTACT (« je l'ai vraiment touchée ») — équivalent du `NoContact` de l'orbe, à porter au câblage.
 > 5. **Chat texte** de proximité.
 > 6. **TEST avec de vrais potes** (+ vocal Discord pour dé-risquer la prémisse sociale) → ferme **D27** « est-ce vivant ».
 > *On ne décide races/stats/**persistance (D28)** qu'APRÈS ce test. La plateforme reste une étoile lointaine.*
