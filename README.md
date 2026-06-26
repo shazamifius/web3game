@@ -96,6 +96,7 @@ cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 d
 - **L'état du projet — réalisations, combats, murs, doutes (chiffré)** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
 - **Le registre des doutes (le cœur de la démarche)** : [`docs/doutes.md`](docs/doutes.md)
 - **Le détail des chantiers** : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [robustesse](docs/chantier-robustesse.md)
+- **Le journal de développement (comment le cœur a été bâti)** : [`docs/journal.md`](docs/journal.md)
 - **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
 
