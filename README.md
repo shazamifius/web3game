@@ -10,9 +10,12 @@
 
 ---
 
+> **Ce dépôt n'est ni un produit, ni une promesse.** C'est un projet de **R&D — poussé et de niche —** documenté
+> honnêtement : ce qui marche, ce qui résiste, et **surtout les doutes encore ouverts.** On ne vend rien ; on explore.
+
 ## La vision
 
-L'objectif est ambitieux et assumé : **un univers de mondes partagés massifs**, dans l'esprit de l'**OASIS de
+L'objectif, lointain et assumé : **un univers de mondes partagés massifs**, dans l'esprit de l'**OASIS de
 *Ready Player One*** (le métavers du roman puis du film de Spielberg) — mais **en pair-à-pair**. Un monde où l'on
 retrouve ses amis, où l'on passe d'un jeu à l'autre, et que **n'importe qui pourra un jour enrichir du sien**
 (Unreal, Unity, Godot…).
@@ -25,14 +28,18 @@ eux-mêmes le réseau. Ce que ça change concrètement :
   d'un tiers. *« web3 » est ici à prendre au sens **décentralisé / identité possédée** — **pas** un token, pas de crypto.*
 - **Pas de point de défaillance unique** qui éteint tout le monde d'un coup.
 
-La **boussole d'échelle** est volontairement vertigineuse : pouvoir réunir **~55 000 personnes** dans un même espace
-(la jauge de la plus grande salle de concert du monde). *C'est un **cap** qui guide l'architecture — une direction
-de recherche, pas une métrique déjà atteinte (voir « En toute transparence » plus bas).*
+La **boussole d'échelle** est volontairement vertigineuse. Le plus grand affrontement coordonné de l'histoire du
+jeu vidéo — un **record du monde Guinness** détenu par la communauté d'**EVE Online** (la bataille de *B-R5RB*, 2014) —
+a réuni des **milliers** de joueurs dans un même espace : la preuve qu'une présence partagée à très grande échelle
+est possible. Ce projet en explore la **frontière, en pair-à-pair**, avec pour cap lointain l'ordre de grandeur d'une
+très grande foule (~55 000, une salle de concert). *C'est une **direction de recherche**, pas une métrique déjà
+atteinte (voir « En toute transparence »).*
 
 ## Ce qui est déjà construit (et éprouvé)
 
-Le cœur n'est pas un slide : c'est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance
-« magique » est la bibliothèque de cryptographie). Ce qui tourne et a été vérifié :
+Le cœur est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance externe est la bibliothèque
+de cryptographie). Ce qui suit a été écrit puis vérifié — en distinguant honnêtement ce qui est prouvé de ce qui ne
+l'est pas encore (cf. *En toute transparence*) :
 
 - **Identité = ta clé.** Chaque message est signé : impossible de se faire passer pour un autre, aucun annuaire
   central ne décide qui tu es. Identité **persistante** entre sessions (comme un vrai compte, mais à toi).
@@ -83,6 +90,7 @@ cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 d
 
 ## Pour aller plus loin
 
+- **L'état du projet — réalisations, combats, murs, doutes** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
 - **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
 
