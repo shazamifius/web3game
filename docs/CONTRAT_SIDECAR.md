@@ -154,3 +154,63 @@ f32 r, g, b     // couleur du skin
   UE re-`HELLO` et reçoit le prochain `SNAPSHOT`. Pas d'état à resynchroniser (snapshots complets).
 - **`web3core` pas encore extrait** : on ne l'extrait PAS au palier 1 (raccourci propre : `jeu sidecar` n'importe
   pas Bevy). Le 1er vrai besoin d'extraction = quand l'orbe (palier 4) traînera des types Bevy.
+
+---
+
+## 7. GEL v2 — l'AoI-PERTINENCE (première passe figée le 26 juin 2026)
+
+> **Pourquoi maintenant.** Le redesign AoI (D29/D30) change CE QUE le cœur met dans le `SNAPSHOT` (avatars par
+> **PERTINENCE**, plus par distance) et ajoute un **niveau de détail** par avatar. On fige ici les parties STABLES
+> pour débloquer les deux fronts en parallèle (mon AoI headless ∥ la map/audio) ; on **DIFFÈRE** ce qui dépend
+> encore du design (le message « foule »). *Tes tâches 3D/audio n'attendent PAS ce gel — il ne bloque que le
+> branchement des avatars sur le nouvel AoI.*
+
+### 7.1 Ce qui est FIGÉ maintenant (stable, branchable)
+
+**(a) `AvatarRec v2` = 80 octets** (l'ancien 76 + 1 octet `lod` + 3 réservés pour l'alignement 4 o / le futur) :
+```
+u8  id[32]       // identité = clé pub (inchangé)
+f32 x, y, z      // position
+f32 vx, vy, vz   // vitesse (UE interpole/extrapole)
+f32 yaw, pitch   // orientation corps/tête
+f32 r, g, b      // couleur du skin
+u8  lod          // 0 = FOCUS (vrai mesh détaillé) · 1 = AWARE (imposteur léger)
+u8  reserved[3]  // padding + extension future (à mettre à 0)
+```
+
+**(b) Négociation de version (zéro casse) :** UE envoie `HELLO version=2` → le cœur répond en **`SNAPSHOT_V2`
+(type `131`)**, AvatarRec 80 o. `version=1` garde l'ancien `SNAPSHOT` (type `129`, 76 o) **intact**. Nouveau KIND =
+défaut byte-pour-byte préservé (même patron que `KIND_CELL_SUMMARY_V2` du wire réseau, cf. `docs/ETAT.md` C-sécu-2).
+
+**(c) Règle d'appartenance + despawn — LE point qui change pour UE.** Le `SNAPSHOT_V2` contient les avatars que le
+**CŒUR juge PERTINENTS** (FOCUS + AWARE), bornés par le budget — **PAS les plus proches**. Donc côté Unreal :
+- **Despawn = absence de K snapshots d'affilée, JAMAIS par distance locale.** Un avatar peut quitter le snapshot
+  parce qu'il est devenu *non pertinent*, même s'il est proche — UE ne décide PAS ça tout seul.
+- **Apparition à N'IMPORTE QUELLE distance :** un avatar peut surgir loin (tiré par pertinence — un voisin lui parle).
+- **Le `lod` peut changer d'un snapshot à l'autre** pour un même id (net ↔ imposteur) → UE bascule le rendu **sans
+  re-spawn** (même acteur, mesh ou imposteur selon `lod`).
+
+### 7.2 Ce qui est DIFFÉRÉ (figé seulement APRÈS le headless AoI)
+
+**Le message `CROWD` (type `132` réservé) — la « +1 » de notre modèle « 32 + 1 ».** La marée lointaine n'est PAS une
+liste d'avatars individuels : c'est un **agrégat** (champ de densité / flux / centroïdes de clusters + comptes). Sa
+forme EXACTE attend que le code AoI me dise la bonne représentation — **figer ça maintenant = risque de figer le
+mauvais truc.** À spécifier ici quand le headless aura tranché.
+
+### 7.3 ⚠⚠ LE GARDE-FOU QUI PRIME SUR TOUT — le budget de RÉCEPTION (D3, « le ~48 Ko/s »)
+
+> **Le rappel à garder SOUS LES YEUX en concevant le wire.** Tout ce qu'on ajoute au `SNAPSHOT`/`CROWD` coûte des
+> octets **REÇUS** — et un lien faible se **NOIE en réception**. C'est le cœur de la vision (inclusivité, Principe 4).
+
+- **Le chiffre :** en foule dense, un joueur **REÇOIT ~43 Ko/s** (jusqu'à 32 voisins qui lui émettent — **D3 🔴**).
+  L'AoI borne ce que TU **émets**, **PAS ce que tu reçois**. *(À NE PAS confondre avec les ~49 Ko/s du `SNAPSHOT`
+  sidecar §4 : ceux-là sont en **LOOPBACK même-machine** = gratuits ; le vrai mur, c'est le débit **REÇU sur le
+  VRAI réseau** entre joueurs.)*
+- **La règle de conception qui en découle :** le LOD (imposteur), l'agrégat `CROWD`, et l'**AoI BILATÉRALE** (le
+  faible **annonce son budget reçu**, les émetteurs s'y plient) existent **précisément pour BORNER les octets reçus**.
+  Le test de TOUT ajout au format : *« est-ce que ça tient dans le budget de réception du plus FAIBLE ? »* — pas du
+  plus fort.
+- **Comment le budget reçu est tenu** (pas par compression du record — il reste à 80 o fixe) : **(1)** MOINS
+  d'avatars en FOCUS ; **(2)** la foule en `CROWD` **AGRÉGÉ** (borné quel que soit N — JAMAIS « 1 entrée par
+  personne ») ; **(3)** l'AoI bilatérale ; **(4)** option de réglage : rafraîchir les `AWARE` à **plus basse
+  cadence** que les `FOCUS` (sans changer le format).
