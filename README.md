@@ -39,7 +39,8 @@ atteinte (voir « En toute transparence »).*
 
 Le cœur est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance externe est la bibliothèque
 de cryptographie). Ce qui suit a été écrit puis vérifié — en distinguant honnêtement ce qui est prouvé de ce qui ne
-l'est pas encore (cf. *En toute transparence*) :
+l'est pas encore (cf. *En toute transparence*). **118 tests automatiques, 0 warning** ; chaque chiffre est
+**reproductible** (détail mesuré + commandes : [revue chiffrée](docs/etat-du-projet.md)) :
 
 - **Identité = ta clé.** Chaque message est signé : impossible de se faire passer pour un autre, aucun annuaire
   central ne décide qui tu es. Identité **persistante** entre sessions (comme un vrai compte, mais à toi).
@@ -48,9 +49,9 @@ l'est pas encore (cf. *En toute transparence*) :
   vrais réseaux sur Internet**, pas en laboratoire.
 - **Résistance aux attaques, testée pour de vrai.** Des simulations d'attaques (Sybil, éclipse, *framing*,
   inondation de gossip) sont jouées contre le réseau : l'essaim tient, les tricheurs sont mis en sourdine.
-- **Perception de foule à coût borné.** Chacun ne dialogue à plein débit qu'avec un **petit voisinage** et perçoit
-  la foule lointaine en basse fidélité — le coût réseau reste **borné, indépendant du nombre total**. En
-  simulation, la perception est restaurée à **~87 % à 1 000 nœuds, à débit reçu plat.**
+- **Perception de foule à coût borné.** Chacun ne dialogue à plein débit qu'avec un **petit voisinage** (~32) et
+  perçoit la foule lointaine en basse fidélité — le coût reste **borné, indépendant du nombre total** : **~34 Ko/s
+  par nœud (~0,27 Mbit/s)**. En simulation, la perception est restaurée à **~87 % à 1 000 nœuds, à débit reçu plat.**
 - **Indépendant du moteur 3D.** Le cœur réseau est **agnostique** : la preuve en a été faite en réunissant **deux
   moteurs différents (Bevy et Unreal) dans le même espace partagé** via un pont local (*sidecar*). C'est ce qui
   rend la plateforme multi-moteur crédible.
