@@ -1,95 +1,91 @@
-# web3game — un espace social en pair-à-pair (P2P)
+# web3game
+
+**Un moteur pair-à-pair pour des mondes partagés massifs — sans serveur de jeu central.**
 
 [![tests](https://github.com/shazamifius/web3game/actions/workflows/tests.yml/badge.svg)](https://github.com/shazamifius/web3game/actions/workflows/tests.yml)
 
-> **Statut : R&D personnelle, solo, très expérimentale. Work in progress.**
-> Rien n'est prouvé à grande échelle. L'état honnête et détaillé vit dans
-> [`docs/ETAT.md`](docs/ETAT.md) ; le plan complet dans [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md) (un index).
-
-## C'est quoi ?
-
-Une R&D pour bâtir une **plateforme de jeux en pair-à-pair** : on rejoindrait des **mondes partagés
-sans aucun serveur de jeu central** — chaque joueur est un nœud du réseau. La direction visée (façon
-**gamejolt**, pas Roblox ni VRChat) : un launcher qui héberge des mondes faits dans **n'importe quel
-moteur** (Unreal/Unity/Godot), qu'on découvre dans un hub 3D et que **n'importe qui** pourra un jour
-publier. Le **cœur réseau P2P** (ce dépôt, en Rust) est le **liant commun** à tous ces mondes.
-
-Le **tout premier monde** est un **espace social** (dans l'esprit de VRChat, mais P2P) : c'est par lui
-qu'on teste si « ça vit » vraiment, à plusieurs, et qu'on débusque les bugs.
-
-La vraie question qu'explore ce dépôt : **le « web3 » au sens décentralisé — pas de serveur central,
-une identité qu'on possède vraiment — peut-il *réellement* fonctionner pour un monde vivant à plusieurs,
-ou n'est-ce qu'une utopie ?** On ne répond pas par des slogans : on l'écrit en **Rust**, octet par octet,
-on l'attaque nous-mêmes, et on tient un inventaire honnête de ce qui tient et de ce qui ne tient pas.
-
-## L'architecture P2P, en clair
-
-Tout le réseau est **fait main, sans boîte noire** (la seule dépendance « magique » est la
-bibliothèque de cryptographie). Quatre idées suffisent à comprendre :
-
-- **Ton identité = ta clé.** Pas de compte sur un serveur : ton identité est une **clé
-  cryptographique** que tu gardes (comme une clé SSH). Chaque message que tu envoies est **signé** ;
-  personne ne peut se faire passer pour toi, et aucun annuaire central ne « décide » qui tu es.
-- **Pas de serveur de jeu.** Les joueurs s'envoient leurs positions **directement** les uns aux
-  autres. Un petit serveur de *rendez-vous* sert juste à faire les **présentations** (percer les
-  box/NAT pour ouvrir une connexion directe) ; une fois les présentations faites, on pourrait
-  l'éteindre, la partie continue.
-- **On ne parle qu'à ses voisins (AoI).** Si chacun parlait à tout le monde, ça exploserait à
-  grande échelle. Donc chacun n'échange à plein débit qu'avec un **petit voisinage** (~32), et
-  perçoit la **foule lointaine** à basse fidélité — coût borné, indépendant du nombre total.
-- **« Own + Shields » pour les objets partagés.** Pour tout objet contesté (une balle, une porte),
-  **un seul** joueur fait autorité à un instant donné (l'« Own ») ; les autres vérifient et peuvent
-  le **destituer** s'il triche. L'autorité **migre** si l'Own part. Pas de serveur arbitre.
-
-> Le cœur réseau est en **Rust pur**, **sans aucun moteur 3D**. La **présentation** se fait dans
-> **Unreal Engine** (un client mince branché au cœur par une socket locale, le *sidecar*). La
-> *logique* réseau, elle, resterait la même quel que soit le moteur.
-
-## Où on va (la boussole)
-
-- **À terme :** réunir un **énorme événement en P2P sans serveur** — la boussole est **~55 000
-  personnes** (la jauge de la plus grande salle de concert au monde), un nombre jamais réuni dans un
-  seul espace de jeu. *C'est une boussole, pas une échéance* : on bâtit l'archi qui *pourrait* y aller.
-- **La plateforme visée** (vision long terme) : un launcher façon **gamejolt** qui embarque plusieurs
-  moteurs (Unreal/Unity/Godot) ; on navigue dans un hub 3D parmi des jeux que **n'importe qui** pourra
-  un jour créer. Détail : [`docs/VISION.md`](docs/VISION.md).
-- **Tout de suite :** un **premier petit jeu** simple, vite installable, jouable à quelques amis sur
-  la même map — pour récolter un maximum de retours, bugs et failles. (« L'île aux étoiles » :
-  ramasser des étoiles, des cristaux, faire évoluer son avatar… *lentement*, pour pousser à se parler.)
-
-## Ce qui est prouvé / pas encore
-
-Par honnêteté (c'est une règle du projet), sans rien arrondir — détail dans [`docs/ETAT.md`](docs/ETAT.md)
-et [`docs/DOUTES.md`](docs/DOUTES.md) :
-
-- **✅ Prouvé** (mesuré, tests à l'appui) : identité = clé + états signés (anti-usurpation/rejeu) ;
-  **hole-punching NAT réel** (+ relais pour les NAT symétriques, vérifié en mobile réel) ; anti-triche
-  (Sybil-framing, gossip-flood, orbe) ; **perception de foule** restaurée à ~87 % à 1000 nœuds, à débit
-  reçu plat ; identité persistante ; présence « vivante » des avatars dans Unreal.
-- **⚠️ Pas encore** : **pas « 55 000 prouvé »** (mesuré jusqu'à ~1000-2000, au-delà = extrapolation) ;
-  « sans serveur » garde un astérisque (l'amorçage passe par un rendez-vous) ; positions en clair (pas
-  encore de chiffrement bout-à-bout) ; **chat vocal de proximité** pas encore là.
-
-## Pour aller plus loin
-
-- **L'état courant + la prochaine action** : [`docs/ETAT.md`](docs/ETAT.md) ⭐
-- **Le plan complet** (index de tous les docs) : [`FEUILLE_DE_ROUTE.md`](FEUILLE_DE_ROUTE.md)
-- **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
-- **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-
-## Glossaire express
-
-- **P2P** : les joueurs se parlent directement, sans serveur au milieu.
-- **NAT** : la box Internet qui cache et bloque les connexions entrantes.
-- **UDP** : envoi de paquets « sans accusé de réception » (rapide, mais on peut
-  perdre des paquets — parfait pour un jeu).
-- **Jitter** : les paquets n'arrivent pas à intervalles réguliers.
-- **Interpolation** : afficher une position intermédiaire entre deux paquets
-  pour un mouvement fluide.
-- **AoI (Area of Interest)** : ne se synchroniser qu'avec les joueurs proches.
-- **BFT** : tolérance aux pannes/traîtres par vote majoritaire.
-- **Sybil** : un attaquant crée plein de faux nœuds pour fausser les votes.
+> Bâtir l'OASIS, en pair-à-pair : un univers de jeux où l'on se retrouve à plusieurs, **sans serveur central**,
+> avec une **identité qu'on possède vraiment**. Une infrastructure réseau écrite à la main, attaquée par
+> nous-mêmes, et documentée sans rien arrondir.
 
 ---
 
-*Licence : Tous droits réservés (voir [`LICENSE`](LICENSE)).*
+## La vision
+
+L'objectif est ambitieux et assumé : **un « OASIS » à la française** — au sens de *Ready Player One* : un univers de
+mondes partagés où l'on retrouve ses amis, où l'on passe d'un jeu à l'autre, et que **n'importe qui pourra un jour
+enrichir de son propre monde** (Unreal, Unity, Godot…).
+
+La différence, c'est l'**architecture** : pas de serveur de jeu central qui fait autorité. Les joueurs forment
+eux-mêmes le réseau. Ce que ça change concrètement :
+
+- **Pas de coût serveur qui explose avec le succès** — l'infrastructure, ce sont les joueurs.
+- **Une identité que tu possèdes** — une clé cryptographique (comme une clé SSH), pas un compte sur la machine
+  d'un tiers. *« web3 » est ici à prendre au sens **décentralisé / identité possédée** — **pas** un token, pas de crypto.*
+- **Pas de point de défaillance unique** qui éteint tout le monde d'un coup.
+
+La **boussole d'échelle** est volontairement vertigineuse : pouvoir réunir **~55 000 personnes** dans un même espace
+(la jauge de la plus grande salle de concert du monde) — un nombre qu'**aucun jeu ne tient aujourd'hui** : les MMO
+découpent le monde en serveurs, Fortnite réunit ~100 joueurs par partie. *C'est un cap qui guide l'architecture,
+pas une métrique déjà atteinte (voir « En toute transparence » plus bas).*
+
+## Ce qui est déjà construit (et éprouvé)
+
+Le cœur n'est pas un slide : c'est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance
+« magique » est la bibliothèque de cryptographie). Ce qui tourne et a été vérifié :
+
+- **Identité = ta clé.** Chaque message est signé : impossible de se faire passer pour un autre, aucun annuaire
+  central ne décide qui tu es. Identité **persistante** entre sessions (comme un vrai compte, mais à toi).
+- **Traversée NAT réelle, jusqu'au cas le plus dur.** Deux humains derrière leurs box se connectent en direct ;
+  et quand c'est impossible (NAT symétrique mobile 4G/5G), un **relais** prend le relais — **prouvé entre deux
+  vrais réseaux sur Internet**, pas en laboratoire.
+- **Résistance aux attaques, testée pour de vrai.** Des simulations d'attaques (Sybil, éclipse, *framing*,
+  inondation de gossip) sont jouées contre le réseau : l'essaim tient, les tricheurs sont mis en sourdine.
+- **Perception de foule à coût borné.** Chacun ne dialogue à plein débit qu'avec un **petit voisinage** et perçoit
+  la foule lointaine en basse fidélité — le coût réseau reste **borné, indépendant du nombre total**. En
+  simulation, la perception est restaurée à **~87 % à 1 000 nœuds, à débit reçu plat.**
+- **Indépendant du moteur 3D.** Le cœur réseau est **agnostique** : la preuve en a été faite en réunissant **deux
+  moteurs différents (Bevy et Unreal) dans le même espace partagé** via un pont local (*sidecar*). C'est ce qui
+  rend la plateforme multi-moteur crédible.
+- **Présence vivante.** Les avatars distants bougent de façon fluide et « habitée » dans Unreal (interpolation +
+  vie procédurale), même sous perte de paquets.
+
+> Le cœur réseau est en **Rust pur, sans aucun moteur 3D**. La présentation se fait dans **Unreal Engine** (un
+> client léger branché par une socket locale). La logique réseau resterait la même avec n'importe quel moteur.
+
+## La feuille de route
+
+- **🟢 Phase 1 — le cœur réseau : faite.** Crypto/identité, découverte, traversée NAT + relais, anti-triche,
+  architecture de foule, pont multi-moteur. La fondation tient.
+- **🟡 Phase 2 — le passage à l'échelle : en cours.** Rendre la foule réellement *perçue et vivante*, durcir la
+  robustesse face aux tricheurs, **jusqu'à un premier jeu jouable et partageable**.
+- **⚪ Phase 3 — la plateforme.** Le hub, les mondes téléchargeables, l'ouverture à des créateurs tiers — l'OASIS.
+
+## En toute transparence
+
+C'est une **règle du projet** : on écrit ce qui est prouvé **et** ce qui ne l'est pas. La crédibilité vient de là.
+
+- **L'échelle « 55 000 » n'est pas encore mesurée directement** : les coûts sont mesurés jusqu'à ~1 000–2 000
+  nœuds en simulation ; au-delà, c'est de l'architecture + de l'extrapolation, pas une preuve.
+- **« Sans serveur » garde un astérisque honnête** : l'amorçage passe encore par un point de rendez-vous (pour les
+  présentations uniquement) ; la décentralisation complète de cette dernière brique est un chantier à venir.
+- **Le chiffrement bout-à-bout n'est pas encore là** : aujourd'hui les positions circulent en clair (la signature
+  garantit l'authenticité, pas le secret) ; c'est planifié.
+- **Le test décisif reste à faire dehors, avec de vrais joueurs** : prouver que l'espace est *vivant* à plusieurs.
+
+## Conçu avec l'IA — assumé, et revendiqué
+
+Ce projet est imaginé et construit par son auteur **en binôme avec Claude** (l'IA d'Anthropic). Ce n'est pas un
+détail qu'on cache — c'est une partie de l'histoire : l'IA est le **levier** qui permet à un fondateur seul de
+concevoir et d'écrire, octet par octet, une infrastructure réseau de cette ambition. Chaque ligne est **relue,
+comprise et assumée par un humain** — mais ce projet, dans cette forme et à ce rythme, **n'aurait pas existé sans
+cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 du dépôt : **l'honnêteté avant tout.**
+
+## Pour aller plus loin
+
+- **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
+
+---
+
+*Auteur : [shazamifius](https://github.com/shazamifius). Licence : **Tous droits réservés** (voir [`LICENSE`](LICENSE)).*

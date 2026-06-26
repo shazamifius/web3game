@@ -1,7 +1,7 @@
-# 🏗️ ARCHITECTURE — l'organisation du code & la cible long terme
+# ARCHITECTURE — l'organisation du code & la cible long terme
 
-> Organisation des fichiers (src/), l'en-tête de paquet commun, et l'architecture cible « Own + Shields » (autorité par objet, BFT, relais).
-> *(Déplacé depuis l'ancien `README.md` le 25 juin 2026 — le README est redevenu une intro simple ; les détails vivent ici.)*
+> Organisation des fichiers (`src/`), l'en-tête de paquet commun, et l'architecture cible « Own + Shields »
+> (autorité par objet, BFT, relais).
 
 ## Organisation du code (`src/`)
 
@@ -36,7 +36,7 @@ src/
 
 > Le **rattrapage de latence** (interpolation, prédiction, ressort amorti) qui vivait dans
 > `net/netcode/` côté client Bevy a été **retiré** : c'est désormais Unreal qui interpole
-> les avatars distants à partir de la vitesse reçue (cf. [`CONTRAT_SIDECAR.md`](CONTRAT_SIDECAR.md) §4).
+> les avatars distants à partir de la vitesse reçue (via le pont *sidecar*).
 
 **En-tête commun à TOUS les paquets** : octet 0 = `type` (KIND), octet 1 =
 `version du protocole` (`PROTO_VERSION`). Un récepteur d'une autre version rejette

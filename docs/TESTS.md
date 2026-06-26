@@ -1,31 +1,27 @@
-# 🧪 COMMENT LANCER & TESTER
+# COMMENT LANCER & TESTER
 
-> Lancer le cœur headless (rendezvous/sidecar/bot/sim), tester un vrai mauvais réseau (tc netem), tester les NAT.
-> *(Doc éclaté depuis l'ancienne `FEUILLE_DE_ROUTE.md` le 25 juin 2026 — voir l'index `FEUILLE_DE_ROUTE.md` pour la carte complète.)*
+> Lancer le cœur headless (rendezvous/sidecar/bot/sim), tester un vrai mauvais réseau (`tc netem`), tester les NAT.
 
-## E. Comment tester POUR DE VRAI avec une seule machine (ta question D1)
+## Tester dans des conditions réseau réelles, sur une seule machine
 
-Tu as dit « on n'a qu'une seule machine, je ne sais pas comment faire ». **Bonne
-nouvelle : une seule machine suffit.** Linux sait simuler une mauvaise connexion :
+**Une seule machine suffit** pour confronter le réseau au réel : Linux sait simuler une mauvaise connexion.
 
 - **`tc netem`** (sur l'interface loopback `lo`) ajoute **latence, jitter, perte,
-  ré-ordonnancement** à TOUT le trafic localhost. On lance notre `sim` derrière, et nos
-  centaines de nœuds se parlent soudain « comme sur Internet ». C'est exactement fait
-  pour ça. (Au chap. 7 je t'écris `tools/sim-netem.sh` qui l'applique puis le retire
-  proprement, comme `sim-cool.sh` le fait pour les ventilos.)
+  ré-ordonnancement** à TOUT le trafic localhost. On lance `sim` derrière, et les
+  centaines de nœuds se parlent soudain « comme sur Internet ». (`tools/sim-netem.sh`
+  l'applique puis le retire proprement.)
 - **`tc tbf`** limite le débit (pour simuler les « quelques Ko/s »).
 - **`ip netns`** (namespaces réseau) crée de « fausses machines » isolées derrière de
   « faux NAT » sur le même PC — c'est déjà ce que fait `tools/test-nat.sh`.
 
-Donc : **on n'a pas besoin de 2 machines** pour confronter au réel. Une seule + netem =
-un labo réseau complet. C'est ça qui transforme nos tests « localhost » en vraie preuve.
+Donc : **pas besoin de 2 machines** pour confronter au réel. Une seule + netem =
+un labo réseau complet, qui transforme les tests « localhost » en vraie preuve.
 
 ---
 
 
 ---
 
-## Lancer le cœur (depuis l'\''ancien README)
 
 ## Comment lancer le cœur (headless)
 
@@ -35,7 +31,7 @@ construit dans un environnement reproductible (`nix-shell`) — se placer **dans
 dossier du projet d'abord** :
 
 ```fish
-cd "/home/shaza/Documents/projet web 3"
+cd web3game
 ```
 
 **Le pont vers Unreal** (le cas normal). On lance le **rendez-vous** (l'annuaire), puis
