@@ -118,5 +118,7 @@ perso. Pareil pour le *signaling* (STUN/TURN) qui aide à percer les NAT.
   de celui qui rediffuse. La vraie réponse : l'**AoI** (tu ne parles qu'à tes ~10–100
   voisins, **indépendamment de N**) + des Owns/relais **locaux**, jamais un hub.
 
+> **⚙️ Parcours « technique » →** suite : les chantiers [réseau](chantier-reseau.md) · [foule dense](chantier-foule.md) · [robustesse](chantier-robustesse.md).
+
 ---
 

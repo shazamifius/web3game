@@ -179,3 +179,5 @@
 
 *Ce registre est vivant : on y ajoute un doute dès qu'on en découvre un, et la réalité — une mesure, un test, un
 vrai joueur — a toujours raison contre ce document.*
+
+> **🔎 Parcours « juger vite » →** étape suivante : **[Le journal de développement](journal.md)**.

@@ -90,15 +90,24 @@ concevoir et d'écrire, octet par octet, une infrastructure réseau de cette amb
 comprise et assumée par un humain** — mais ce projet, dans cette forme et à ce rythme, **n'aurait pas existé sans
 cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 du dépôt : **l'honnêteté avant tout.**
 
-## Pour aller plus loin
+## Par où commencer — choisissez votre parcours
 
-- **Le « sans serveur », en clair** : [`docs/comprendre-le-p2p.md`](docs/comprendre-le-p2p.md)
-- **L'état du projet — réalisations, combats, murs, doutes (chiffré)** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
-- **Le registre des doutes (le cœur de la démarche)** : [`docs/doutes.md`](docs/doutes.md)
-- **Le détail des chantiers** : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [robustesse](docs/chantier-robustesse.md)
-- **Le journal de développement (comment le cœur a été bâti)** : [`docs/journal.md`](docs/journal.md)
-- **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
+Selon qui vous êtes, voici trois chemins de lecture (chaque document renvoie au suivant) :
+
+**🌱 Vous découvrez le pair-à-pair / le « web3 décentralisé »**
+1. [Le « sans serveur », en clair](docs/comprendre-le-p2p.md) — l'idée, sans jargon
+2. [L'état du projet, chiffré](docs/etat-du-projet.md) — ce qui marche, mesuré
+3. [Le registre des doutes](docs/doutes.md) — les questions encore ouvertes
+
+**⚙️ Vous êtes technique (vous voulez le code et les choix d'architecture)**
+1. [L'architecture & l'organisation du code](docs/ARCHITECTURE.md)
+2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [robustesse](docs/chantier-robustesse.md)
+3. [Comment lancer & tester](docs/TESTS.md) — rejouer les mesures vous-même
+
+**🔎 Vous voulez juger vite (ce qui est prouvé, ce qui ne l'est pas)**
+1. [L'état du projet, chiffré](docs/etat-du-projet.md) — les mesures et leurs limites
+2. [Le registre des doutes](docs/doutes.md) — la frontière honnête
+3. [Le journal de développement](docs/journal.md) — comment on en est arrivé là
 
 ---
 

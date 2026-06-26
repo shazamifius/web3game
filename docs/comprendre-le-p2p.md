@@ -101,3 +101,5 @@ limites, c'est une règle du projet — cf. les [murs assumés](etat-du-projet.m
 - [L'état du projet — réalisations, murs, doutes, chiffres](etat-du-projet.md)
 - [L'architecture du code](ARCHITECTURE.md)
 - [Comment lancer & tester](TESTS.md)
+
+> **🌱 Parcours « découverte » →** étape suivante : **[L'état du projet, chiffré](etat-du-projet.md)**.

@@ -84,3 +84,5 @@ l'authenticité, pas le secret). Le chiffrement de transport par paire (échange
 ---
 
 *Faits techniques tenus à jour au fil des mesures. Les chiffres de coût et de débit : [revue de l'état](etat-du-projet.md).*
+
+> **⚙️ Parcours « technique » →** chantier suivant : **[la foule dense](chantier-foule.md)**.

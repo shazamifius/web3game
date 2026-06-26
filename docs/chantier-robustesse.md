@@ -88,3 +88,5 @@ un maître cohérent** des deux côtés.
 ---
 
 *Faits techniques tenus à jour au fil des mesures. Les chiffres de coût et de débit : [revue de l'état](etat-du-projet.md).*
+
+> **⚙️ Parcours « technique » →** dernière étape : **[comment lancer & tester](TESTS.md)**.

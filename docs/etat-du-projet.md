@@ -107,3 +107,5 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 - [Architecture & organisation du code](ARCHITECTURE.md) — les modules, le format d'un paquet, l'archi cible.
 - [Comment lancer & tester](TESTS.md) — toutes les commandes ci-dessus, en détail.
 - [Le « sans serveur », en clair](comprendre-le-p2p.md) — l'idée du projet expliquée en mots simples.
+
+> **🌱 Parcours « découverte » →** étape suivante : **[Le registre des doutes](doutes.md)**.
