@@ -79,6 +79,15 @@ f32 r, g, b     // couleur du skin
 
 ## 4. Cadence & responsabilités
 
+> **⚠ ÉVOLUTION PHASE 2 — À GELER ICI AVANT LE TRAVAIL PARALLÈLE map/AoI (décidé le 26 juin 2026).** Le `SNAPSHOT`
+> v1 envoie la liste COMPLÈTE des distants frais (sélection par proximité/fraîcheur). Le **redesign AoI-PERTINENCE**
+> (D29/D30) change la SÉMANTIQUE : la MEMBRE du snapshot devient **pilotée par la PERTINENCE** (voisins + partenaires
+> d'interaction transitifs + social), et chaque `AvatarRec` gagnera un **niveau de LOD** (`détaillé` / `conscient` /
+> `imposteur`) pour qu'UE rende les tiers (net → imposteur → champ de foule). **Conséquence pour UE : la logique
+> spawn/despawn d'avatars suit la PERTINENCE, plus la DISTANCE** — un avatar peut SURGIR parce qu'un voisin lui parle,
+> et un avatar proche peut RESTER en imposteur. À figer (format du champ LOD + règle d'appartenance) AVANT que les
+> deux fronts (mon AoI headless ∥ ta map/assets) ne courent, sinon on bâtit deux moitiés qui ne s'emboîtent pas.
+
 - **Rust** émet un `SNAPSHOT` à **20 Hz** (`SEND_HZ`, [state.rs:12](src/net/netcode/state.rs#L12)) : la liste
   COMPLÈTE des distants connus frais (timeout `REMOTE_TIMEOUT` = 5 s). Pas de delta v1 (simple d'abord ; à 20 Hz
   × ~32 voisins × 76 o ≈ 49 Ko/s en loopback = négligeable).

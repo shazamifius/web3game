@@ -35,6 +35,16 @@
 > Le « pourquoi » au-dessus du netcode. À garder comme boussole du travail Unreal ; on n'en code qu'un
 > petit bout à la fois (preuve d'abord), mais c'est CE but qui dit dans quel ordre attaquer.
 
+### ⭐ L'ÉTOILE VRAIE — l'OASIS (*Ready Player One*) — posé le 26 juin 2026
+Le cap ultime, **assumé** : recréer l'esprit de l'**OASIS de *Ready Player One*** — un univers partagé massif où
+**n'importe qui bâtit son monde**. La **plateforme façon gamejolt** (ci-dessous) et le **1er jeu** sont des
+**MARCHES** vers cette étoile, pas le but. *Conséquence architecturale FONDATRICE (→ principe, cf.
+[PRINCIPES.md](PRINCIPES.md) A.8) :* puisque n'importe qui bâtira n'importe quel monde, **le réseau s'ADAPTE aux
+créateurs — jamais l'inverse** ; toute la charge (échelle, géométrie, densité) est sur l'archi adaptative, qui
+DÉGRADE gracieusement mais ne BLOQUE ni n'EXCLUT jamais. *Ton :* on reste **ULTRA humble en public** (on sous-vend) ;
+**mais un objectif ne se sous-vend pas — il s'accomplit.** L'ambition RPO est assumée dans la doc, l'humilité est
+dans le ton.
+
 ### La plateforme (vision long terme — PAS un clone)
 Ce n'est **ni Roblox, ni VRChat, ni un Fortnite Creator**. La référence est **gamejolt** : un **launcher officiel**
 (sur Unreal pour l'instant) qui, en réalité, **embarque plusieurs moteurs** (Unity, Unreal, Godot — **une seule
@@ -45,6 +55,10 @@ qui crée le sien**). Entrer dans un jeu = le launcher **télécharge le monde**
 P2P (ce dépôt) est le liant commun** à tous ces mondes, quel que soit le moteur.
 
 ### Le 1er jeu — « l'île aux étoiles » (le strict minimum d'abord)
+> **Statut précisé le 26 juin (D32) : c'est d'abord un INSTRUMENT**, pas « le produit ». Il fait venir des humains
+> pour MESURER le substrat (la métrique reine = **latence ≤ 500 ms = vivant**). Le **FUN n'est pas notre métier de
+> R&D** — il se BÂTIT (on trouve du fun même dans un jeu buggé à 500 ms) et viendra avec le POLISH, quand l'instrument
+> deviendra un produit public. On ne le « teste » donc pas ; on teste le réseau À TRAVERS lui.
 - **Cadre** : une grande île vivante (faune, flore, biomes — arbres, fleurs). On est **humain** au départ.
 - **Boucle** : des **étoiles tombent** (sur terre ou dans l'eau) → on les **ramasse** → elles donnent des **cristaux**.
 - **Usage 1 des cristaux — le PUITS MAGIQUE** : échanger ses cristaux pour **changer de race animale** *au hasard*,

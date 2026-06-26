@@ -7,7 +7,9 @@
 
 1. **Aucun serveur de jeu central.** Un rendez-vous d'annuaire est toléré, mais il ne
    doit jamais devenir l'arbitre du jeu ni un point de confiance aveugle. À terme,
-   même lui doit se décentraliser.
+   même lui doit se décentraliser. *(Précisé le 26 juin, D10 : honnêtement ce ne sera
+   JAMAIS « zéro serveur » — l'infra restera bénévole/BitTorrent pondérée par l'estime ;
+   le claim exact est **« pas de serveur central AUTORITAIRE »**, pas « sans serveur ».)*
 2. **Contrôle maximal, tout fait main.** Une seule boîte noire assumée : la crypto
    (`ed25519-dalek`). Tout le reste, on le comprend octet par octet.
 3. **Répartition de la puissance = pilier.** Les forts aident les faibles (système de
@@ -32,6 +34,23 @@
    « devinettes » : FAUX. Le vrai lot à dériver du réel ≈ **6** — `SEND_BUDGET_HZ`, `MAX_NEIGHBORS`, `K_FOCUS`,
    `MAX_FOCUS_DETAIL`/`MAX_AWARE`, `RELAY_RATE`/`MAX_RELAY_FANOUT` — tous des tailles de **focus/budget/relais**,
    donc **le même fix que D4** (dériver de la capacité mesurée).
+8. **Réseau ADAPTATIF — la charge est sur le RÉSEAU, JAMAIS sur le créateur.** *(Posé le 26 juin 2026, cap
+   RPO/OASIS — cf. [VISION.md](VISION.md).)* N'importe qui bâtira n'importe quel monde (géométrie, lignes de vue,
+   densité quelconques) → le netcode **ne pose AUCUNE contrainte au créateur** ; il s'adapte au matériel/lien de
+   CHAQUE joueur (du « 10 personnes + foule horrible mais jouable » au « 100 personnes + foule ultra-organisée »).
+   *Borne honnête :* adaptatif = **dégradation gracieuse jusqu'à la limite physique**, PAS capacité infinie — on ne
+   BLOQUE jamais, on ne CASSE jamais, on n'EXCLUT jamais ; on DÉGRADE. *Corollaire « 32 + 1 » :* du point de vue
+   d'un joueur, le monde est toujours **~32 voisins NETS + 1 foule AGRÉGÉE**, avec **visibilité MUTUELLE pour les
+   paires qui interagissent** (sinon A salue B qui ne voit pas A). *Conséquence directe :* la sélection des voisins
+   doit passer de « les plus PROCHES » à « les plus PERTINENTS » (D29) — c'est le chantier d'ouverture de la Phase 2.
+9. **CORROBORER une déclaration, ne jamais la croire sur parole — et PAS DE CHEF.** *(Récolte du 26 juin.)* Un
+   SEUL nœud ne fait jamais FOI sur un GROUPE (résumé de foule, capacité d'un parent, état persistant) : on
+   RECOUPE (K observateurs indépendants et/ou perception directe). **Mécanisme unifiant proposé : l'ESTIME
+   CORROBORÉE** — « naître invisible, GAGNER sa visibilité ; les pairs recoupent » → répond d'un coup à **D6**
+   (Sybil sans PoW), **D26** (résumé menteur), **D11** (repreneur d'orbe), **D28** (état forgé), **D4/D5** (capacité
+   mesurée). ⚠ Un mécanisme qui porte 6 défenses = **point unique de défaillance conceptuelle** (à garder en
+   lumière). **Et NE PAS élire de chef** (de cellule/cluster) : MESURÉ en 8.3★ comme le **mur dominant** (perception
+   91 %→10 % quand on exigeait `émetteur == hôte`). Toute conception de foule gravite vers un chef ; la mesure dit NON.
 
 ---
 

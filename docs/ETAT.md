@@ -5,6 +5,46 @@
 
 ## 0. ▶️ POINT DE REPRISE (lis ça en premier, surtout si nouvelle session)
 
+> ### 🧭 REPRISE 26 JUIN 2026 — LES PHASES + LA PROCHAINE ACTION
+> *(Lis CE bloc en premier ; il SUPERSÈDE les « prochaines actions » datées plus bas, devenues archive. Issu d'une
+> longue session de doc « tous les doutes 1 à 1 » — détail des réponses : [DOUTES.md](DOUTES.md) § RÉPONSES 26 juin.)*
+>
+> **Le projet en 3 PHASES (cadrage posé avec l'utilisateur le 26 juin) :**
+> - **🟢 PHASE 1 — le CŒUR RÉSEAU (R&D) = FAITE.** Crypto/identité, gossip/découverte, AoI + foule (débit borné),
+>   anti-triche (Sybil/éclipse/framing/orbe), NAT réel + relais, dé-Bevy, **sidecar Unreal (paliers 0→3 PROUVÉS EN
+>   PIE, dont un humain en NAT symétrique mobile rendu via relais)**, 1ers vrais avatars + étoiles déterministes.
+>   *On passe le balai (cette session de doc) pour entrer en Phase 2.*
+> - **🟡 PHASE 2 — le SCALE = MAINTENANT.** Échelle HUMAINE (la foule devient PERÇUE et VIVANTE, pas juste un débit
+>   borné) ET échelle TRICHEUR (l'estime corroborée), **jusqu'à la conception du 1er jeu téléchargeable grand public.**
+> - **⚪ PHASE 3 — spéculative, non décidée** (RPO/OASIS à l'horizon ; plateforme multi-moteur ; langage de plugins
+>   visuel ; persistance corroborée…).
+>
+> **▶️ LA PROCHAINE ACTION (réconcilie les DEUX « prochaines actions » contradictoires d'avant) — deux fronts EN
+> PARALLÈLE (2 personnes, 2 disciplines → PAS la dilution interdite par « une seule chose à la fois ») :**
+> 1. **MOI — le redesign AoI-PERTINENCE (headless), cœur de la Phase 2.** Remplacer « 32 plus proches » par « les
+>    plus PERTINENTS » : ensemble d'intérêt à niveaux (voisins + partenaires d'interaction TRANSITIFS + social),
+>    LOD adaptatif CONTINU (net → imposteur → champ), **AoI BILATÉRALE** (le faible annonce son budget), **visibilité
+>    MUTUELLE** pour les paires qui interagissent. **Ligne d'arrivée headless PRÉ-ENREGISTRÉE** (cf. D29/D30) → quand
+>    franchie : STOP, on va aux humains (ne pas polir le ressenti dans le vide = piège D27). Doutes : D29, D30, D3, D22.
+> 2. **UTILISATEUR — la map/les assets au propre + spike AUDIO-Unreal.** ⚠ D31 (devenu principe) : pas besoin de
+>    ménager le netcode (c'est à LUI de s'adapter), MAIS commence par UNE zone sociale (place focale) qui co-évolue,
+>    pas l'île entière. + l'audio-moteur (capture/spatialisation) spikable dès maintenant (D35).
+>
+> **⚠ CONDITION AVANT DE COURIR CHACUN :** geler/étendre [CONTRAT_SIDECAR.md](CONTRAT_SIDECAR.md) — l'AoI-pertinence
+> change la SÉMANTIQUE du `SNAPSHOT` (avatars qui apparaissent/disparaissent par PERTINENCE, plus par distance ;
+> + un niveau de LOD par avatar). La logique spawn/despawn d'Unreal doit suivre la NOUVELLE règle.
+>
+> **La récolte de la session (détail [DOUTES.md](DOUTES.md) § RÉPONSES 26 juin) :** ① l'**ESTIME CORROBORÉE**
+> (« naître invisible, gagner sa visibilité ») répond à elle seule à D6+D26+D11+D28+D4/5 — élégant MAIS point unique
+> de défaillance conceptuelle ; ② **PAS DE CHEF** (mesuré 8.3★) ; ③ le modèle **« 32 + 1 »** (32 nets + 1 foule) +
+> visibilité mutuelle ; ④ le **relais (D17) est PORTEUR** de l'onboarding (D34) ; ⑤ honnêteté « pas de serveur
+> central » (jamais « zéro serveur », D10) ; ⑥ métrique reine = **latence ≤ 500 ms** (D27/D32). **Un doute n'est pas
+> RÉSOLU par une réponse — statut 🔴/🟡 inchangé tant que non PROUVÉ.** *(D22 repasse ✅→🟡 : débit borné prouvé,
+> ressenti/pertinence NON.)*
+> *(Cap assumé : l'étoile vraie = l'OASIS de Ready Player One — humilité dans le TON, pas dans le BUT ; cf. [VISION.md](VISION.md).)*
+
+> ### ⚠️ ARCHIVE — point de reprise (lis ça en premier, surtout si nouvelle session)
+
 > ### 🎯 LE POURQUOI + RÈGLES + PLAN D'ATTAQUE (posé le 20 juin 2026 — lire EN PREMIER)
 > **⤴ MAJ 25 juin 2026 — la VISION a grandi :** le projet n'est plus « un espace social VRChat-like » mais une
 > **PLATEFORME de jeux P2P façon gamejolt** (multi-moteur, mondes téléchargés, hub 3D — détail dans

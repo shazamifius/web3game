@@ -63,6 +63,72 @@ indiqué entre crochets `[ch. X]`.
 >   passe par un rendez-vous (le gossip réduit la dépendance, la fédération/DHT est en annexe H). Pour un « VRAIMENT
 >   sans serveur », c'est le dernier nœud de confiance à décentraliser. Borné aujourd'hui, pas supprimé.
 
+## 💬 RÉPONSES & PRÉCISIONS — session du 26 juin 2026
+
+> Long échange avec l'utilisateur, doute par doute. **RÈGLE POSÉE PAR LUI : un doute n'est pas RÉSOLU parce
+> qu'il reçoit une réponse — il garde son statut 🔴/🟡 tant que ce n'est pas PROUVÉ.** Une réponse est une
+> PISTE (il peut y en avoir plusieurs). On range ici la réponse en regard de chaque Dn ; le détail des doutes
+> reste dans les catégories ci-dessous (texte d'origine intact = honnêteté).
+
+- **D2** (bot ≠ jeu) — *se ferme par construction avec le SIDECAR* : le cœur Rust devient l'UNIQUE boucle,
+  Unreal ET le bot le pilotent → plus de double orchestration. À acter quand le sidecar porte le vrai jeu.
+- **D3** (lien faible noyé en réception) — *rendre l'AoI BILATÉRALE* : le receveur annonce un budget
+  (« max X Ko/s »), les émetteurs s'y plient (water-filling bilatéral) ; + LOD adaptatif (afficher MOINS) ;
+  + parent qui agrège pour les très faibles. = le bas de la courbe d'adaptativité (cf. D29/D30).
+- **D4+D5** (parent) — *clusters (= cellules) auto-formés ~40, qui se parlent ; parent = celui qui LIVRE le
+  mieux*. **3 précisions dures :** (1) **PAS de chef de cluster** (mesuré 8.3★ : l'élection = le mur dominant) ;
+  (2) capacité **MESURÉE, pas déclarée** (infalsifiable) ; (3) diffusion bornée AU cluster, jamais aux 55K.
+- **D6** (PoW jouet) — *abandonner la PoW façon Bitcoin ; sanction = INVISIBILITÉ ; modèle « naître invisible,
+  GAGNER sa visibilité »* → ferme le Sybil SANS PoW (la nouvelle identité d'un banni est aussi worthless).
+  ⚠ Sans plancher de coût (ici SOCIAL), l'évasion de ban est gratuite — le « gagner sa visibilité » EST ce plancher.
+- **D10** (rendez-vous central) — *trop prématuré (post-RPO)*. Direction : téléchargement = BitTorrent ;
+  hébergement = machines bénévoles pondérées par l'estime. **Précision honnête actée : ce ne sera JAMAIS
+  « zéro serveur » — c'est « pas de serveur central AUTORITAIRE ».** On arrête de se vendre « sans serveur » tout court.
+- **D11** (migration orbe) — *quorum de voisins pour valider une reprise* ; **MAIS les étoiles l'ont déjà
+  CONTOURNÉ** (rang convergent SANS maître ni migration). Reco : généraliser le modèle « étoiles » (sans maître)
+  plutôt que « orbe » (avec migration) partout où c'est possible.
+- **D12** (tout codé pour 1 objet) — *« exactement ce qu'on doit faire maintenant »* (utilisateur) : le jeu = banc
+  pour TOUS les systèmes (objet sous gravité, portable, ramassable). Reco concrète : **registre générique**
+  `{id, type, règle d'autorité, état}` ; on a déjà 2 patrons (orbe = migration, étoile = rang convergent) →
+  extraire le registre commun en câblant.
+- **D13** (pas d'horloge commune) — *le départage (version, id) suffit aux jeux cozy ; seul le twitch-compétitif
+  a besoin du vrai temps* → service du SUBSTRAT activé par le profil « compétitif » (rejoint l'idée d'un langage
+  de plugins visuel : plus de plugins = plus compétitif). ⚠ Un plugin ne CRÉE pas une horloge ; le substrat la fournit.
+- **D15** (tout en clair) — *chiffrement à la TOUTE FIN (sortie publique), jamais en R&D* (il cache les paquets
+  → tue la compréhension/debug). ✅ bon sens. ⚠ Re-mesurer débit/latence APRÈS (paquets + handshake bougent les chiffres).
+- **D16** (fuites mémoire) — *du MÉNAGE, pas de la vision* ; éviction TTL faite ; zéro impact MVP. Ignoré sans
+  risque jusqu'aux longues sessions massives.
+- **D17** (NAT symétrique) — *le RELAIS, ressuscité PORTEUR (plancher de D34)*. **Précision majeure (incohérence
+  doc levée) : le relais via rendez-vous est DÉJÀ PROUVÉ EN UNREAL** (palier 3 du contrat sidecar — un humain en
+  NAT symétrique mobile rendu via relais). Reste l'OUVERT : relais DÉCENTRALISÉ + déclenchement auto « perçage
+  abandonné → relais ». **D17 + D27 = le même test terrain.**
+- **D18** (speed-hack grossier) — *anticheat RÉGLABLE par le créateur (curseur agressif/doux)*. **2 couches :**
+  (1) anticheat qui protège le SUBSTRAT (signatures, anti-Sybil, anti-forge) = TOUJOURS actif, non négociable ;
+  (2) anticheat de RÈGLES DE JEU = réglable. Le curseur s'applique à la couche 2.
+- **D20** (attaques combinées) — *objectif LONG TERME* (mode « adversaire malin coordonné »). Prématuré.
+- **D21** (sécurité rendez-vous) — *réutiliser des outils tout-faits* (rate-limit / anti-spoofing existants,
+  performants). ⚠ Eux gèrent le volumétrique BRUT ; les caps APPLICATIFS (éviction, PoW à l'entrée) restent chez nous.
+- **D25** (banc plafonne ~1500 ; 55K non direct) — *« on n'aura jamais 15000 nœuds, on aura 33 »* : du point de
+  vue d'UN joueur, le monde = **32 voisins détaillés + 1 foule agrégée**, toujours. Le total ne touche jamais une
+  machine → le « 1500 » est un artefact du SIMULATEUR (un thread OS/bot), PAS un mur du jeu réel (ni du kernel).
+  **2 précisions :** (a) le nœud #33 (foule) est nourri par les résumés/gossip → sa QUALITÉ + HONNÊTETÉ = D22/D26/D29/D30 ;
+  (b) **visibilité MUTUELLE garantie pour les paires qui interagissent** (sinon A salue B qui ne voit pas A — budgets asymétriques).
+- **D26** (résumé menteur) — *= le « vérifié par le cluster » du D4, version générale : ne jamais croire UN
+  nœud sur un GROUPE, recouper*. Partiellement adressé par le RETRAIT du chef (8.3★, résumé auto-certifiant).
+  **L'estime corroborée (D6) le nourrit : un fantôme à zéro estime est INCOMPTABLE.**
+- **D28** (persistance sans serveur) — *MVP = éphémère/local (trichable, mais entre amis OSEF — NE PAS résoudre
+  maintenant)* ; vraie solution « ta clé signe ton état, les pairs corroborent » roule sur le MOTEUR D'ESTIME
+  (un saut à 1M cristaux non corroboré = rejeté).
+
+> **🔭 LA RÉCOLTE DE LA SESSION — un seul mécanisme pour six doutes.** L'**ESTIME SOCIALE CORROBORÉE**
+> (« naître invisible, gagner sa visibilité ; les pairs recoupent les déclarations ») répond à **D6, D26, D11,
+> D28, D4/D5** — la plus belle simplification du projet : un substrat de corroboration au lieu de six défenses
+> séparées. ⚠ **Revers à garder en lumière :** un mécanisme qui porte six défenses = un POINT UNIQUE DE
+> DÉFAILLANCE CONCEPTUELLE ; et la corroboration P2P est le mur ouvert le plus dur (D26 couche 2). Élégance
+> réelle, MAIS risque concentré.
+> **🚫 LEÇON « PAS DE CHEF ».** Toute conception de foule/cluster gravite vers l'élection d'un chef ; nos
+> MESURES (8.3★) disent NON (l'élection était le mur dominant, perception 91 %→10 %). À re-rappeler dès que l'idée revient.
+
 ### Catégorie 1 — Le réalisme de nos tests
 
 **D1 — Nos tests « mentent » comme localhost.** 🔴 `[ch. 7]`
@@ -412,6 +478,71 @@ P2P) ; (c) **petit serveur de SAUVEGARDE assumé** (un astérisque de plus à «
 (d) un mélange (perso éphémère pour le MVP, persistance corroborée plus tard). *Vérif (quand on tranchera) :* un
 joueur revient avec son état d'avant, et un état forgé/dupliqué est rejeté/borné. **À NE PAS résoudre maintenant** :
 pour le MVP « 10 potes » l'éphémère/local suffit ; ce doute existe pour ne pas se mentir sur « progression » + « sans serveur ».
+
+### Catégorie 11 — Perception, échelle & onboarding (nés le 26 juin 2026)
+
+> Doutes sortis de l'échange « densité de foule » + la révélation du cap RPO (l'OASIS). Le fil rouge :
+> **l'architecture réseau doit s'ADAPTER aux créateurs, jamais l'inverse** (→ devenu un PRINCIPE, cf.
+> `PRINCIPES.md` A.8). Rappel de la règle de la session : une RÉPONSE n'est pas une CLÔTURE.
+
+**D29 — L'AoI par PROXIMITÉ ≠ par PERTINENCE sociale.** 🟠 `[chantier AoI-pertinence, Phase 2]`
+*Constat :* on sélectionne les 32 plus PROCHES (`keep_nearest`, [rendezvous.rs](../src/net/rendezvous.rs)),
+pas les 32 qui COMPTENT. Si A près de moi parle à B (loin, hors de mes 32), B m'est INVISIBLE alors qu'il est
+socialement pertinent → situations gênantes. *Piste :* ensemble d'intérêt = union de niveaux — **T0** voisins
+spatiaux (borné par BUDGET, plus de cap dur 32) ; **T1** partenaires d'interaction de T0 tirés par TRANSITIVITÉ
+(chaque état signé annonce « engagé avec {≤4 ids} ») ; **T2** social explicite (amis). *Limite honnête :*
+amorçage (on ne classe pas ce qu'on ne voit pas) + le plafond ne DISPARAÎT pas à 55K (physique) — il devient
+INTELLIGENT. *Dette :* T1 ouvre une variante D26 (« mentir sur qui je fréquente ») — bénin (n'attire que MA
+bande passante vers de vrais pairs). *Vérif (ligne d'arrivée headless) :* B (engagé avec mon voisin) entre dans
+mon set en ≤ X ticks ; C (loin, non engagé) non. **C'est le chantier que JE prends en Phase 2.**
+
+**D30 — LOD NON-ADAPTATIF + foule JAMAIS rendue + distribution sim irréaliste.** 🟠 `[chantier AoI-pertinence, Phase 2]`
+*Constat :* (a) le système saute brutalement « au-delà de 32 = blob », que N=40 ou 55K — **bourrin** ; (b) on
+n'a JAMAIS regardé une foule rendue au-delà de 32 ; (c) dans `sim` les bots sont co-localisés dans 3 m = un
+NUAGE de points, PAS une foule réaliste (sous-groupes, cercles, scène). *Piste :* fidélité CONTINUE =
+f(N visibles, bande passante) — sous budget : tout le monde NET ; au-dessus : dégradation continue
+**net → imposteur → CHAMP de densité/flux** (« la foule va par là »). = l'« auto-équilibré selon N » de
+l'utilisateur. *Vérif :* N=40 → 40 nets ; N=500 → ~100 nets + reste résumé, débit reçu plat ; **une foule
+réellement REGARDÉE** (jamais fait).
+
+**D31 — La map ne doit JAMAIS être une barrière → DEVENU UN PRINCIPE.** ✅→principe `[PRINCIPES.md A.8]`
+*Constat (mon erreur) :* j'avais proposé de contraindre le level-design pour ménager le netcode. *Renversé par
+l'utilisateur (cap RPO/OASIS) :* n'importe qui bâtira n'importe quel monde → **le réseau ne peut JAMAIS
+contraindre le créateur ; toute la charge (échelle, géométrie, densité) est sur l'archi ADAPTATIVE.** Quitte le
+registre, entre dans les principes. *Borne honnête :* « adaptatif » = dégradation gracieuse **jusqu'à la limite
+physique**, PAS capacité infinie — le créateur n'est jamais BLOQUÉ, l'expérience extrême DÉGRADE (jamais ne casse,
+jamais n'exclut).
+
+**D32 — « Le jeu est-il FUN ? » → hors PÉRIMÈTRE.** 🟡→périmètre `[clarification]`
+*Constat :* on doute de tout le réseau, jamais du cœur ludique (même angle mort que D27, un cran plus haut).
+*Réponse de l'utilisateur :* le fun ne se TESTE pas, il se BÂTIT — et ce n'est pas notre métier (on fait la R&D
+du SUBSTRAT ; le fun est le métier des créateurs, cf. RPO). Métrique qui compte = **latence ≤ 500 ms = jouable,
+au-delà = mort**. *Reclassement :* l'« île aux étoiles » n'est plus « le produit » mais un **INSTRUMENT** (faire
+venir des humains pour mesurer le substrat) qui DEVIENDRA un produit poli plus tard.
+
+**D33 — « Un seul cœur pour le jeu RICHE ET le 55K MINCE ? » → veille périphérique.** 🟡 `[veille]`
+*Constat :* l'état RICHE (cristaux/races/stats persistants) et l'état MINCE (positions/LOD à 55K) sont deux
+régimes de code (rejoint D12). *Réponse de l'utilisateur :* une seule étoile (l'OASIS), des petites autour pour
+l'atteindre ; la ligne droite = la mort ; la vision PÉRIPHÉRIQUE (les pauses) est l'outil pour surveiller que
+riche et mince COHABITENT au lieu de forker. *Statut :* ni fermé ni ouvert — **point de veille** explicite.
+
+**D34 — L'ONBOARDING pourrait AFFAMER chaque test.** 🟠 `[stratégie posée]`
+*Constat :* pour jouer, un pote doit installer un launcher + lancer un démon sidecar + percer le NAT + toucher un
+rendez-vous → BRUTAL ; le test « est-ce vivant » (D27) est bloqué EN AMONT par « mon pote arrive-t-il à lancer ».
+*Stratégie de l'utilisateur :* exposer au monde un jeu BIEN construit → amasser un max de logs sur des MILLIERS de
+box → un **launcher auto-réparateur** (répare les fichiers corrompus, télécharge les versions, connaît à terme
+toutes les box). *Dépendance DURE (ma précision) :* démarrage à froid — la boucle d'apprentissage n'existe que si
+le **RELAIS (D17)** garantit un plancher (box impercible → relayée + loguée → apprise). Promesse honnête : pas
+« jamais de mur » mais **« jamais zéro : à défaut de direct, relais »**. Le relais n'est PAS une side-quest : c'est
+le socle de cette stratégie.
+
+**D35 — Le VOCAL : mur porteur de « est-ce vivant », le plus différé.** 🟠 `[séquencé sur D29]`
+*Constat :* le design « force l'usage du vocal de proximité » → le vocal PORTE D27 ; chaque test humain SANS lui
+teste une version mutilée de la prémisse. *Réponse :* « qui j'entends » = « qui est dans mon ensemble de
+pertinence » → **la voix de proximité = l'AoI-pertinence (D29) appliquée à l'AUDIO.** Donc ORDRE : AoI-pertinence
+(headless) → la voix monte dessus (jours après, pas mois). *La partie Unreal de l'audio (capture / lecture /
+spatialisation 3D) est du MOTEUR, indépendante du réseau → spikable EN PARALLÈLE dès maintenant.* (Utilisateur :
+« on attend quoi ? » — réponse : pas différé, **séquencé**.)
 
 ---
 

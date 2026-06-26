@@ -6,3 +6,5 @@ result.md
 # chantier Unreal ; carnet « où trouver quoi ») → JAMAIS poussées. Index + notes dans prive/.
 REPRISE-PRIVEE.md
 /prive/
+# Assets 3D (mesh/glb) : ils n'ont rien à faire dans le dépôt du cœur réseau — gardés en local.
+/asset/
