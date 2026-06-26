@@ -40,7 +40,10 @@ fn main() {
         Some("net-demo") => net::run_demo(args.get(2).map(String::as_str).unwrap_or("a")),
         Some("attack") => net::run_attack(args.get(2).map(String::as_str).unwrap_or("forge")),
         Some("bot") => net::run_bot(args.get(2).map(String::as_str).unwrap_or("1")),
-        Some("agent") => net::run_agent(),
+        Some("agent") => net::run_agent(
+            args.get(2).map(String::as_str),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20),
+        ),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
         Some("sim") => {
             let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);

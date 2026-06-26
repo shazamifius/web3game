@@ -321,6 +321,19 @@ impl Bot {
         self.orb.owner
     }
 
+    /// MESURE (agent v0) : l'ÂGE (ms) du dernier état reçu de chaque pair connu — la FRAÎCHEUR,
+    /// la grandeur « est-ce vivant ? » (≤ 500 ms = jouable). Lecture SEULE : on ne touche pas au
+    /// cœur, on LIT `peer_seen` (l'horodatage que le réseau tient déjà). `saturating_` = jamais de
+    /// panique si l'horloge bouge d'un poil.
+    pub(crate) fn peer_freshness_ms(&self) -> Vec<(PeerId, f64)> {
+        let now = Instant::now();
+        self.link
+            .peer_seen
+            .iter()
+            .map(|(id, seen)| (*id, now.saturating_duration_since(*seen).as_secs_f64() * 1000.0))
+            .collect()
+    }
+
     /// 8.3 : foule TOTALE perçue via les résumés de cellule détenus (somme des cellules suivies).
     /// ≈ taille de la foule ⇒ l'invariant tient (toute la foule via quelques flux, pas N états).
     pub(crate) fn summary_perceived(&self) -> u32 {

@@ -19,6 +19,10 @@
 //! (prochain pas), et le score « robotique » (l'ampleur des corrections de dead-reckoning),
 //! qui a besoin du modèle d'interpolation → il arrive avec le branchement live.
 
+use super::bot::Bot;
+use super::crypto::PeerId;
+use std::time::Instant;
+
 /// Un événement d'ARRIVÉE d'état distant, vu par un observateur : QUAND on l'a reçu
 /// (ms depuis le début de la mesure) et le `seq` de l'émetteur (monotone).
 #[derive(Clone, Copy, Debug)]
@@ -140,10 +144,19 @@ pub(crate) fn report_json(observer: &str, target: &str, s: &LinkStats) -> String
     )
 }
 
+/// L'agent (v0). Sans argument → DÉMO (flux synthétiques, le format de rapport). `recv [secs]` →
+/// mesure LIVE : on rejoint le rendez-vous comme un vrai nœud et on chiffre la fraîcheur des pairs.
+pub fn run_agent(mode: Option<&str>, secs: u64) {
+    match mode {
+        Some("recv") => run_agent_recv(secs),
+        _ => run_agent_demo(),
+    }
+}
+
 /// v0 — démonstration du MÈTRE ÉTALON sur deux flux synthétiques (un bon lien, un mauvais).
 /// Montre le format de rapport qu'on récoltera. Prochain pas : nourrir `link_stats` avec les
 /// VRAIES arrivées d'un pair (rendez-vous + émetteur à trajectoire connue), sur tes box.
-pub fn run_agent() {
+fn run_agent_demo() {
     // BON lien : 20 Hz réguliers, aucune perte.
     let bon: Vec<Arrival> = (0..100).map(|i| Arrival { recv_ms: i as f64 * 50.0, seq: i }).collect();
 
@@ -169,6 +182,62 @@ pub fn run_agent() {
     println!("agent v0 — mètre étalon (flux synthétiques ; cible fraîcheur ≤ 500 ms)");
     println!("{}", report_json("moi", "lien_bon", &link_stats(&bon, tick)));
     println!("{}", report_json("moi", "lien_mauvais", &link_stats(&mauvais, tick)));
+}
+
+/// MESURE LIVE (v0) : un VRAI nœud qui rejoint le rendez-vous, écoute `secs` secondes, et chiffre
+/// la FRAÎCHEUR de chaque pair entendu (âge du dernier état reçu). C'est le « est-ce vivant » sur un
+/// vrai lien — l'angle mort du banc headless (D27). L'émetteur en face = un simple `bot`. Rendez-vous
+/// = 127.0.0.1 par défaut (sinon `RENDEZVOUS_ADDR=ip:port` pour le cross-machine). Un JSON par pair.
+fn run_agent_recv(secs: u64) {
+    let mut bot = match Bot::new("agent", false, 0.0) {
+        Some(b) => b,
+        None => {
+            eprintln!("[agent] réseau indisponible (le rendez-vous est-il joignable ?).");
+            return;
+        }
+    };
+    println!("[agent] mesure LIVE pendant {secs}s — fraîcheur des pairs (cible ≤ 500 ms = vivant)");
+
+    // Fenêtre de CHAUFFE : on ne chiffre pas la cérémonie de connexion (découverte + perçage),
+    // qui pollue la traîne. On mesure le RÉGIME établi, pas le démarrage.
+    const WARMUP_S: f64 = 3.0;
+    println!("[agent] (les {WARMUP_S:.0} 1res s sont exclues — chauffe découverte/perçage)");
+
+    let start = Instant::now();
+    let mut last = Instant::now();
+    let mut samples: std::collections::HashMap<PeerId, Vec<f64>> = std::collections::HashMap::new();
+    while start.elapsed().as_secs() < secs {
+        let dt = last.elapsed().as_secs_f32();
+        last = Instant::now();
+        let now = start.elapsed().as_secs_f32();
+        bot.step(dt, now);
+        if start.elapsed().as_secs_f64() >= WARMUP_S {
+            for (id, age) in bot.peer_freshness_ms() {
+                samples.entry(id).or_default().push(age);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    if samples.is_empty() {
+        println!("[agent] aucun pair vu — lance un `rendezvous` + un `bot` en face.");
+        return;
+    }
+    for (id, mut ages) in samples {
+        ages.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let p95 = percentile(&ages, 95.0);
+        let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
+        println!(
+            "{{\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
+             \"fresh_p95_ms\":{:.0},\"fresh_max_ms\":{:.0},\"verdict\":\"{}\"}}",
+            id.short(),
+            ages.len(),
+            percentile(&ages, 50.0),
+            p95,
+            ages.last().copied().unwrap_or(0.0),
+            verdict
+        );
+    }
 }
 
 #[cfg(test)]
