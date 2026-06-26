@@ -12,6 +12,8 @@
 //!      (débit_i = λ·w_i), on plafonne ceux qui dépassent `R_max` et on redonne
 //!      leur surplus aux autres, jusqu'à dépenser le budget.
 
+use super::crypto::PeerId;
+
 /// Borne GROSSIÈRE de candidats (m). À l'échelle planétaire, on bornerait ici
 /// l'ensemble des joueurs connus (via un index spatial). Réglée très grand →
 /// dans une instance normale, personne n'est jamais exclu par cette borne ;
@@ -77,6 +79,42 @@ pub(crate) fn cell_of(x: f32, z: f32) -> (i32, i32) {
 /// interaction, attention récente — il suffira d'ajouter des termes ici.)
 pub(crate) fn relevance_weight(d2: f32) -> f32 {
     WEIGHT_FLOOR + 1.0 / (1.0 + d2 / (COMFORT_DIST * COMFORT_DIST))
+}
+
+/// Fraction de pertinence qu'un pair PROCHE transmet à un pair avec qui il se déclare
+/// ENGAGÉ (D29, T1). Strictement < 1 : le tiers « présenté » compte, mais JAMAIS plus
+/// que l'ami proche qui le présente (on ne s'intéresse pas plus à l'inconnu qu'à son hôte).
+pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
+
+/// PERTINENCE PAR TRANSITIVITÉ (D29, T1 — « pertinence ≠ proximité »). Un pair LOIN
+/// mais ENGAGÉ avec un de mes pairs PROCHES devient pertinent (« mon voisin lui parle »),
+/// là où la seule distance l'aurait laissé au socle. On part de la pertinence SPATIALE
+/// (`base[i]`, issue de `relevance_weight`) et on REHAUSSE chaque pair désigné comme
+/// partenaire : il hérite de `TRANSITIVE_FRACTION × base[présentateur]`.
+///
+/// - `ids[i]` = identité du pair i · `base[i]` = sa pertinence spatiale · `engaged[i]` =
+///   les ids (quelques-uns) avec qui i se déclare engagé (porté dans son état signé —
+///   le wire est branché à l'étape 2 ; ici on prouve la LOGIQUE de sélection, pure).
+/// - **Un seul saut** (mes voisins T0 → leurs partenaires) : pas de chaîne transitive,
+///   donc ni explosion ni cycle. Renvoie la pertinence effective, dans l'ordre d'entrée.
+///
+/// Invariant voulu : un pair tiré ne dépasse JAMAIS celui qui le tire (fraction < 1) → la
+/// hiérarchie « proches d'abord » est préservée ; on ne fait qu'AJOUTER les pertinents cachés.
+pub(crate) fn relevance_transitive(ids: &[PeerId], base: &[f32], engaged: &[Vec<PeerId>]) -> Vec<f32> {
+    let mut eff = base.to_vec();
+    let index: std::collections::HashMap<PeerId, usize> =
+        ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    for (i, partners) in engaged.iter().enumerate() {
+        let boost = TRANSITIVE_FRACTION * base.get(i).copied().unwrap_or(0.0);
+        for partner in partners {
+            if let Some(&j) = index.get(partner) {
+                if boost > eff[j] {
+                    eff[j] = boost;
+                }
+            }
+        }
+    }
+    eff
 }
 
 /// WATER-FILLING : répartit `budget` (maj/s) entre des `weights`, chaque débit
@@ -193,6 +231,33 @@ mod tests {
     fn poids_decroit_avec_distance_sans_jamais_zero() {
         assert!(relevance_weight(0.0) > relevance_weight(100.0));
         assert!(relevance_weight(1.0e9) >= WEIGHT_FLOOR); // jamais nul, même très loin
+    }
+
+    /// D29 (T1) — CRITÈRE PRÉ-ENREGISTRÉ : « PERTINENCE ≠ PROXIMITÉ ». Un pair LOIN mais
+    /// ENGAGÉ avec un de mes pairs PROCHES doit devenir pertinent (tiré par transitivité),
+    /// là où un pair tout aussi loin mais engagé avec PERSONNE reste au simple socle de
+    /// distance. C'est le cœur de la thèse : on perçoit « les plus PERTINENTS », pas « les
+    /// plus PROCHES ». (Ici la logique pure ; le wire `engaged` est branché à l'étape 2.)
+    #[test]
+    fn transitivite_tire_un_pair_loin_mais_engage_avec_un_proche() {
+        let a = PeerId::from_bytes([1u8; 32]); // PROCHE de moi (mon voisin / focus)
+        let b = PeerId::from_bytes([2u8; 32]); // LOIN, mais A se déclare engagé avec lui
+        let c = PeerId::from_bytes([3u8; 32]); // LOIN, engagé avec personne
+        let ids = vec![a, b, c];
+        let base = vec![
+            relevance_weight(0.25),  // A : tout proche → pertinence ~1
+            relevance_weight(1.0e6), // B : très loin → socle
+            relevance_weight(1.0e6), // C : très loin → socle
+        ];
+        let engaged = vec![vec![b], vec![], vec![]]; // A est engagé avec B
+        let eff = relevance_transitive(&ids, &base, &engaged);
+
+        // B est TIRÉ nettement au-dessus de C (la pertinence suit le SOCIAL, pas la distance).
+        assert!(eff[1] > eff[2] * 5.0, "B (engagé avec un proche) doit dépasser nettement C (juste loin)");
+        // …mais jamais au-dessus de A qui le présente (fraction < 1 → hiérarchie préservée).
+        assert!(eff[1] <= eff[0], "un tiers présenté ne dépasse pas son hôte");
+        // C, engagé avec personne, reste EXACTEMENT à sa pertinence spatiale (aucun rehaussement).
+        assert!((eff[2] - base[2]).abs() < 1.0e-6, "un pair non engagé n'est pas rehaussé");
     }
 
     #[test]
