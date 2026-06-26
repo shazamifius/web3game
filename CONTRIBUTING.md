@@ -7,7 +7,7 @@ Merci de l'intérêt porté au projet. Quelques mots honnêtes pour cadrer les c
 C'est un projet **personnel de recherche & développement**, mené en **solo** et très
 expérimental. Rien n'est stable ni prouvé à grande échelle — l'inventaire honnête de
 ce qui tient et de ce qui ne tient pas est dans le [README](README.md) et la
-[FEUILLE_DE_ROUTE.md](FEUILLE_DE_ROUTE.md).
+[revue de l'état du projet](docs/etat-du-projet.md).
 
 ## Le code
 
