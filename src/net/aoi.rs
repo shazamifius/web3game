@@ -84,6 +84,7 @@ pub(crate) fn relevance_weight(d2: f32) -> f32 {
 /// Fraction de pertinence qu'un pair PROCHE transmet à un pair avec qui il se déclare
 /// ENGAGÉ (D29, T1). Strictement < 1 : le tiers « présenté » compte, mais JAMAIS plus
 /// que l'ami proche qui le présente (on ne s'intéresse pas plus à l'inconnu qu'à son hôte).
+#[allow(dead_code)] // EN ATTENTE : prouvé par son test ; câblé à l'étape 2 (le wire `engaged`).
 pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
 
 /// PERTINENCE PAR TRANSITIVITÉ (D29, T1 — « pertinence ≠ proximité »). Un pair LOIN
@@ -100,6 +101,7 @@ pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
 ///
 /// Invariant voulu : un pair tiré ne dépasse JAMAIS celui qui le tire (fraction < 1) → la
 /// hiérarchie « proches d'abord » est préservée ; on ne fait qu'AJOUTER les pertinents cachés.
+#[allow(dead_code)] // EN ATTENTE : logique prouvée (test) ; branchée dans `refresh_focus` à l'étape 3.
 pub(crate) fn relevance_transitive(ids: &[PeerId], base: &[f32], engaged: &[Vec<PeerId>]) -> Vec<f32> {
     let mut eff = base.to_vec();
     let index: std::collections::HashMap<PeerId, usize> =
