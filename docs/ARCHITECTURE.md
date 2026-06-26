@@ -2,6 +2,7 @@
 
 > Organisation des fichiers (`src/`), l'en-tête de paquet commun, et l'architecture cible « Own + Shields »
 > (autorité par objet, BFT, relais).
+> *Nouveau ici ? Commence sans prérequis par [comprendre le « sans serveur »](comprendre-le-p2p.md), puis reviens au code.*
 
 ## Organisation du code (`src/`)
 

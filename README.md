@@ -25,7 +25,8 @@ eux-mêmes le réseau. Ce que ça change concrètement :
 
 - **Pas de coût serveur qui explose avec le succès** — l'infrastructure, ce sont les joueurs.
 - **Une identité que tu possèdes** — une clé cryptographique (comme une clé SSH), pas un compte sur la machine
-  d'un tiers. *« web3 » est ici à prendre au sens **décentralisé / identité possédée** — **pas** un token, pas de crypto.*
+  d'un tiers. *« web3 » est ici à prendre au sens **décentralisé / identité possédée** — **pas** un token, pas de
+  crypto (expliqué pas à pas : [comprendre le « sans serveur »](docs/comprendre-le-p2p.md)).*
 - **Pas de point de défaillance unique** qui éteint tout le monde d'un coup.
 
 La **boussole d'échelle** est volontairement vertigineuse. Le plus grand affrontement coordonné de l'histoire du
@@ -91,7 +92,8 @@ cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 d
 
 ## Pour aller plus loin
 
-- **L'état du projet — réalisations, combats, murs, doutes** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
+- **Comprendre le « sans serveur » (pour néophyte)** : [`docs/comprendre-le-p2p.md`](docs/comprendre-le-p2p.md)
+- **L'état du projet — réalisations, combats, murs, doutes (chiffré)** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
 - **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
 
