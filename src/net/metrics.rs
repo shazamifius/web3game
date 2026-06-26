@@ -149,6 +149,7 @@ pub(crate) fn report_json(observer: &str, target: &str, s: &LinkStats) -> String
 pub fn run_agent(mode: Option<&str>, secs: u64) {
     match mode {
         Some("recv") => run_agent_recv(secs),
+        Some("loop") => run_agent_loop(secs),
         _ => run_agent_demo(),
     }
 }
@@ -219,24 +220,69 @@ fn run_agent_recv(secs: u64) {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
+    report_freshness("", &samples);
+}
+
+/// Imprime un rapport de fraîcheur (un JSON par pair) — partagé par `recv` et `loop`.
+/// `ts` = horodatage époque (vide pour une mesure unique ; rempli dans la boucle → série temporelle).
+fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f64>>) {
+    let tsf = if ts.is_empty() { String::new() } else { format!("\"ts\":{ts},") };
     if samples.is_empty() {
-        println!("[agent] aucun pair vu — lance un `rendezvous` + un `bot` en face.");
+        println!("{{{tsf}\"note\":\"aucun pair vu\"}}");
         return;
     }
-    for (id, mut ages) in samples {
-        ages.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let p95 = percentile(&ages, 95.0);
+    for (id, ages) in samples {
+        let mut a = ages.clone();
+        a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+        let p95 = percentile(&a, 95.0);
         let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
         println!(
-            "{{\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
+            "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
              \"fresh_p95_ms\":{:.0},\"fresh_max_ms\":{:.0},\"verdict\":\"{}\"}}",
-            id.short(),
-            ages.len(),
-            percentile(&ages, 50.0),
-            p95,
-            ages.last().copied().unwrap_or(0.0),
-            verdict
+            id.short(), a.len(), percentile(&a, 50.0), p95, a.last().copied().unwrap_or(0.0), verdict
         );
+    }
+}
+
+/// MESURE AUTONOME (brique 1 de l'agent self-suffisant) : un nœud qui RESTE connecté et émet un
+/// rapport toutes les `window` s, EN BOUCLE — il tourne tout le temps, sans relance. Suivront :
+/// config centrale fetchée (pilotage à distance), upload, démarrage auto, auto-update.
+fn run_agent_loop(window: u64) {
+    let mut bot = match Bot::new("agent", false, 0.0) {
+        Some(b) => b,
+        None => {
+            eprintln!("[agent] réseau indisponible (le rendez-vous est-il joignable ?).");
+            return;
+        }
+    };
+    let w = window.max(5);
+    println!("[agent] mesure AUTONOME en boucle — un rapport toutes les {w}s (Ctrl-C pour arrêter)");
+    let boot = Instant::now();
+    let mut last = Instant::now();
+    let mut win_start = Instant::now();
+    let mut samples: std::collections::HashMap<PeerId, Vec<f64>> = std::collections::HashMap::new();
+    let mut first = true;
+    loop {
+        let dt = last.elapsed().as_secs_f32();
+        last = Instant::now();
+        bot.step(dt, boot.elapsed().as_secs_f32()); // horloge CONTINUE entre fenêtres (pas de saut)
+        // on n'exclut la chauffe (découverte) que sur la TOUTE 1re fenêtre ; ensuite on reste connecté.
+        if !first || win_start.elapsed().as_secs_f64() >= 3.0 {
+            for (id, age) in bot.peer_freshness_ms() {
+                samples.entry(id).or_default().push(age);
+            }
+        }
+        if win_start.elapsed().as_secs() >= w {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            report_freshness(&ts.to_string(), &samples);
+            samples.clear();
+            win_start = Instant::now();
+            first = false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
