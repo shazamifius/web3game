@@ -26,9 +26,8 @@ eux-mêmes le réseau. Ce que ça change concrètement :
 - **Pas de point de défaillance unique** qui éteint tout le monde d'un coup.
 
 La **boussole d'échelle** est volontairement vertigineuse : pouvoir réunir **~55 000 personnes** dans un même espace
-(la jauge de la plus grande salle de concert du monde) — un nombre qu'**aucun jeu ne tient aujourd'hui** : les MMO
-découpent le monde en serveurs, Fortnite réunit ~100 joueurs par partie. *C'est un cap qui guide l'architecture,
-pas une métrique déjà atteinte (voir « En toute transparence » plus bas).*
+(la jauge de la plus grande salle de concert du monde). *C'est un **cap** qui guide l'architecture — une direction
+de recherche, pas une métrique déjà atteinte (voir « En toute transparence » plus bas).*
 
 ## Ce qui est déjà construit (et éprouvé)
 
