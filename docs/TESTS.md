@@ -19,10 +19,6 @@ un labo réseau complet, qui transforme les tests « localhost » en vraie preuv
 
 ---
 
-
----
-
-
 ## Comment lancer le cœur (headless)
 
 Le binaire `jeu` n'embarque plus de fenêtre 3D : c'est le **cœur réseau headless**.
@@ -78,8 +74,8 @@ nix-shell --run "cargo watch -x 'run -- rendezvous'"  # terminal 1 (annuaire)
 nix-shell --run "cargo watch -x 'run -- sidecar'"     # terminal 2 (le pont Unreal)
 ```
 
-> *(Les **contrôles** du joueur — ZQSD, souris, saut — vivent désormais côté Unreal,
-> cf. le dépôt privé `spike01-unreal`. Le binaire `jeu` n'a plus d'entrée clavier.)*
+> *(Les **contrôles** du joueur — ZQSD, souris, saut — vivent côté Unreal, le client de présentation.
+> Le binaire `jeu` n'a plus d'entrée clavier.)*
 
 ---
 

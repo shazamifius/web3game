@@ -31,7 +31,7 @@ src/
     ├── sim.rs           la SIMULATION MASSIVE (cargo run -- sim N M T) : N nœuds + M attaquants (chap. 6.8)
     ├── coopsim.rs       bancs de foule en thread coopératif / bus mémoire (coopsim, coopsim-bus)
     ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
-    ├── sidecar.rs       LE PONT vers Unreal (cargo run -- sidecar) : socket locale, cf. CONTRAT_SIDECAR.md
+    ├── sidecar.rs       LE PONT vers Unreal (cargo run -- sidecar) : socket locale vers le client moteur
     └── link.rs          NetLink : l'état réseau d'un nœud (table de pairs, réputation, cellules…)
 ```
 
