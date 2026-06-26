@@ -1,11 +1,9 @@
-# Comprendre le « sans serveur » — le pair-à-pair, pas à pas
+# Le « sans serveur », en clair
 
-> Une introduction **pour néophyte**. On part de ce que tout le monde connaît (un jeu en ligne « normal »), on
-> **enlève le serveur central**, et on regarde — problème par problème — comment on le remplace. À la fin, « sans
-> serveur » ne sera plus un slogan, mais une mécanique claire.
+> L'idée centrale du projet, **en mots simples** : on part d'un jeu en ligne classique, on enlève le serveur
+> central, et on regarde — problème par problème — par quoi le remplacer. Sans jargon.
 >
-> Aucune connaissance technique requise. Pour le code, voir [l'architecture](ARCHITECTURE.md) ; pour les mesures
-> chiffrées, la [revue de l'état du projet](etat-du-projet.md).
+> Pour le code, voir [l'architecture](ARCHITECTURE.md) ; pour les mesures chiffrées, la [revue de l'état](etat-du-projet.md).
 
 ---
 
@@ -81,9 +79,9 @@ autres. S'y ajoutent : des **règles de plausibilité** (on ne se téléporte pa
 une **réputation partagée** (un tricheur repéré est mis en sourdine pour tous), et le principe de **corroboration**
 (on ne croit pas un joueur sur parole quand il parle d'un *groupe* : on recoupe avec ce que d'autres rapportent).
 
-## Le malentendu à lever : « web3 » ≠ crypto
+## Une précision : ici, « web3 » ne veut pas dire crypto
 
-Le mot « web3 » est souvent associé aux cryptomonnaies. **Ici, ça n'a rien à voir.** « web3 » est pris au sens
+Le mot « web3 » est souvent associé aux cryptomonnaies. **Dans ce projet, ça n'a rien à voir.** « web3 » est pris au sens
 **décentralisé** + **identité que tu possèdes vraiment** — et c'est tout. **Pas de token, pas de blockchain, pas de
 spéculation.** La seule « crypto » présente, ce sont les **signatures cryptographiques** (comme une clé SSH) pour
 prouver l'identité — la même chose qui sécurise déjà ta connexion à un site web. Rien à voir avec de l'argent.

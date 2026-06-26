@@ -105,4 +105,4 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 
 - [Architecture & organisation du code](ARCHITECTURE.md) — les modules, le format d'un paquet, l'archi cible.
 - [Comment lancer & tester](TESTS.md) — toutes les commandes ci-dessus, en détail.
-- [Comprendre le « sans serveur »](comprendre-le-p2p.md) — une introduction pédagogique au pair-à-pair, du néophyte à « j'ai compris ».
+- [Le « sans serveur », en clair](comprendre-le-p2p.md) — l'idée du projet expliquée en mots simples.
