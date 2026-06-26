@@ -11,6 +11,7 @@
 //!   rendezvous            l'annuaire (à lancer en premier)
 //!   sidecar               le pont vers Unreal (socket locale 127.0.0.1:47800)
 //!   bot <nom>             un client headless (le vrai protocole, sans 3D)
+//!   agent                 l'agent de MESURE (v0) : fraîcheur / perte / gigue, en chiffres
 //!   sim [N] [att] [s]     simulation massive : N nœuds + att attaquants
 //!   crowd <N> [s]         foule dense au même endroit (couverture de perception)
 //!   coopsim <N> [s]       N nœuds dans un thread coopératif (banc léger)
@@ -39,6 +40,7 @@ fn main() {
         Some("net-demo") => net::run_demo(args.get(2).map(String::as_str).unwrap_or("a")),
         Some("attack") => net::run_attack(args.get(2).map(String::as_str).unwrap_or("forge")),
         Some("bot") => net::run_bot(args.get(2).map(String::as_str).unwrap_or("1")),
+        Some("agent") => net::run_agent(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
         Some("sim") => {
             let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
@@ -79,7 +81,7 @@ fn main() {
                 eprintln!("Mode inconnu : « {m} ».");
             }
             eprintln!(
-                "Usage : jeu <rendezvous|sidecar|bot|sim|crowd|coopsim|coopsim-bus|\
+                "Usage : jeu <rendezvous|sidecar|bot|agent|sim|crowd|coopsim|coopsim-bus|\
                  relay-test|stars|stars-race|attack|net-demo|nat-test> [args…]\n\
                  (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
             );
