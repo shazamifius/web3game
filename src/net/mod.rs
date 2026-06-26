@@ -57,7 +57,7 @@ pub use attack::run_attack;
 pub use bot::run_bot;
 pub use coopsim::{run_coopsim, run_coopsim_bus};
 pub use demo::run_demo;
-pub use metrics::run_agent;
+pub use metrics::{run_agent, run_serve_config};
 pub use natdemo::run_nat_test;
 pub use rendezvous::run_rendezvous;
 pub use sidecar::run_sidecar;

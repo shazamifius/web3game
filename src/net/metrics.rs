@@ -345,6 +345,37 @@ fn run_agent_loop(window: u64) {
     }
 }
 
+/// SERT la campagne en HTTP (côté serveur de la flotte) — dep-free (std uniquement), réponse
+/// statique RELUE à chaque requête : j'édite le fichier, les agents voient le changement au tour
+/// suivant. Mono-connexion (largement suffisant pour des fetchs de config espacés).
+pub fn run_serve_config(file: &str, port: u16) {
+    use std::io::{Read, Write};
+    let listener = match std::net::TcpListener::bind(("0.0.0.0", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("config : impossible d'écouter sur {port} : {e}");
+            return;
+        }
+    };
+    println!("config servie sur 0.0.0.0:{port} depuis « {file} » (Ctrl-C pour arrêter)");
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        let mut scratch = [0u8; 1024];
+        let _ = stream.read(&mut scratch); // on lit (et ignore) la requête GET
+        let body = std::fs::read_to_string(file).unwrap_or_default();
+        let resp = format!(
+            "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
