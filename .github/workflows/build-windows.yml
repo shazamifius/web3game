@@ -6,6 +6,11 @@ name: build-windows
 
 on:
   workflow_dispatch:
+    inputs:
+      rendezvous:
+        description: "Adresse publique du rendez-vous (ex 1.2.3.4:24000) — bakée dans serveur.txt, zéro config utilisateur"
+        required: false
+        default: ""
 
 jobs:
   windows:
@@ -41,6 +46,11 @@ jobs:
             'pause'
           )
           Set-Content -Path dist/LANCER_mesure.bat -Value $bat -Encoding ascii
+          # Adresse du rendez-vous BAKÉE à la construction (entrée du workflow) → l'utilisateur
+          # n'a RIEN à remplir : double-clic et ça vise le serveur. (Pas d'IP dans le dépôt :
+          # elle vient de l'input au déclenchement, et n'atterrit que dans l'artefact téléchargé.)
+          $rdv = "${{ inputs.rendezvous }}"
+          if ($rdv) { Set-Content -Path dist/serveur.txt -Value $rdv -Encoding ascii; Write-Host "serveur.txt baké: $rdv" }
 
       - name: Publier l'artefact
         uses: actions/upload-artifact@v4
