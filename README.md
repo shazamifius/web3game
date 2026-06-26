@@ -32,9 +32,11 @@ eux-mêmes le réseau. Ce que ça change concrètement :
 La **boussole d'échelle** est volontairement vertigineuse. Le plus grand affrontement coordonné de l'histoire du
 jeu vidéo — un **record du monde Guinness** détenu par la communauté d'**EVE Online** (la bataille de *B-R5RB*, 2014) —
 a réuni des **milliers** de joueurs dans un même espace : la preuve qu'une présence partagée à très grande échelle
-est possible. Ce projet en explore la **frontière, en pair-à-pair**, avec pour cap lointain l'ordre de grandeur d'une
-très grande foule (~55 000, une salle de concert). *C'est une **direction de recherche**, pas une métrique déjà
-atteinte (voir « En toute transparence »).*
+est possible — **portée par une infrastructure serveur centralisée d'exception**. Ce projet explore la **même
+frontière, mais en pair-à-pair** : donc en se privant justement de ce serveur central — c'est là toute la
+difficulté, et la part qui n'est **pas** encore prouvée. Le cap lointain reste l'ordre de grandeur d'une très grande
+foule (~55 000, une salle de concert). *C'est une **direction de recherche**, pas une métrique déjà atteinte
+(voir « En toute transparence »).*
 
 ## Ce qui est déjà construit (et éprouvé)
 

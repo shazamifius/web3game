@@ -46,7 +46,7 @@ cible, même quand l'attaquant mine sans cesse de nouvelles identités (la rafal
 
 ## Étape 2 — Deux tiers nets/flous, et un défaut révélé par la mesure
 
-En foule dense, tout le monde est à ~même distance → la pertirence par distance ne discrimine plus → **tout le
+En foule dense, tout le monde est à ~même distance → la pertinence par distance ne discrimine plus → **tout le
 monde devient également flou**. Il fallait faire **émerger des proches nets** : réserver le gros du budget à un
 **focus** de quelques pairs (plein débit), et ne saupoudrer que des miettes sur la **conscience** (le reste, en
 basse fidélité).
