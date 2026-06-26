@@ -4,17 +4,18 @@
 
 [![tests](https://github.com/shazamifius/web3game/actions/workflows/tests.yml/badge.svg)](https://github.com/shazamifius/web3game/actions/workflows/tests.yml)
 
-> Bâtir l'OASIS, en pair-à-pair : un univers de jeux où l'on se retrouve à plusieurs, **sans serveur central**,
-> avec une **identité qu'on possède vraiment**. Une infrastructure réseau écrite à la main, attaquée par
-> nous-mêmes, et documentée sans rien arrondir.
+> Un univers de mondes partagés où l'on se retrouve à plusieurs — **sans serveur central**, avec une **identité
+> qu'on possède vraiment**. Une infrastructure réseau écrite à la main, attaquée par nous-mêmes, et documentée
+> sans rien arrondir.
 
 ---
 
 ## La vision
 
-L'objectif est ambitieux et assumé : **un « OASIS » à la française** — au sens de *Ready Player One* : un univers de
-mondes partagés où l'on retrouve ses amis, où l'on passe d'un jeu à l'autre, et que **n'importe qui pourra un jour
-enrichir de son propre monde** (Unreal, Unity, Godot…).
+L'objectif est ambitieux et assumé : **un univers de mondes partagés massifs**, dans l'esprit de l'**OASIS de
+*Ready Player One*** (le métavers du roman puis du film de Spielberg) — mais **en pair-à-pair**. Un monde où l'on
+retrouve ses amis, où l'on passe d'un jeu à l'autre, et que **n'importe qui pourra un jour enrichir du sien**
+(Unreal, Unity, Godot…).
 
 La différence, c'est l'**architecture** : pas de serveur de jeu central qui fait autorité. Les joueurs forment
 eux-mêmes le réseau. Ce que ça change concrètement :
