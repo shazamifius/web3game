@@ -88,7 +88,8 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 
 ## 6. Les doutes ouverts — le cœur de la démarche
 
-> Ici, **un doute n'est pas une faiblesse à cacher : c'est l'objet du travail.**
+> Ici, **un doute n'est pas une faiblesse à cacher : c'est l'objet du travail.** Le registre complet et suivi :
+> **[les doutes](doutes.md)**.
 
 - **L'inclusivité** : un lien faible *reçoit* trop en foule dense (l'aire d'intérêt borne l'émission, pas la
   réception). Comment garantir une expérience correcte du plus faible au plus rapide ?

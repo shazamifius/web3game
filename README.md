@@ -94,6 +94,7 @@ cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 d
 
 - **Le « sans serveur », en clair** : [`docs/comprendre-le-p2p.md`](docs/comprendre-le-p2p.md)
 - **L'état du projet — réalisations, combats, murs, doutes (chiffré)** : [`docs/etat-du-projet.md`](docs/etat-du-projet.md)
+- **Le registre des doutes (le cœur de la démarche)** : [`docs/doutes.md`](docs/doutes.md)
 - **L'architecture & l'organisation du code** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Comment lancer & tester** : [`docs/TESTS.md`](docs/TESTS.md)
 
