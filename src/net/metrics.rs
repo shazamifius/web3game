@@ -244,9 +244,56 @@ fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f6
     }
 }
 
-/// MESURE AUTONOME (brique 1 de l'agent self-suffisant) : un nœud qui RESTE connecté et émet un
-/// rapport toutes les `window` s, EN BOUCLE — il tourne tout le temps, sans relance. Suivront :
-/// config centrale fetchée (pilotage à distance), upload, démarrage auto, auto-update.
+/// Port HTTP où le serveur sert la CAMPAGNE (sur la même machine que le rendez-vous).
+const CONFIG_PORT: u16 = 24001;
+
+/// La CAMPAGNE : ce que l'agent doit faire, décidé CENTRALEMENT (je l'édite sur le serveur, les
+/// agents suivent — brique 2). Format « clé=valeur » par ligne → zéro dépendance JSON (fait-main).
+#[derive(Clone, Debug)]
+struct Campaign {
+    window: u64,
+}
+impl Default for Campaign {
+    fn default() -> Self {
+        Campaign { window: 30 }
+    }
+}
+
+/// Parse une campagne « clé=valeur ». ROBUSTE : tout champ absent/illisible garde le défaut, et on
+/// ignore l'inconnu → l'agent ne casse JAMAIS sur une config foireuse (self-sufficient).
+fn parse_campaign(body: &str) -> Campaign {
+    let mut c = Campaign::default();
+    for line in body.lines() {
+        if let Some((k, v)) = line.trim().split_once('=') {
+            if k.trim() == "window" {
+                if let Ok(n) = v.trim().parse::<u64>() {
+                    c.window = n.clamp(5, 3600);
+                }
+            }
+        }
+    }
+    c
+}
+
+/// GET HTTP/1.0 minimaliste, SANS dépendance (std seulement). Renvoie le CORPS, ou None si le
+/// serveur ne répond pas (l'agent garde alors sa config courante → self-sufficient).
+fn http_get(host: &str, port: u16, path: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let timeout = std::time::Duration::from_secs(3);
+    let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).ok()?;
+    resp.split_once("\r\n\r\n").map(|(_, body)| body.to_string())
+}
+
+/// MESURE AUTONOME pilotée par CONFIG CENTRALE (briques 1+2 de l'agent self-suffisant) : un nœud
+/// qui RESTE connecté, émet un rapport horodaté à chaque fenêtre, et RE-LIT sa campagne sur le
+/// serveur → je change ce qu'il fait À DISTANCE, il suit sans relance. (Suivront : upload des
+/// rapports, démarrage auto, auto-update.)
 fn run_agent_loop(window: u64) {
     let mut bot = match Bot::new("agent", false, 0.0) {
         Some(b) => b,
@@ -255,8 +302,16 @@ fn run_agent_loop(window: u64) {
             return;
         }
     };
-    let w = window.max(5);
-    println!("[agent] mesure AUTONOME en boucle — un rapport toutes les {w}s (Ctrl-C pour arrêter)");
+    // La campagne est servie sur la MÊME machine que le rendez-vous.
+    let cfg_host = super::link::rendezvous_addr().ip().to_string();
+    let mut campaign = Campaign { window: window.max(5) };
+    if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
+        campaign = parse_campaign(&body);
+        println!("[agent] campagne reçue du serveur : window={}s", campaign.window);
+    }
+    println!(
+        "[agent] mesure AUTONOME en boucle — campagne sur http://{cfg_host}:{CONFIG_PORT}/campaign (Ctrl-C pour arrêter)"
+    );
     let boot = Instant::now();
     let mut last = Instant::now();
     let mut win_start = Instant::now();
@@ -266,19 +321,23 @@ fn run_agent_loop(window: u64) {
         let dt = last.elapsed().as_secs_f32();
         last = Instant::now();
         bot.step(dt, boot.elapsed().as_secs_f32()); // horloge CONTINUE entre fenêtres (pas de saut)
-        // on n'exclut la chauffe (découverte) que sur la TOUTE 1re fenêtre ; ensuite on reste connecté.
         if !first || win_start.elapsed().as_secs_f64() >= 3.0 {
             for (id, age) in bot.peer_freshness_ms() {
                 samples.entry(id).or_default().push(age);
             }
         }
-        if win_start.elapsed().as_secs() >= w {
+        if win_start.elapsed().as_secs() >= campaign.window {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             report_freshness(&ts.to_string(), &samples);
             samples.clear();
+            // PILOTAGE À DISTANCE : on relit la campagne entre deux fenêtres ; serveur muet → on
+            // garde la courante (jamais de blocage).
+            if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
+                campaign = parse_campaign(&body);
+            }
             win_start = Instant::now();
             first = false;
         }
@@ -326,5 +385,16 @@ mod tests {
         let f_lache = link_stats(&lache, 16.0).fresh_p95_ms;
         assert!(f_lache > f_serre * 5.0, "un lien lâche est bien moins frais qu'un lien serré");
         assert!(f_serre < 500.0, "20 Hz reste sous le seuil de vivacité (≤ 500 ms)");
+    }
+
+    /// Brique 2 — la campagne se parse, ignore l'inconnu, borne les valeurs folles, et NE CASSE
+    /// JAMAIS sur une entrée foireuse (self-sufficient : on retombe sur le défaut).
+    #[test]
+    fn campagne_robuste_borne_et_ignore_l_inconnu() {
+        assert_eq!(parse_campaign("window=45\nautre_cle=xyz\n").window, 45);
+        assert_eq!(parse_campaign("").window, 30); // vide → défaut
+        assert_eq!(parse_campaign("window=99999").window, 3600); // borné haut
+        assert_eq!(parse_campaign("window=1").window, 5); // borné bas
+        assert_eq!(parse_campaign("window=oops").window, 30); // illisible → défaut
     }
 }
