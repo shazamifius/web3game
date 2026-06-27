@@ -317,6 +317,39 @@ fn http_post(host: &str, port: u16, path: &str, body: &str) -> bool {
 /// Port HTTP où le serveur sert la CAMPAGNE (sur la même machine que le rendez-vous).
 const CONFIG_PORT: u16 = 24001;
 
+/// Un nom de machine LISIBLE pour la présence (« le PC de X »), sans dépendance : `COMPUTERNAME`
+/// sous Windows, `/etc/hostname` sinon, repli `HOSTNAME` puis « inconnu ». Nettoyé (pas de guillemet
+/// ni de saut de ligne) pour rester un JSON sûr. Aucune info sensible — juste de quoi repérer les
+/// créneaux de dispo (« mardi 16 h, tout le monde est là »).
+fn host_label() -> String {
+    let raw = std::env::var("COMPUTERNAME")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_default();
+    let cleaned: String = raw.trim().chars().filter(|c| *c != '"' && *c != '\n' && *c != '\r').take(64).collect();
+    if cleaned.is_empty() { "inconnu".to_string() } else { cleaned }
+}
+
+/// La ligne de PRÉSENCE (battement de cœur), JSON fait main. PUR (testable) : un horodatage, le nom
+/// du PC, la version de l'agent, l'événement. Volontairement MINUSCULE → coût réseau négligeable au
+/// repos (« peu de connexion hors simulation »). Le serveur l'empile dans `presence.ndjson`.
+fn heartbeat_json(ts: u64, host: &str, ver: &str, ev: &str) -> String {
+    format!("{{\"ts\":{ts},\"host\":\"{host}\",\"ver\":\"{ver}\",\"ev\":\"{ev}\"}}")
+}
+
+/// Envoie un battement de cœur au collecteur (POST /heartbeat). Best-effort : un échec est silencieux
+/// (serveur muet → on n'insiste pas, l'agent ne se bloque jamais). C'est l'observabilité « qui est en
+/// ligne, quand » SANS lancer de simulation — juste savoir quels PC sont dispo et à quelles heures.
+fn send_heartbeat(host_addr: &str, port: u16, ev: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let body = heartbeat_json(ts, &host_label(), &agent_version(), ev);
+    let _ = http_post(host_addr, port, "/heartbeat", &body);
+}
+
 /// La CAMPAGNE : ce que l'agent doit faire, décidé CENTRALEMENT (je l'édite sur le serveur, les
 /// agents suivent — brique 2). Format « clé=valeur » par ligne → zéro dépendance JSON (fait-main).
 #[derive(Clone, Debug)]
@@ -407,13 +440,15 @@ fn run_agent_install(uninstall: bool) {
     #[cfg(windows)]
     {
         let tn = "web3-agent";
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+        let dir = std::path::Path::new(&base).join("web3-agent");
+        let vbs = dir.join("start.vbs");
         if uninstall {
             let _ = std::process::Command::new("schtasks").args(["/delete", "/tn", tn, "/f"]).status();
+            let _ = std::fs::remove_file(&vbs);
             println!("[install] auto-démarrage RETIRÉ (tâche {tn}).");
             return;
         }
-        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
-        let dir = std::path::Path::new(&base).join("web3-agent");
         let _ = std::fs::create_dir_all(&dir);
         let dest = dir.join("jeu.exe");
         let _ = std::fs::copy(&exe, &dest);
@@ -422,16 +457,25 @@ fn run_agent_install(uninstall: bool) {
                 let _ = std::fs::copy(&s, dir.join("serveur.txt"));
             }
         }
-        let tr = format!("\"{}\" agent loop", dest.to_string_lossy());
+        // CALME : un shim VBScript qui lance l'agent FENÊTRE CACHÉE (style 0) → plus de gros terminal.
+        // C'est ce que la tâche exécute (via `wscript`), au lieu de l'exe directement (qui ouvre une
+        // console). Dep-free (juste un fichier texte). `0` = caché, `False` = ne pas attendre.
+        let vbs_body = format!(
+            "Set s = CreateObject(\"WScript.Shell\")\r\ns.Run \"\"\"{}\"\" agent loop\", 0, False\r\n",
+            dest.to_string_lossy()
+        );
+        let _ = std::fs::write(&vbs, vbs_body);
+        let tr = format!("wscript.exe \"{}\"", vbs.to_string_lossy());
         let st = std::process::Command::new("schtasks")
             .args(["/create", "/tn", tn, "/tr", &tr, "/sc", "onlogon", "/f"])
             .status();
         match st {
             Ok(s) if s.success() => {
-                println!("[install] ✅ DÉMARRAGE AUTO installé — tâche « {tn} » à chaque ouverture de session.");
+                println!("[install] ✅ DÉMARRAGE AUTO installé — tâche « {tn} » à chaque ouverture de session (fenêtre cachée).");
                 println!("[install] dossier : {}", dir.to_string_lossy());
-                let _ = std::process::Command::new(&dest).args(["agent", "loop"]).spawn();
-                println!("[install] agent démarré.");
+                // Démarrage immédiat, AUSSI caché (via le shim) → pas de terminal qui s'ouvre.
+                let _ = std::process::Command::new("wscript.exe").arg(&vbs).spawn();
+                println!("[install] agent démarré (en tâche de fond, sans fenêtre).");
             }
             _ => eprintln!("[install] échec de la création de la tâche planifiée."),
         }
@@ -573,6 +617,9 @@ fn run_agent_loop(window: u64) {
     println!(
         "[agent] mesure AUTONOME en boucle — campagne sur http://{cfg_host}:{CONFIG_PORT}/campaign (Ctrl-C pour arrêter)"
     );
+    // PRÉSENCE : un battement « je viens de démarrer » → le serveur sait tout de suite que ce PC est
+    // en ligne (utile après un reboot pour confirmer la relance auto). Puis un battement par fenêtre.
+    send_heartbeat(&cfg_host, CONFIG_PORT, "start");
     let boot = Instant::now();
     let mut last = Instant::now();
     let mut win_start = Instant::now();
@@ -599,6 +646,9 @@ fn run_agent_loop(window: u64) {
                 let _ = http_post(&cfg_host, CONFIG_PORT, "/upload", l);
             }
             samples.clear();
+            // PRÉSENCE : un battement par fenêtre → le serveur voit ce PC « vivant » dans le temps
+            // (la carte des créneaux de dispo). Minuscule → coût réseau négligeable.
+            send_heartbeat(&cfg_host, CONFIG_PORT, "alive");
             // PILOTAGE À DISTANCE : on relit la campagne entre deux fenêtres ; serveur muet → on
             // garde la courante (jamais de blocage).
             if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
@@ -638,8 +688,12 @@ pub fn run_serve_config(dir: &str, port: u16) {
         let mut scratch = [0u8; 4096]; // plus grand : peut contenir le corps d'un POST d'upload
         let n = stream.read(&mut scratch).unwrap_or(0);
         let req = String::from_utf8_lossy(&scratch[..n]);
-        // POST /upload (brique 3) → on AJOUTE le corps au journal `uploads.ndjson`.
+        // POST → on AJOUTE le corps à un journal, choisi par le CHEMIN : `/heartbeat` (présence,
+        // « qui est en ligne quand ») va dans `presence.ndjson` ; tout le reste (`/upload`, brique 3)
+        // dans `uploads.ndjson`. Deux fichiers séparés → la présence ne noie pas les mesures.
         if req.split_whitespace().next() == Some("POST") {
+            let path = req.split_whitespace().nth(1).unwrap_or("/");
+            let file = if path == "/heartbeat" { "presence.ndjson" } else { "uploads.ndjson" };
             if let Some(p) = req.find("\r\n\r\n") {
                 let payload = req[p + 4..].trim();
                 if !payload.is_empty() {
@@ -647,7 +701,7 @@ pub fn run_serve_config(dir: &str, port: u16) {
                     if let Ok(mut f) = std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
-                        .open(format!("{dir}/uploads.ndjson"))
+                        .open(format!("{dir}/{file}"))
                     {
                         let _ = writeln!(f, "{payload}");
                     }
@@ -750,6 +804,18 @@ mod tests {
         assert!(!out.contains_key(&muet), "un pair à 1 arrivée est écarté");
         assert!(out[&bon].loss_pct.abs() < 1e-9, "lien bon = 0 % de perte");
         assert!((out[&perte].loss_pct - 1.0 / 6.0).abs() < 1e-9, "perte lue dans le trou de seq");
+    }
+
+    /// PRÉSENCE — le battement de cœur est un JSON minuscule, bien formé, qui PORTE le PC et la version.
+    /// (Coût réseau négligeable : c'est l'observabilité « qui est en ligne quand » sans simulation.)
+    #[test]
+    fn heartbeat_json_bien_forme() {
+        let h = heartbeat_json(1782520000, "PC-de-Tom", "871699e", "start");
+        assert!(h.contains("\"ts\":1782520000"));
+        assert!(h.contains("\"host\":\"PC-de-Tom\""));
+        assert!(h.contains("\"ver\":\"871699e\""));
+        assert!(h.contains("\"ev\":\"start\""));
+        assert!(h.starts_with('{') && h.ends_with('}'));
     }
 
     /// Brique 5 — le garde-fou anti-binaire-corrompu : on n'installe QUE de l'ELF/PE assez gros.
