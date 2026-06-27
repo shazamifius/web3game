@@ -190,10 +190,22 @@ fn run_agent_demo() {
         mauvais[16].recv_ms = t15;
     }
 
+    // EXTRÊME lien : 90 % de perte (1 paquet sur 10 passe).
+    let mut extreme_90: Vec<Arrival> = Vec::new();
+    let mut t_ex = 0.0;
+    for i in 0..100u64 {
+        t_ex += 50.0;
+        if i % 10 != 0 {
+            continue; // 90 % de perte (seul 1 paquet sur 10 passe)
+        }
+        extreme_90.push(Arrival { recv_ms: t_ex, seq: i });
+    }
+
     let tick = 16.0; // l'observateur « regarde » à ~60 Hz (pas de rendu)
     println!("agent v0 — mètre étalon (flux synthétiques ; cible fraîcheur ≤ 500 ms)");
     println!("{}", report_json("moi", "lien_bon", &link_stats(&bon, tick)));
     println!("{}", report_json("moi", "lien_mauvais", &link_stats(&mauvais, tick)));
+    println!("{}", report_json("moi", "lien_extreme_90pct", &link_stats(&extreme_90, tick)));
 }
 
 /// MESURE LIVE (v0) : un VRAI nœud qui rejoint le rendez-vous, écoute `secs` secondes, et chiffre
@@ -368,10 +380,11 @@ struct Campaign {
     window: u64,
     mode: Mode,
     session: u64,
+    bots: usize,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30, mode: Mode::Idle, session: 0 }
+        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1 }
     }
 }
 
@@ -395,6 +408,11 @@ fn parse_campaign(body: &str) -> Campaign {
                 "session" => {
                     if let Ok(n) = v.parse::<u64>() {
                         c.session = n;
+                    }
+                }
+                "bots" => {
+                    if let Ok(n) = v.parse::<usize>() {
+                        c.bots = n.clamp(1, 1000);
                     }
                 }
                 _ => {}
@@ -892,9 +910,32 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             return SessionEnd::Normal;
         }
     };
-    println!("[agent] session {} — mesure VISIBLE en cours (fenêtre {}s)…", start.session, start.window);
+    println!("[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s))…", start.session, start.window, start.bots);
     session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
+
+    let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut worker_handles = Vec::new();
+    if start.bots > 1 {
+        println!("[agent] 🚀 Démarrage de {} bots de foule en arrière-plan...", start.bots - 1);
+        for i in 1..start.bots {
+            let stop = std::sync::Arc::clone(&stop_flag);
+            worker_handles.push(std::thread::spawn(move || {
+                let phase = i as f32 * 0.37;
+                if let Some(mut b) = Bot::new(format!("b_{i}"), false, phase) {
+                    let boot = Instant::now();
+                    let mut last = Instant::now();
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        let dt = last.elapsed().as_secs_f32();
+                        last = Instant::now();
+                        b.step(dt, boot.elapsed().as_secs_f32());
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+            }));
+        }
+    }
+
     let boot = Instant::now();
     let mut last = Instant::now();
     let mut win_start = Instant::now();
@@ -910,6 +951,7 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             println!("[agent] « Quitter » demandé par le pote — déconnexion propre (~8 s)…");
             session_log_write("Tu as demande a liberer ton ordinateur. Deconnexion en cours... (~8 s)");
             send_heartbeat(cfg_host, CONFIG_PORT, "leaving");
+            stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
             std::thread::sleep(std::time::Duration::from_secs(8)); // laisse les autres voir le départ
             session_log_write("C'est bon, ton ordinateur est libere. Merci ! (ca reprendra a la prochaine session, sans rien faire)");
             std::thread::sleep(std::time::Duration::from_millis(800));
@@ -940,6 +982,7 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                 if c.mode != Mode::Simulate || c.session != start.session {
                     println!("[agent] session {} terminée — retour au repos.", start.session);
                     session_log_write("Mesures terminees. La fenetre se ferme toute seule. Merci de ton aide !");
+                    stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                     std::thread::sleep(std::time::Duration::from_millis(800));
                     session_window_close();
                     send_heartbeat(cfg_host, CONFIG_PORT, "idle");
@@ -948,6 +991,7 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                 window = c.window; // la fenêtre peut être ajustée à chaud
             }
             if maybe_self_update(cfg_host, CONFIG_PORT) {
+                stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 session_window_close();
                 return SessionEnd::Updated; // le nouveau process reprend
             }
@@ -1254,8 +1298,8 @@ mod tests {
         assert_eq!(parse_campaign("mode=simulate\nsession=7\n").session, 7);
         assert_eq!(parse_campaign("").session, 0);
         // une campagne complète et réaliste :
-        let c = parse_campaign("window=20\nmode=simulate\nsession=42\n");
-        assert_eq!((c.window, c.mode, c.session), (20, Mode::Simulate, 42));
+        let c = parse_campaign("window=20\nmode=simulate\nsession=42\nbots=500\n");
+        assert_eq!((c.window, c.mode, c.session, c.bots), (20, Mode::Simulate, 42, 500));
     }
 
     /// Fenêtre de session — la coordination par fichiers (le contrat agent↔fenêtre) : `open` pose le
