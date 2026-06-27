@@ -45,6 +45,22 @@ fn relay_fallback_on(v: Option<&str>) -> bool {
     matches!(v, Some("1") | Some("true"))
 }
 
+/// REDONDANCE D'ÉMISSION SUR LE CHEMIN RELAIS (`RELAY_REDUNDANCY`, défaut **1** = byte-pour-byte).
+/// Sur un relais lossy (4G/CGNAT, ~88 % de perte mesurée), émettre le MÊME état scellé `k` fois
+/// back-to-back fait chuter la traîne p95 : à perte indépendante `p`, un trou ne survient que si les
+/// `k` copies sont perdues (`p^k`). Le récepteur DÉDOUBLONNE nativement (le seq le plus récent gagne,
+/// fenêtre de rejeu) → des copies n'ajoutent QUE de la robustesse, jamais d'effet de bord. Borné à 8
+/// (le relais facture chaque copie au budget anti-amplification : au-delà, le rate-limit les jette).
+pub(crate) fn relay_redundancy_from_env() -> usize {
+    relay_redundancy_of(std::env::var("RELAY_REDUNDANCY").ok().as_deref())
+}
+
+/// Politique PURE (testable sans toucher l'environnement) : parse + borne à [1, 8] ; absent ou
+/// invalide → 1 (inchangé = byte-pour-byte). Bornage haut = anti-abus du budget relais.
+fn relay_redundancy_of(v: Option<&str>) -> usize {
+    v.and_then(|s| s.parse::<usize>().ok()).unwrap_or(1).clamp(1, 8)
+}
+
 /// 12.3 (sidecar) — DÉCISION D'ÉMISSION par pair, **pure et testable**. C'est le portage EXACT
 /// dans le `Bot` headless de la logique de [netcode/send.rs] : sans elle, le sidecar RECEVAIT un
 /// état relayé mais ne RENVOYAIT jamais le sien → sens unique observé en RÉEL le 24 juin (A voit
@@ -142,6 +158,9 @@ pub(crate) struct Bot {
     /// Banc déterministe — simule un NAT infranchissable (perçage jamais « ouvert » côté émission →
     /// tout passe par le relais), pour PROUVER le repli bidirectionnel sans vrai mobile. `false` par défaut.
     force_relay: bool,
+    /// Redondance d'émission sur le chemin RELAIS (`RELAY_REDUNDANCY`, défaut 1 = inchangé). Lu UNE
+    /// fois à la construction. Cf. `relay_redundancy_from_env` : écrase la traîne p95 sur lien lossy.
+    relay_redundancy: usize,
     /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
     /// que le vrai client ([netcode/send.rs]). Chaque pair accumule `débit × dt` ; à 1,
     /// on lui envoie un paquet. C'est ce qui fait que le bot mesure DÉSORMAIS le coût
@@ -225,6 +244,7 @@ impl Bot {
             relays_to_us: HashSet::new(),
             relay_fallback: relay_fallback_enabled(),
             force_relay: false,
+            relay_redundancy: relay_redundancy_from_env(),
             send_credits: HashMap::new(),
             last_state: HashMap::new(),
             heard_count: HashMap::new(),
@@ -745,8 +765,13 @@ impl Bot {
                             }
                             SendKind::Relay => {
                                 // On demande au rendez-vous de porter notre état SCELLÉ jusqu'à ce pair.
+                                // REDONDANCE (défaut 1 = inchangé) : k copies back-to-back → sur lien
+                                // lossy, le trou ne survient que si les k sont perdues (p^k), ce qui
+                                // écrase la traîne p95. Récepteur dédoublonne nativement (seq le + récent).
                                 let env = encode_relay_fwd(*id, &bytes);
-                                let _ = self.link.socket.send_to(self.link.rendezvous, &env);
+                                for _ in 0..self.relay_redundancy {
+                                    let _ = self.link.socket.send_to(self.link.rendezvous, &env);
+                                }
                             }
                             SendKind::Skip => {}
                         }
@@ -912,7 +937,7 @@ pub fn run_bot(label: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{bot_send_kind, relay_fallback_on, SendKind};
+    use super::{bot_send_kind, relay_fallback_on, relay_redundancy_of, SendKind};
 
     /// Le drapeau de repli relais : par défaut OFF (chemin direct historique intact), ON seulement
     /// sur `1`/`true`. Relogé depuis l'ancien `netcode/send.rs` avec sa logique.
@@ -923,6 +948,16 @@ mod tests {
         assert!(!relay_fallback_on(Some("nope"))); // valeur inattendue → OFF (défaut sûr)
         assert!(relay_fallback_on(Some("1")));
         assert!(relay_fallback_on(Some("true")));
+    }
+
+    /// REDONDANCE relais : défaut 1 (byte-pour-byte), bornée à [1, 8] ; absent/invalide → 1.
+    #[test]
+    fn redondance_relais_bornee_et_neutre_par_defaut() {
+        assert_eq!(relay_redundancy_of(None), 1); // absent → inchangé
+        assert_eq!(relay_redundancy_of(Some("bzz")), 1); // invalide → 1
+        assert_eq!(relay_redundancy_of(Some("0")), 1); // 0 n'a pas de sens → ramené à 1
+        assert_eq!(relay_redundancy_of(Some("3")), 3);
+        assert_eq!(relay_redundancy_of(Some("99")), 8); // borné haut (anti-abus budget relais)
     }
 
     /// 12.3 — la DÉCISION d'émission du `Bot` headless. Le défaut (repli OFF, force OFF) doit

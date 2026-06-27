@@ -18,6 +18,7 @@
 //!   coopsim <N> [s]       N nœuds dans un thread coopératif (banc léger)
 //!   coopsim-bus <N> [s]   banc bus mémoire (temps-sim découplé du mural)
 //!   relay-test [s]        banc déterministe du relais NAT (deux sens)
+//!   relay-loss [s][%][k]  banc relais LOSSY : perte injectée + redondance k, mesure p50/p95
 //!   stars <seed> [secs]   champ d'étoiles déterministe (preuve : 2 runs = sortie identique)
 //!   stars-race <s> <n> [t] preuve de convergence du ramassage (2 ordres = même décompte)
 //!   attack <type>         le programme attaquant (forge|replay|flood|teleport|…)
@@ -76,6 +77,12 @@ fn main() {
             let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             net::run_relay_test(secs);
         }
+        Some("relay-loss") => {
+            let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8);
+            let loss = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(88.0);
+            let k = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(1);
+            net::run_relay_loss(secs, loss, k);
+        }
         Some("stars") => net::run_stars(
             args.get(2).map(String::as_str).unwrap_or("1"),
             args.get(3).map(String::as_str).unwrap_or("30"),
@@ -91,7 +98,7 @@ fn main() {
             }
             eprintln!(
                 "Usage : jeu <rendezvous|sidecar|bot|agent|stats|serve-config|sim|crowd|coopsim|coopsim-bus|\
-                 relay-test|stars|stars-race|attack|net-demo|nat-test> [args…]\n\
+                 relay-test|relay-loss|stars|stars-race|attack|net-demo|nat-test> [args…]\n\
                  (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
             );
             std::process::exit(2);

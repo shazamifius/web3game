@@ -64,6 +64,31 @@ fn rate_limit_hello(credit: f32) -> (bool, f32) {
 const RELAY_RATE: f32 = 30.0;
 const RELAY_CAP: f32 = 60.0;
 
+/// BANC UNIQUEMENT — perte injectée sur la recopie relais (`RELAY_DROP_PCT`, 0..100, défaut **0** =
+/// chemin intact). Modélise un lien lossy (4G/CGNAT : ~88 % mesuré) pour PROUVER en headless que la
+/// redondance d'émission ([bot::relay_redundancy_from_env]) écrase la traîne p95 — sans dépendre d'un
+/// vrai mobile. En prod le drapeau est absent → 0 → aucune perte ajoutée. Pseudo-aléatoire mais
+/// DÉTERMINISTE (xorshift, graine fixe) → le chiffre est reproductible (règle du projet).
+fn relay_drop_pct() -> f64 {
+    relay_drop_pct_of(std::env::var("RELAY_DROP_PCT").ok().as_deref())
+}
+
+/// Politique PURE (testable) : parse + borne à [0, 100] ; absent ou invalide → 0 (chemin intact).
+fn relay_drop_pct_of(v: Option<&str>) -> f64 {
+    v.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0).clamp(0.0, 100.0)
+}
+
+/// xorshift64 — PRNG déterministe sans dépendance (le projet est dep-free). Avance la graine et rend
+/// le nouvel état. Sert UNIQUEMENT au tirage de perte du banc (jamais sur le chemin de prod).
+fn xorshift64(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    x
+}
+
 /// Le rendez-vous est-il en MODE RELAIS ? Éteint par DÉFAUT (`RENDEZVOUS_RELAY` non défini) → il
 /// reste un présentateur PUR, « tuable », qui ne route AUCUN état (comportement historique, chemin
 /// par défaut byte-pour-byte intact). Allumé (`RENDEZVOUS_RELAY=1`) → il relaie les paires qui ne
@@ -131,6 +156,12 @@ pub fn run_rendezvous() {
     if relay {
         println!("⚠ Mode RELAIS ACTIVÉ (RENDEZVOUS_RELAY) : je route les états des paires qui ne percent pas. Plus « jetable » → repli v1 (cf. PAPIER 12.3).");
     }
+    // BANC : perte injectée sur la recopie relais (0 = chemin intact). Déterministe (graine fixe).
+    let drop_pct = relay_drop_pct();
+    let mut drop_seed: u64 = 0x9E3779B97F4A7C15;
+    if drop_pct > 0.0 {
+        println!("🧪 BANC : perte injectée {drop_pct:.0}% sur la recopie relais (déterministe). Hors banc, ce drapeau est absent.");
+    }
 
     let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
     // D21 : seaux de rate-limit débit par source (adresse). Rechargés au temps écoulé à chaque tour.
@@ -174,14 +205,19 @@ pub fn run_rendezvous() {
                     let c = relay_credit.entry(from).or_insert(RELAY_CAP);
                     if *c >= 1.0 {
                         if let Some((dest_addr, payload)) = relay_decision(&bytes, &clients) {
-                            *c -= 1.0;
-                            let _ = socket.send_to(dest_addr, payload);
-                            // Diagnostic : 1re recopie de CE sens → on l'annonce une fois.
-                            if let (Some(src), Some(dst)) =
-                                (clients.get(&from).map(|i| i.id), clients.get(&dest_addr).map(|i| i.id))
-                            {
-                                if relayed_pairs.insert((src, dst)) {
-                                    println!("🔀 RELAIS établi : {} → {} (première recopie)", src.short(), dst.short());
+                            *c -= 1.0; // le relais a FAIT son travail : le crédit est consommé même si
+                                       // le réseau (banc) perd ensuite le paquet — la perte est en AVAL.
+                            let dropped = drop_pct > 0.0
+                                && (xorshift64(&mut drop_seed) % 10_000) as f64 / 100.0 < drop_pct;
+                            if !dropped {
+                                let _ = socket.send_to(dest_addr, payload);
+                                // Diagnostic : 1re recopie EFFECTIVE de CE sens → on l'annonce une fois.
+                                if let (Some(src), Some(dst)) =
+                                    (clients.get(&from).map(|i| i.id), clients.get(&dest_addr).map(|i| i.id))
+                                {
+                                    if relayed_pairs.insert((src, dst)) {
+                                        println!("🔀 RELAIS établi : {} → {} (première recopie)", src.short(), dst.short());
+                                    }
                                 }
                             }
                         }
@@ -334,6 +370,17 @@ mod tests {
         assert!(!relay_flag_on(Some("yes"))); // toute valeur inattendue → OFF (défaut sûr)
         assert!(relay_flag_on(Some("1")));
         assert!(relay_flag_on(Some("true")));
+    }
+
+    /// BANC : la perte injectée est ÉTEINTE par défaut (0 = chemin intact) et BORNÉE à [0, 100] ;
+    /// une valeur absente/invalide retombe sur 0 (jamais de perte fantôme en prod).
+    #[test]
+    fn perte_injectee_bornee_et_eteinte_par_defaut() {
+        assert_eq!(relay_drop_pct_of(None), 0.0); // absent → chemin intact
+        assert_eq!(relay_drop_pct_of(Some("paf")), 0.0); // invalide → 0
+        assert_eq!(relay_drop_pct_of(Some("88")), 88.0);
+        assert_eq!(relay_drop_pct_of(Some("150")), 100.0); // borné haut
+        assert_eq!(relay_drop_pct_of(Some("-5")), 0.0); // borné bas
     }
 
     /// LE cas nominal : A (qui ne perce pas B) envoie une enveloppe RELAY_FWD(dest=B) ; le rendez-vous

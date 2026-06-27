@@ -310,3 +310,72 @@ pub fn run_relay_test(secs: u64) {
     }
     println!("=========================================");
 }
+
+/// BANC DÉTERMINISTE « relais LOSSY » (D17) : 2 pairs en NAT infranchissable, perte INJECTÉE sur la
+/// recopie relais, et on MESURE — avec l'instrument agent ([metrics::link_stats]) — la fraîcheur
+/// p50/p95/max et la perte RÉELLE vue par le récepteur. But : prouver EN HEADLESS que la REDONDANCE
+/// d'émission (`k` copies) écrase la traîne p95 sur lien lossy, AVANT de déranger un vrai mobile. Le
+/// chiffre est reproductible (perte déterministe, graine fixe) — règle « une preuve = un chiffre ».
+///
+/// Lancement :  cargo run -- relay-loss [secondes] [perte%] [redondance_k]
+///   référence  cargo run -- relay-loss 8 88 1
+///   redondance cargo run -- relay-loss 8 88 2   (la traîne p95/max doit CHUTER)
+pub fn run_relay_loss(secs: u64, loss_pct: f64, k: usize) {
+    let k = k.clamp(1, 8);
+    println!("=== BANC RELAIS LOSSY : 2 pairs (force-relais), perte {loss_pct:.0}%, redondance k={k}, {secs}s ===");
+    // SÛR : on règle l'environnement tout au début, AVANT le moindre thread::spawn (mono-thread ici).
+    unsafe {
+        std::env::set_var("RENDEZVOUS_RELAY", "1");
+        std::env::set_var("RELAY_DROP_PCT", format!("{loss_pct}"));
+        std::env::set_var("RELAY_REDUNDANCY", format!("{k}"));
+    }
+    thread::spawn(run_rendezvous);
+    thread::sleep(Duration::from_millis(500));
+
+    let tick = Duration::from_millis(50);
+    // Par pair : (id, reçus, perte mesurée %, p50 ms, p95 ms, max ms).
+    let report: Arc<Mutex<Vec<(String, usize, f64, f64, f64, f64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+    for i in 0..2usize {
+        let report = Arc::clone(&report);
+        handles.push(thread::spawn(move || {
+            let Some(mut bot) = Bot::new(format!("relai{i}"), false, i as f32 * 0.5) else {
+                return;
+            };
+            bot.enable_force_relay();
+            bot.enable_avatar_sink();
+            let start = Instant::now();
+            let mut last = Instant::now();
+            while start.elapsed().as_secs() < secs {
+                let dt = last.elapsed().as_secs_f32();
+                last = Instant::now();
+                bot.step(dt, start.elapsed().as_secs_f32());
+                thread::sleep(tick);
+            }
+            // INSTRUMENT : on draine les arrivées et on chiffre la fraîcheur du pair distant (un seul
+            // ici → on agrège). tick d'observation = 16 ms (l'avatar « regarde » à ~60 Hz, cf. agent v0).
+            let id = bot.id().map(|x| x.short()).unwrap_or_else(|| "—".to_string());
+            let mut all: Vec<super::metrics::Arrival> = Vec::new();
+            for v in bot.take_link_arrivals().into_values() {
+                all.extend(v);
+            }
+            let s = super::metrics::link_stats(&all, 16.0);
+            report.lock().unwrap().push((
+                id, s.received, s.loss_pct * 100.0, s.fresh_p50_ms, s.fresh_p95_ms, s.fresh_max_ms,
+            ));
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+
+    println!("\n========== MESURE (instrument agent — fraîcheur du pair distant) ==========");
+    println!("  pair       reçus   perte%   p50(ms)  p95(ms)  max(ms)");
+    let r = report.lock().unwrap();
+    for (id, recv, loss, p50, p95, max) in r.iter() {
+        println!("  {id:<9}  {recv:>5}   {loss:>5.1}   {p50:>7.0}  {p95:>7.0}  {max:>7.0}");
+    }
+    println!("===========================================================================");
+    println!("Lire : avec k=1 (réf.) puis k≥2, la TRAÎNE (p95/max) doit chuter si la redondance paie ;");
+    println!("le seuil « vivant » du projet = fraîcheur ≤ 500 ms. (perte = trous de seq vus au récepteur.)");
+}

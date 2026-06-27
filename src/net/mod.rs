@@ -61,5 +61,5 @@ pub use metrics::{run_agent, run_serve_config, run_stats};
 pub use natdemo::run_nat_test;
 pub use rendezvous::run_rendezvous;
 pub use sidecar::run_sidecar;
-pub use sim::{run_crowd, run_relay_test, run_sim};
+pub use sim::{run_crowd, run_relay_loss, run_relay_test, run_sim};
 pub use stars::{run_stars, run_stars_race};
