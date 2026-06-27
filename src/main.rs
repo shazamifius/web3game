@@ -12,7 +12,7 @@
 //!   sidecar               le pont vers Unreal (socket locale 127.0.0.1:47800)
 //!   bot <nom>             un client headless (le vrai protocole, sans 3D)
 //!   agent [recv|loop] [s] l'agent de MESURE : fraîcheur en chiffres (recv = 1 fenêtre ; loop = autonome, en continu)
-//!   serve-config <f> [p]  sert la campagne aux agents (côté serveur de la flotte) — HTTP fait main
+//!   serve-config <dir> [p] sert campagne+version+binaires aux agents (côté serveur) — HTTP fait main
 //!   sim [N] [att] [s]     simulation massive : N nœuds + att attaquants
 //!   crowd <N> [s]         foule dense au même endroit (couverture de perception)
 //!   coopsim <N> [s]       N nœuds dans un thread coopératif (banc léger)
@@ -46,7 +46,7 @@ fn main() {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20),
         ),
         Some("serve-config") => net::run_serve_config(
-            args.get(2).map(String::as_str).unwrap_or("campaign"),
+            args.get(2).map(String::as_str).unwrap_or("."),
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(24001),
         ),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),

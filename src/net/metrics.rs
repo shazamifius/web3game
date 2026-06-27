@@ -275,25 +275,108 @@ fn parse_campaign(body: &str) -> Campaign {
     c
 }
 
-/// GET HTTP/1.0 minimaliste, SANS dépendance (std seulement). Renvoie le CORPS, ou None si le
-/// serveur ne répond pas (l'agent garde alors sa config courante → self-sufficient).
-fn http_get(host: &str, port: u16, path: &str) -> Option<String> {
+/// GET HTTP/1.0 BINAIRE, SANS dépendance (std seulement) — sert au fetch de campagne ET au
+/// téléchargement du nouveau binaire (auto-update). Renvoie le CORPS (octets) sur 200, sinon None.
+fn http_get_bytes(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
-    let timeout = std::time::Duration::from_secs(3);
+    let timeout = std::time::Duration::from_secs(10); // un binaire est gros → marge
     let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).ok()?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).ok()?;
-    resp.split_once("\r\n\r\n").map(|(_, body)| body.to_string())
+    let mut resp = Vec::new();
+    stream.read_to_end(&mut resp).ok()?;
+    let pos = resp.windows(4).position(|w| w == b"\r\n\r\n")?; // fin des en-têtes
+    if !resp.starts_with(b"HTTP/1.0 200") && !resp.starts_with(b"HTTP/1.1 200") {
+        return None; // 404 ou autre → on ne renvoie rien
+    }
+    Some(resp[pos + 4..].to_vec())
 }
 
-/// MESURE AUTONOME pilotée par CONFIG CENTRALE (briques 1+2 de l'agent self-suffisant) : un nœud
-/// qui RESTE connecté, émet un rapport horodaté à chaque fenêtre, et RE-LIT sa campagne sur le
-/// serveur → je change ce qu'il fait À DISTANCE, il suit sans relance. (Suivront : upload des
-/// rapports, démarrage auto, auto-update.)
+/// GET texte (campagne) — enveloppe de `http_get_bytes`. None si le serveur ne répond pas
+/// (l'agent garde alors sa config courante → self-sufficient).
+fn http_get(host: &str, port: u16, path: &str) -> Option<String> {
+    http_get_bytes(host, port, path).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// La version courante de l'agent, lue dans `version.local` à côté de l'exe (« 0 » si absent → au
+/// 1er lancement l'agent adopte la version du serveur). Découple la version du build → testable.
+fn agent_version() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("version.local")))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+/// Un binaire exécutable PLAUSIBLE ? (magie ELF `\x7fELF` ou PE `MZ`, + taille mini) — garde-fou
+/// anti-binaire tronqué/corrompu AVANT de l'installer. Jamais d'échange sur un téléchargement douteux.
+fn looks_like_exe(b: &[u8]) -> bool {
+    b.len() > 50_000 && (b.starts_with(&[0x7f, b'E', b'L', b'F']) || b.starts_with(b"MZ"))
+}
+
+/// AUTO-UPDATE (brique 5) : si le serveur annonce une version != la mienne, je télécharge le nouveau
+/// binaire de MA plateforme, je le VÉRIFIE, je l'échange ATOMIQUEMENT, j'écris ma nouvelle version et
+/// je me RELANCE (mêmes arguments). Renvoie true si une relance est lancée → l'appelant DOIT sortir.
+/// 100 % dep-free. SÛR par construction : tout échec/incohérence → on garde l'ancien binaire qui tourne.
+fn maybe_self_update(host: &str, port: u16) -> bool {
+    let server_ver = match http_get(host, port, "/version") {
+        Some(v) => v.trim().to_string(),
+        None => return false, // serveur muet → on ne touche à RIEN
+    };
+    let my_ver = agent_version();
+    if server_ver.is_empty() || server_ver == my_ver {
+        return false; // déjà à jour
+    }
+    let plat = if cfg!(windows) { "jeu-windows" } else { "jeu-linux" };
+    let bytes = match http_get_bytes(host, port, &format!("/{plat}")) {
+        Some(b) => b,
+        None => return false,
+    };
+    if !looks_like_exe(&bytes) {
+        eprintln!("[agent] MAJ {server_ver} REFUSÉE : binaire douteux ({} o) → on garde l'actuel.", bytes.len());
+        return false;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let dir = match exe.parent() {
+        Some(d) => d.to_path_buf(),
+        None => return false,
+    };
+    let tmp = dir.join("jeu.new");
+    if std::fs::write(&tmp, &bytes).is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+    }
+    // Windows ne peut pas écraser un exe EN COURS → on renomme d'abord l'ancien (autorisé).
+    #[cfg(windows)]
+    {
+        let _ = std::fs::rename(&exe, dir.join("jeu.old"));
+    }
+    if std::fs::rename(&tmp, &exe).is_err() {
+        eprintln!("[agent] MAJ : échange impossible → on garde l'ancien binaire.");
+        return false;
+    }
+    let _ = std::fs::write(dir.join("version.local"), &server_ver);
+    println!("[agent] ⬆️  AUTO-UPDATE {my_ver} → {server_ver} : binaire échangé, relance…");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let _ = std::process::Command::new(&exe).args(&args).spawn();
+    true
+}
+
+/// MESURE AUTONOME pilotée par CONFIG CENTRALE + AUTO-UPDATE (briques 1+2+5 de l'agent self-suffisant) :
+/// un nœud qui RESTE connecté, émet un rapport horodaté à chaque fenêtre, RE-LIT sa campagne (pilotage
+/// à distance) ET se MET À JOUR tout seul si le serveur a une version plus récente. (Suivront : upload,
+/// démarrage auto.)
 fn run_agent_loop(window: u64) {
     let mut bot = match Bot::new("agent", false, 0.0) {
         Some(b) => b,
@@ -338,6 +421,10 @@ fn run_agent_loop(window: u64) {
             if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
                 campaign = parse_campaign(&body);
             }
+            // AUTO-UPDATE : si le serveur a une version plus récente, on s'échange et on se relance.
+            if maybe_self_update(&cfg_host, CONFIG_PORT) {
+                return; // le nouveau process prend le relais
+            }
             win_start = Instant::now();
             first = false;
         }
@@ -345,19 +432,20 @@ fn run_agent_loop(window: u64) {
     }
 }
 
-/// SERT la campagne en HTTP (côté serveur de la flotte) — dep-free (std uniquement), réponse
-/// statique RELUE à chaque requête : j'édite le fichier, les agents voient le changement au tour
-/// suivant. Mono-connexion (largement suffisant pour des fetchs de config espacés).
-pub fn run_serve_config(file: &str, port: u16) {
+/// SERT un DOSSIER en HTTP (côté serveur de la flotte) — dep-free (std uniquement). GET /nom →
+/// fichier `dir/nom`, RELU à chaque requête (j'édite, les agents suivent). Sert la `campaign`, la
+/// `version`, et les binaires `jeu-linux`/`jeu-windows` (auto-update). Binaire-safe (octets bruts).
+/// SÉCURITÉ : un seul niveau, pas de `..` ni de `/` → aucune remontée de dossier.
+pub fn run_serve_config(dir: &str, port: u16) {
     use std::io::{Read, Write};
     let listener = match std::net::TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("config : impossible d'écouter sur {port} : {e}");
+            eprintln!("serve : impossible d'écouter sur {port} : {e}");
             return;
         }
     };
-    println!("config servie sur 0.0.0.0:{port} depuis « {file} » (Ctrl-C pour arrêter)");
+    println!("campagne + MAJ servies sur 0.0.0.0:{port} depuis « {dir} » (Ctrl-C pour arrêter)");
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(s) => s,
@@ -365,14 +453,24 @@ pub fn run_serve_config(file: &str, port: u16) {
         };
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let mut scratch = [0u8; 1024];
-        let _ = stream.read(&mut scratch); // on lit (et ignore) la requête GET
-        let body = std::fs::read_to_string(file).unwrap_or_default();
-        let resp = format!(
-            "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        let _ = stream.write_all(resp.as_bytes());
+        let n = stream.read(&mut scratch).unwrap_or(0);
+        let req = String::from_utf8_lossy(&scratch[..n]);
+        let name = req.split_whitespace().nth(1).unwrap_or("/").trim_start_matches('/');
+        let safe = !name.is_empty() && !name.contains("..") && !name.contains('/') && !name.contains('\\');
+        let body = if safe { std::fs::read(format!("{dir}/{name}")).ok() } else { None };
+        match body {
+            Some(bytes) => {
+                let header = format!(
+                    "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&bytes);
+            }
+            None => {
+                let _ = stream.write_all(b"HTTP/1.0 404 Not Found\r\nConnection: close\r\n\r\n");
+            }
+        }
     }
 }
 
@@ -427,5 +525,19 @@ mod tests {
         assert_eq!(parse_campaign("window=99999").window, 3600); // borné haut
         assert_eq!(parse_campaign("window=1").window, 5); // borné bas
         assert_eq!(parse_campaign("window=oops").window, 30); // illisible → défaut
+    }
+
+    /// Brique 5 — le garde-fou anti-binaire-corrompu : on n'installe QUE de l'ELF/PE assez gros.
+    #[test]
+    fn looks_like_exe_rejette_le_louche() {
+        let mut elf = vec![0x7f, b'E', b'L', b'F'];
+        elf.extend(std::iter::repeat(0u8).take(60_000));
+        assert!(looks_like_exe(&elf)); // ELF assez gros → OK
+        let mut pe = vec![b'M', b'Z'];
+        pe.extend(std::iter::repeat(0u8).take(60_000));
+        assert!(looks_like_exe(&pe)); // PE (Windows) assez gros → OK
+        assert!(!looks_like_exe(b"404 Not Found")); // page d'erreur → REFUSÉ
+        assert!(!looks_like_exe(&[0x7f, b'E', b'L', b'F'])); // ELF mais trop petit → REFUSÉ
+        assert!(!looks_like_exe(&vec![0u8; 60_000])); // gros mais pas de magie → REFUSÉ
     }
 }
