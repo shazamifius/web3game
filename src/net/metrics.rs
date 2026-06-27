@@ -350,28 +350,54 @@ fn send_heartbeat(host_addr: &str, port: u16, ev: &str) {
     let _ = http_post(host_addr, port, "/heartbeat", &body);
 }
 
+/// Le MODE de la campagne. `Idle` (DÉFAUT) = repos : l'agent ne se connecte PAS au P2P, il ne fait
+/// qu'un battement de cœur léger → quasi zéro réseau/CPU, le pote n'est jamais dérangé. `Simulate` =
+/// une session de mesure est DEMANDÉE → l'agent demande le CONSENTEMENT (popup) avant de mesurer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Idle,
+    Simulate,
+}
+
 /// La CAMPAGNE : ce que l'agent doit faire, décidé CENTRALEMENT (je l'édite sur le serveur, les
 /// agents suivent — brique 2). Format « clé=valeur » par ligne → zéro dépendance JSON (fait-main).
-#[derive(Clone, Debug)]
+/// `session` = identifiant de session : tant qu'il ne change pas, on ne re-demande PAS le consentement
+/// (une question par session). Pour relancer une demande, je bumpe `session` sur le serveur.
+#[derive(Clone, Copy, Debug)]
 struct Campaign {
     window: u64,
+    mode: Mode,
+    session: u64,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30 }
+        Campaign { window: 30, mode: Mode::Idle, session: 0 }
     }
 }
 
 /// Parse une campagne « clé=valeur ». ROBUSTE : tout champ absent/illisible garde le défaut, et on
-/// ignore l'inconnu → l'agent ne casse JAMAIS sur une config foireuse (self-sufficient).
+/// ignore l'inconnu → l'agent ne casse JAMAIS sur une config foireuse (self-sufficient). `mode`
+/// inconnu → `idle` (le repos = le choix le PLUS sûr pour le pote, jamais de mesure surprise).
 fn parse_campaign(body: &str) -> Campaign {
     let mut c = Campaign::default();
     for line in body.lines() {
         if let Some((k, v)) = line.trim().split_once('=') {
-            if k.trim() == "window" {
-                if let Ok(n) = v.trim().parse::<u64>() {
-                    c.window = n.clamp(5, 3600);
+            let (k, v) = (k.trim(), v.trim());
+            match k {
+                "window" => {
+                    if let Ok(n) = v.parse::<u64>() {
+                        c.window = n.clamp(5, 3600);
+                    }
                 }
+                "mode" => {
+                    c.mode = if v.eq_ignore_ascii_case("simulate") { Mode::Simulate } else { Mode::Idle };
+                }
+                "session" => {
+                    if let Ok(n) = v.parse::<u64>() {
+                        c.session = n;
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -595,36 +621,114 @@ fn maybe_self_update(host: &str, port: u16) -> bool {
     true
 }
 
-/// MESURE AUTONOME pilotée par CONFIG CENTRALE + AUTO-UPDATE (briques 1+2+5 de l'agent self-suffisant) :
-/// un nœud qui RESTE connecté, émet un rapport horodaté à chaque fenêtre, RE-LIT sa campagne (pilotage
-/// à distance) ET se MET À JOUR tout seul si le serveur a une version plus récente. (Suivront : upload,
-/// démarrage auto.)
-fn run_agent_loop(window: u64) {
+/// L'horodatage époque (secondes), 0 si l'horloge est cassée.
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// La décision du pote face à la demande de session. `Decline` est le DÉFAUT SÛR : tout ce qui n'est
+/// pas un « oui » franc (refus, fermeture, délai dépassé, pas d'outil de dialogue) = on ne mesure pas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Consent {
+    Accept,
+    Decline,
+}
+
+/// Mappe le CODE DE SORTIE d'un dialogue Unix (zenity/kdialog : 0 = bouton OUI) en décision. PUR.
+/// Tout sauf 0 (refus, annulation, timeout=5 de zenity, outil absent) → `Decline` (refus par défaut).
+#[cfg_attr(not(unix), allow(dead_code))] // utilisé sur Unix + tests
+fn consent_from_unix_status(code: Option<i32>) -> Consent {
+    if code == Some(0) { Consent::Accept } else { Consent::Decline }
+}
+
+/// Mappe la sortie du `WScript.Shell.Popup` Windows (type Oui/Non) en décision. PUR. `6` = Oui ;
+/// `7` = Non ; `-1` = délai dépassé. Tout sauf « 6 » → `Decline` (refus par défaut).
+#[cfg_attr(not(windows), allow(dead_code))] // utilisé sur Windows + tests
+fn consent_from_windows_popup(stdout: &str) -> Consent {
+    if stdout.trim() == "6" { Consent::Accept } else { Consent::Decline }
+}
+
+/// DEMANDE LE CONSENTEMENT au pote avant toute session de mesure (popup Accepter/Refuser, ~60 s).
+/// Dep-free : on shell-out vers l'outil de dialogue du système. Repli = `Decline` (jamais de mesure
+/// non consentie). `WEB3_AGENT_AUTOCONSENT=accept|decline` court-circuite le popup (mes propres PC, et
+/// les tests déterministes) — JAMAIS sur les machines des potes (variable non posée → vrai popup).
+fn ask_consent(session: u64) -> Consent {
+    if let Ok(v) = std::env::var("WEB3_AGENT_AUTOCONSENT") {
+        return if v.eq_ignore_ascii_case("accept") { Consent::Accept } else { Consent::Decline };
+    }
+    let text = format!(
+        "web3 (R&D entre potes) aimerait lancer une courte session de mesure réseau (session {session}).\n\
+         Ça consomme un peu de réseau pendant la session. Tu peux refuser sans souci.\n\nLancer la session ?"
+    );
+    #[cfg(windows)]
+    {
+        // Popup natif via PowerShell (présent partout) : type 4 = Oui/Non, 60 s de délai.
+        let script = format!(
+            "$r=(New-Object -ComObject WScript.Shell).Popup('{}',60,'web3 — mesure',4); [Console]::Out.Write($r)",
+            text.replace('\'', "''").replace('\n', " ")
+        );
+        match std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+        {
+            Ok(o) => return consent_from_windows_popup(&String::from_utf8_lossy(&o.stdout)),
+            Err(_) => return Consent::Decline,
+        }
+    }
+    #[cfg(unix)]
+    {
+        // zenity puis kdialog (l'un des deux est presque toujours là sur un bureau Linux).
+        let zen = std::process::Command::new("zenity")
+            .args(["--question", "--title=web3 — mesure", &format!("--text={text}"),
+                   "--ok-label=Accepter", "--cancel-label=Refuser", "--timeout=60"])
+            .status();
+        if let Ok(s) = zen {
+            return consent_from_unix_status(s.code());
+        }
+        let kde = std::process::Command::new("kdialog")
+            .args(["--yesno", &text, "--title", "web3 — mesure"])
+            .status();
+        if let Ok(s) = kde {
+            return consent_from_unix_status(s.code());
+        }
+        // Aucun outil de dialogue → on PRÉVIENT (best-effort) et on REFUSE par défaut.
+        let _ = std::process::Command::new("notify-send")
+            .args(["web3", "Session de mesure demandée mais aucun dialogue dispo → refusée."])
+            .status();
+        Consent::Decline
+    }
+}
+
+/// Issue d'une session de mesure : terminée normalement, ou interrompue par une AUTO-UPDATE (l'appelant
+/// doit alors sortir, le nouveau process prend le relais).
+enum SessionEnd {
+    Normal,
+    Updated,
+}
+
+/// UNE SESSION DE MESURE consentie : on crée le nœud, on mesure fenêtre par fenêtre (fraîcheur +
+/// perte/gigue/ré-ordre), on uploade, et on RE-LIT la campagne à chaque fenêtre — si le serveur repasse
+/// en `idle` ou change de `session`, on s'arrête et on revient au repos. Le nœud P2P n'existe QUE
+/// pendant la session → au repos, zéro trafic de jeu (juste le battement de cœur).
+fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     let mut bot = match Bot::new("agent", false, 0.0) {
         Some(b) => b,
         None => {
-            eprintln!("[agent] réseau indisponible (le rendez-vous est-il joignable ?).");
-            return;
+            eprintln!("[agent] réseau indisponible (le rendez-vous est-il joignable ?) — session annulée.");
+            return SessionEnd::Normal;
         }
     };
-    // La campagne est servie sur la MÊME machine que le rendez-vous.
-    let cfg_host = super::link::rendezvous_addr().ip().to_string();
-    let mut campaign = Campaign { window: window.max(5) };
-    if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
-        campaign = parse_campaign(&body);
-        println!("[agent] campagne reçue du serveur : window={}s", campaign.window);
-    }
-    println!(
-        "[agent] mesure AUTONOME en boucle — campagne sur http://{cfg_host}:{CONFIG_PORT}/campaign (Ctrl-C pour arrêter)"
-    );
-    // PRÉSENCE : un battement « je viens de démarrer » → le serveur sait tout de suite que ce PC est
-    // en ligne (utile après un reboot pour confirmer la relance auto). Puis un battement par fenêtre.
-    send_heartbeat(&cfg_host, CONFIG_PORT, "start");
+    println!("[agent] ✅ session {} acceptée — mesure en cours (fenêtre {}s)…", start.session, start.window);
+    send_heartbeat(cfg_host, CONFIG_PORT, "session");
     let boot = Instant::now();
     let mut last = Instant::now();
     let mut win_start = Instant::now();
     let mut samples: std::collections::HashMap<PeerId, Vec<f64>> = std::collections::HashMap::new();
     let mut first = true;
+    let mut window = start.window;
     loop {
         let dt = last.elapsed().as_secs_f32();
         last = Instant::now();
@@ -634,34 +738,74 @@ fn run_agent_loop(window: u64) {
                 samples.entry(id).or_default().push(age);
             }
         }
-        if win_start.elapsed().as_secs() >= campaign.window {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+        if win_start.elapsed().as_secs() >= window {
             let links = link_stats_by_peer(bot.take_link_arrivals(), 16.0);
-            let lines = report_freshness(&ts.to_string(), &samples, &links);
-            // AUTO-UPLOAD (brique 3) : on POST chaque ligne au collecteur du serveur.
+            let lines = report_freshness(&epoch_secs().to_string(), &samples, &links);
             for l in &lines {
-                let _ = http_post(&cfg_host, CONFIG_PORT, "/upload", l);
+                let _ = http_post(cfg_host, CONFIG_PORT, "/upload", l); // brique 3
             }
             samples.clear();
-            // PRÉSENCE : un battement par fenêtre → le serveur voit ce PC « vivant » dans le temps
-            // (la carte des créneaux de dispo). Minuscule → coût réseau négligeable.
-            send_heartbeat(&cfg_host, CONFIG_PORT, "alive");
-            // PILOTAGE À DISTANCE : on relit la campagne entre deux fenêtres ; serveur muet → on
-            // garde la courante (jamais de blocage).
-            if let Some(body) = http_get(&cfg_host, CONFIG_PORT, "/campaign") {
-                campaign = parse_campaign(&body);
+            send_heartbeat(cfg_host, CONFIG_PORT, "alive"); // présence pendant la session
+            // La session a-t-elle été ARRÊTÉE / changée côté serveur ? (serveur muet → on continue.)
+            if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
+                if c.mode != Mode::Simulate || c.session != start.session {
+                    println!("[agent] session {} terminée — retour au repos.", start.session);
+                    send_heartbeat(cfg_host, CONFIG_PORT, "idle");
+                    return SessionEnd::Normal;
+                }
+                window = c.window; // la fenêtre peut être ajustée à chaud
             }
-            // AUTO-UPDATE : si le serveur a une version plus récente, on s'échange et on se relance.
-            if maybe_self_update(&cfg_host, CONFIG_PORT) {
-                return; // le nouveau process prend le relais
+            if maybe_self_update(cfg_host, CONFIG_PORT) {
+                return SessionEnd::Updated; // le nouveau process reprend
             }
             win_start = Instant::now();
             first = false;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// LA BOUCLE DE L'AGENT (calme + consentie). Au REPOS : aucun nœud P2P, juste un battement de cœur
+/// léger (présence « qui est en ligne quand ») + une relecture de campagne + l'auto-update. Quand le
+/// serveur demande une session (`mode=simulate` + un `session` neuf), on demande le CONSENTEMENT au
+/// pote (popup) : accepté → on mesure ; refusé/pas de réponse → on reste au repos, et on ne re-demande
+/// PAS pour cette même session (une question par `session`). Le pote garde toujours la main.
+fn run_agent_loop(window: u64) {
+    let cfg_host = super::link::rendezvous_addr().ip().to_string();
+    let fallback_window = window.max(5);
+    println!(
+        "[agent] démarré — au REPOS (battement de cœur). En attente d'une session sur \
+         http://{cfg_host}:{CONFIG_PORT}/campaign (Ctrl-C pour arrêter)"
+    );
+    send_heartbeat(&cfg_host, CONFIG_PORT, "start");
+    let mut decided: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    loop {
+        let campaign = http_get(&cfg_host, CONFIG_PORT, "/campaign")
+            .map(|b| parse_campaign(&b))
+            .unwrap_or(Campaign { window: fallback_window, ..Campaign::default() });
+        // AUTO-UPDATE : au repos, c'est le moment SÛR pour s'échanger (aucune session en cours).
+        if maybe_self_update(&cfg_host, CONFIG_PORT) {
+            return; // le nouveau process prend le relais
+        }
+        if campaign.mode == Mode::Simulate && !decided.contains(&campaign.session) {
+            decided.insert(campaign.session); // une seule question par session
+            println!("[agent] session {} demandée par le serveur — demande de consentement…", campaign.session);
+            match ask_consent(campaign.session) {
+                Consent::Accept => {
+                    if let SessionEnd::Updated = run_measure_session(&cfg_host, campaign) {
+                        return;
+                    }
+                }
+                Consent::Decline => {
+                    println!("[agent] session {} refusée (ou pas de réponse) — on reste au repos.", campaign.session);
+                    send_heartbeat(&cfg_host, CONFIG_PORT, "decline");
+                }
+            }
+        } else {
+            // REPOS : juste la présence (coût réseau négligeable, le pote n'est pas dérangé).
+            send_heartbeat(&cfg_host, CONFIG_PORT, "alive");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(campaign.window.clamp(5, 3600)));
     }
 }
 
@@ -781,6 +925,34 @@ mod tests {
         assert_eq!(parse_campaign("window=99999").window, 3600); // borné haut
         assert_eq!(parse_campaign("window=1").window, 5); // borné bas
         assert_eq!(parse_campaign("window=oops").window, 30); // illisible → défaut
+    }
+
+    /// Brique B — le mode/session se parse, et le DÉFAUT le plus SÛR est le REPOS (jamais de mesure
+    /// surprise) : campagne vide ou mode inconnu → `Idle`. `simulate` (insensible à la casse) → mesure.
+    #[test]
+    fn campagne_mode_et_session_defaut_repos() {
+        assert_eq!(parse_campaign("").mode, Mode::Idle); // défaut = repos
+        assert_eq!(parse_campaign("mode=bidon").mode, Mode::Idle); // inconnu → repos (sûr)
+        assert_eq!(parse_campaign("mode=Simulate").mode, Mode::Simulate); // casse ignorée
+        assert_eq!(parse_campaign("mode=simulate\nsession=7\n").session, 7);
+        assert_eq!(parse_campaign("").session, 0);
+        // une campagne complète et réaliste :
+        let c = parse_campaign("window=20\nmode=simulate\nsession=42\n");
+        assert_eq!((c.window, c.mode, c.session), (20, Mode::Simulate, 42));
+    }
+
+    /// Brique B — le CONSENTEMENT par défaut est le REFUS : seul un « oui » franc (code 0 Unix, « 6 »
+    /// Windows) accepte ; refus/annulation/timeout/outil-absent → on ne mesure pas (jamais d'agression).
+    #[test]
+    fn consentement_refus_par_defaut() {
+        assert_eq!(consent_from_unix_status(Some(0)), Consent::Accept);
+        assert_eq!(consent_from_unix_status(Some(1)), Consent::Decline); // refus
+        assert_eq!(consent_from_unix_status(Some(5)), Consent::Decline); // timeout zenity
+        assert_eq!(consent_from_unix_status(None), Consent::Decline); // tué par un signal
+        assert_eq!(consent_from_windows_popup("6"), Consent::Accept);
+        assert_eq!(consent_from_windows_popup("7"), Consent::Decline); // Non
+        assert_eq!(consent_from_windows_popup("-1"), Consent::Decline); // timeout
+        assert_eq!(consent_from_windows_popup(""), Consent::Decline); // rien → refus
     }
 
     /// L'instrument COMPLET : à partir des arrivées par pair, on chiffre perte/ré-ordre par lien, et
