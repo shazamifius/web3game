@@ -677,13 +677,13 @@ fn session_summary_line(
         .fold(0.0_f64, f64::max);
     let worst_loss = links.values().map(|s| s.loss_pct).fold(0.0_f64, f64::max) * 100.0;
     let etat = if k == 0 {
-        "(personne en face pour l'instant)"
+        "personne en face pour l'instant"
     } else if worst_p95 <= 500.0 {
-        "ca repond bien"
+        "le reseau repond bien"
     } else {
-        "ca rame un peu"
+        "le reseau est un peu lent"
     };
-    format!("mesure #{n} : {k} pair(s) vus — pire fraicheur p95 = {worst_p95:.0} ms, perte max = {worst_loss:.0}% ({etat})")
+    format!("Mesure {n} : {k} machine(s) en vue - delai max {worst_p95:.0} ms, perte max {worst_loss:.0}% ({etat}).")
 }
 
 /// Ouvre la fenêtre de session : nettoie un éventuel flag « quitter » périmé, (re)crée le journal avec
@@ -692,21 +692,26 @@ fn session_window_open(session: u64) {
     let _ = std::fs::remove_file(session_quit_file());
     let _ = std::fs::write(
         session_log_file(),
-        format!("=== web3 - session de mesure #{session} demarree ===\nMerci de preter ton PC !\n"),
+        format!("=== web3 : mesure du reseau (projet de jeu video) - session #{session} ===\nL'outil demarre. Merci de ton aide !\n"),
     );
     let _ = std::fs::write(session_active_file(), "1");
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000; // pas de console CMD derrière la fenêtre WinForms
         let ps = WINDOWS_SESSION_PS1
             .replace("__LOG__", &session_log_file().to_string_lossy())
             .replace("__ACTIVE__", &session_active_file().to_string_lossy())
             .replace("__QUIT__", &session_quit_file().to_string_lossy());
         let path = std::env::temp_dir().join("web3_session.ps1");
-        if std::fs::write(&path, &ps).is_ok() {
-            // spawn (PAS .output()) : la fenêtre vit À CÔTÉ de la mesure, sans la bloquer.
+        // BOM UTF-8 → PowerShell 5.1 lit correctement les accents ; CREATE_NO_WINDOW + -WindowStyle
+        // Hidden → AUCUNE console CMD ne s'ouvre, seule la fenêtre WinForms reste visible. spawn (pas
+        // .output()) : la fenêtre vit À CÔTÉ de la mesure, sans la bloquer.
+        if std::fs::write(&path, format!("\u{feff}{ps}")).is_ok() {
             let _ = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File"])
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-STA", "-File"])
                 .arg(&path)
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn();
         }
     }
@@ -724,10 +729,11 @@ fn session_window_close() {
     let _ = std::fs::remove_file(session_quit_file());
 }
 
-/// Le script PowerShell (ASCII) de la FENÊTRE DE SESSION Windows. `__LOG__`/`__ACTIVE__`/`__QUIT__` sont
-/// remplacés par les chemins. Affiche le journal en direct (TextBox noir/vert rafraîchi à 1 Hz), boutons
-/// « Quitter la session » (écrit le flag) et « Réduire » (minimise) ; se ferme dès que le marqueur ACTIF
-/// disparaît. Forcée au premier plan (TopMost + Activate + BringToFront).
+/// Le script PowerShell de la FENÊTRE DE SESSION Windows. `__LOG__`/`__ACTIVE__`/`__QUIT__` → chemins.
+/// Journal en direct (TextBox noir/vert, 1 Hz) + textes français clairs (rôle de l'outil, ce que fait
+/// « Quitter »). « Quitter » écrit le flag ; « Mettre de côté » RANGE la fenêtre dans une icône de la
+/// zone de notification (NotifyIcon) — léger, non invasif, on la rouvre en double-cliquant l'icône. Se
+/// ferme quand le marqueur ACTIF disparaît. (Écrit avec BOM UTF-8 → accents OK ; lancée sans console.)
 #[cfg(windows)]
 const WINDOWS_SESSION_PS1: &str = r#"$log = '__LOG__'
 $active = '__ACTIVE__'
@@ -735,14 +741,17 @@ $quit = '__QUIT__'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'web3 - session de mesure (R&D entre potes)'
-$form.Width = 580
-$form.Height = 430
+$form.Text = 'web3 - mesure du reseau'
+$form.Width = 600
+$form.Height = 470
 $form.StartPosition = 'CenterScreen'
 $form.TopMost = $true
 $hdr = New-Object System.Windows.Forms.Label
-$hdr.Text = "Merci de preter ton PC ! On mesure le reseau pour le projet de jeu P2P. Ca tourne tout seul. Tu peux quitter quand tu veux."
-$hdr.SetBounds(12, 10, 545, 45)
+$hdr.Text = "Bonjour, et merci de ton aide. Cet outil mesure la qualite du reseau pour un projet de jeu video. Il travaille en ce moment : tu n'as rien a faire."
+$hdr.SetBounds(14, 12, 565, 44)
+$info = New-Object System.Windows.Forms.Label
+$info.Text = "Si tu as besoin de ton ordinateur ou si l'outil te derange, tu peux l'arreter avec << Quitter >>. Cela n'arrete que TON ordinateur ; les mesures continuent ailleurs. Je suis en train de mesurer, mais aucun souci si tu dois t'en aller."
+$info.SetBounds(14, 58, 565, 56)
 $box = New-Object System.Windows.Forms.TextBox
 $box.Multiline = $true
 $box.ReadOnly = $true
@@ -750,23 +759,37 @@ $box.ScrollBars = 'Vertical'
 $box.BackColor = 'Black'
 $box.ForeColor = 'Lime'
 $box.Font = New-Object System.Drawing.Font('Consolas', 9)
-$box.SetBounds(12, 60, 545, 265)
+$box.SetBounds(14, 120, 565, 248)
 $btnQuit = New-Object System.Windows.Forms.Button
-$btnQuit.Text = 'Quitter la session (rendre mon PC)'
-$btnQuit.SetBounds(12, 335, 300, 45)
+$btnQuit.Text = 'Quitter (liberer mon ordinateur)'
+$btnQuit.SetBounds(14, 378, 285, 46)
 $btnHide = New-Object System.Windows.Forms.Button
-$btnHide.Text = 'Reduire (continuer en fond)'
-$btnHide.SetBounds(322, 335, 235, 45)
+$btnHide.Text = 'Mettre de cote (petite icone en bas a droite)'
+$btnHide.SetBounds(308, 378, 271, 46)
 $foot = New-Object System.Windows.Forms.Label
-$foot.Text = "Si tu ne fais rien, ca continue et se range tout seul a la fin de la session."
-$foot.SetBounds(12, 385, 545, 20)
-$form.Controls.AddRange(@($hdr, $box, $btnQuit, $btnHide, $foot))
-$btnQuit.add_Click({
+$foot.Text = "Si tu ne fais rien, l'outil continue tranquillement et se ferme tout seul a la fin."
+$foot.SetBounds(14, 430, 565, 20)
+$form.Controls.AddRange(@($hdr, $info, $box, $btnQuit, $btnHide, $foot))
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Information
+$notify.Text = 'web3 - mesure du reseau en cours'
+$notify.Visible = $true
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+$miShow = $menu.Items.Add('Afficher la fenetre')
+$miQuit = $menu.Items.Add('Quitter (liberer mon ordinateur)')
+$notify.ContextMenuStrip = $menu
+$doQuit = {
     try { Set-Content -Path $quit -Value 'quit' -ErrorAction SilentlyContinue } catch {}
     $btnQuit.Enabled = $false
-    $btnQuit.Text = 'Deconnexion en cours... (~8s)'
-})
-$btnHide.add_Click({ $form.WindowState = 'Minimized' })
+    $btnQuit.Text = 'Deconnexion en cours... (~8 s)'
+    $form.Show(); $form.WindowState = 'Normal'
+}
+$doShow = { $form.Show(); $form.WindowState = 'Normal'; $form.Activate(); $form.BringToFront() }
+$btnQuit.add_Click($doQuit)
+$miQuit.add_Click($doQuit)
+$btnHide.add_Click({ $form.Hide() })
+$miShow.add_Click($doShow)
+$notify.add_DoubleClick($doShow)
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.add_Tick({
@@ -776,9 +799,10 @@ $timer.add_Tick({
             if ($box.Text -ne $t) { $box.Text = $t; $box.SelectionStart = $box.Text.Length; $box.ScrollToCaret() }
         } catch {}
     }
-    if (-not (Test-Path $active)) { $timer.Stop(); $form.Close() }
+    if (-not (Test-Path $active)) { $timer.Stop(); $notify.Visible = $false; $notify.Dispose(); $form.Close() }
 })
 $timer.Start()
+$form.add_FormClosed({ $notify.Visible = $false; $notify.Dispose() })
 $form.add_Shown({ $form.Activate(); $form.BringToFront() })
 [void]$form.ShowDialog()
 "#;
@@ -819,10 +843,10 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
         // La session reste « faite » côté boucle → le PC redevient dispo à la session SUIVANTE.
         if session_quit_requested() {
             println!("[agent] « Quitter » demandé par le pote — déconnexion propre (~8 s)…");
-            session_log_write("Tu as demande a rendre ton PC. Deconnexion en cours... (~8 s)");
+            session_log_write("Tu as demande a liberer ton ordinateur. Deconnexion en cours... (~8 s)");
             send_heartbeat(cfg_host, CONFIG_PORT, "leaving");
             std::thread::sleep(std::time::Duration::from_secs(8)); // laisse les autres voir le départ
-            session_log_write("Deconnecte. Merci ! (ca reprendra a la prochaine session si tu veux)");
+            session_log_write("C'est bon, ton ordinateur est libere. Merci ! (ca reprendra a la prochaine session, sans rien faire)");
             std::thread::sleep(std::time::Duration::from_millis(800));
             session_window_close();
             send_heartbeat(cfg_host, CONFIG_PORT, "idle");
@@ -850,7 +874,7 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
                 if c.mode != Mode::Simulate || c.session != start.session {
                     println!("[agent] session {} terminée — retour au repos.", start.session);
-                    session_log_write("Session terminee. La fenetre se ferme. Merci !");
+                    session_log_write("Mesures terminees. La fenetre se ferme toute seule. Merci de ton aide !");
                     std::thread::sleep(std::time::Duration::from_millis(800));
                     session_window_close();
                     send_heartbeat(cfg_host, CONFIG_PORT, "idle");
