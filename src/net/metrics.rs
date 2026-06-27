@@ -644,12 +644,53 @@ fn consent_from_unix_status(code: Option<i32>) -> Consent {
     if code == Some(0) { Consent::Accept } else { Consent::Decline }
 }
 
-/// Mappe la sortie du `WScript.Shell.Popup` Windows (type Oui/Non) en décision. PUR. `6` = Oui ;
-/// `7` = Non ; `-1` = délai dépassé. Tout sauf « 6 » → `Decline` (refus par défaut).
+/// Mappe la sortie de la fenêtre WinForms Windows (`DialogResult.ToString()`) en décision. PUR.
+/// « Yes » (bouton Accepter) → Accept ; tout le reste (« No », « Cancel », timeout, vide) → Decline.
 #[cfg_attr(not(windows), allow(dead_code))] // utilisé sur Windows + tests
 fn consent_from_windows_popup(stdout: &str) -> Consent {
-    if stdout.trim() == "6" { Consent::Accept } else { Consent::Decline }
+    if stdout.trim().eq_ignore_ascii_case("Yes") { Consent::Accept } else { Consent::Decline }
 }
+
+/// Le script PowerShell (ASCII) de la fenêtre de consentement Windows. `__SESSION__` est remplacé par
+/// le numéro de session. WinForms FORCÉ au premier plan (TopMost + Activate + BringToFront) + minuteur
+/// 60 s (pas de réponse → Refuser). Écrit « Yes »/« No » sur stdout. (Remplace `WScript.Shell.Popup`
+/// qui s'exécutait mais restait INVISIBLE.)
+#[cfg(windows)]
+const WINDOWS_CONSENT_PS1: &str = r#"Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'web3 - mesure reseau'
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$form.FormBorderStyle = 'FixedDialog'
+$form.MinimizeBox = $false
+$form.MaximizeBox = $false
+$form.Width = 490
+$form.Height = 215
+$lbl = New-Object System.Windows.Forms.Label
+$lbl.Text = "web3 (R&D entre potes) veut lancer une courte session de mesure reseau (session __SESSION__).`r`nCa prend un peu de reseau pendant la session. Tu peux refuser sans souci.`r`n`r`nLancer la session ?"
+$lbl.SetBounds(15, 15, 450, 95)
+$yes = New-Object System.Windows.Forms.Button
+$yes.Text = 'Accepter'
+$yes.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+$yes.SetBounds(90, 125, 130, 38)
+$no = New-Object System.Windows.Forms.Button
+$no.Text = 'Refuser'
+$no.DialogResult = [System.Windows.Forms.DialogResult]::No
+$no.SetBounds(265, 125, 130, 38)
+$form.Controls.Add($lbl)
+$form.Controls.Add($yes)
+$form.Controls.Add($no)
+$form.AcceptButton = $yes
+$form.CancelButton = $no
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 60000
+$timer.add_Tick({ $timer.Stop(); $form.DialogResult = [System.Windows.Forms.DialogResult]::No; $form.Close() })
+$timer.Start()
+$form.add_Shown({ $form.Activate(); $form.BringToFront() })
+$res = $form.ShowDialog()
+[Console]::Out.Write($res.ToString())
+"#;
 
 /// DEMANDE LE CONSENTEMENT au pote avant toute session de mesure (popup Accepter/Refuser, ~60 s).
 /// Dep-free : on shell-out vers l'outil de dialogue du système. Repli = `Decline` (jamais de mesure
@@ -659,19 +700,21 @@ fn ask_consent(session: u64) -> Consent {
     if let Ok(v) = std::env::var("WEB3_AGENT_AUTOCONSENT") {
         return if v.eq_ignore_ascii_case("accept") { Consent::Accept } else { Consent::Decline };
     }
-    let text = format!(
-        "web3 (R&D entre potes) aimerait lancer une courte session de mesure réseau (session {session}).\n\
-         Ça consomme un peu de réseau pendant la session. Tu peux refuser sans souci.\n\nLancer la session ?"
-    );
     #[cfg(windows)]
     {
-        // Popup natif via PowerShell (présent partout) : type 4 = Oui/Non, 60 s de délai.
-        let script = format!(
-            "$r=(New-Object -ComObject WScript.Shell).Popup('{}',60,'web3 — mesure',4); [Console]::Out.Write($r)",
-            text.replace('\'', "''").replace('\n', " ")
-        );
+        // Vraie fenêtre WinForms FORCÉE au premier plan (TopMost + Activate + BringToFront), centrée,
+        // avec boutons Accepter/Refuser et un minuteur de 60 s (pas de réponse → Refuser). On l'écrit
+        // dans un .ps1 TEMP (ASCII → zéro souci d'encodage en ligne de commande) puis on l'exécute en
+        // -STA (nécessaire à WinForms). Le `WScript.Shell.Popup` d'avant S'EXÉCUTAIT mais restait
+        // INVISIBLE (prouvé : il bloquait 60 s puis expirait) → on ne pouvait pas accepter.
+        let ps = WINDOWS_CONSENT_PS1.replace("__SESSION__", &session.to_string());
+        let path = std::env::temp_dir().join("web3_consent.ps1");
+        if std::fs::write(&path, &ps).is_err() {
+            return Consent::Decline;
+        }
         match std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File"])
+            .arg(&path)
             .output()
         {
             Ok(o) => return consent_from_windows_popup(&String::from_utf8_lossy(&o.stdout)),
@@ -680,6 +723,10 @@ fn ask_consent(session: u64) -> Consent {
     }
     #[cfg(unix)]
     {
+        let text = format!(
+            "web3 (R&D entre potes) aimerait lancer une courte session de mesure réseau (session {session}).\n\
+             Ça consomme un peu de réseau pendant la session. Tu peux refuser sans souci.\n\nLancer la session ?"
+        );
         // zenity puis kdialog (l'un des deux est presque toujours là sur un bureau Linux).
         let zen = std::process::Command::new("zenity")
             .args(["--question", "--title=web3 — mesure", &format!("--text={text}"),
@@ -949,10 +996,11 @@ mod tests {
         assert_eq!(consent_from_unix_status(Some(1)), Consent::Decline); // refus
         assert_eq!(consent_from_unix_status(Some(5)), Consent::Decline); // timeout zenity
         assert_eq!(consent_from_unix_status(None), Consent::Decline); // tué par un signal
-        assert_eq!(consent_from_windows_popup("6"), Consent::Accept);
-        assert_eq!(consent_from_windows_popup("7"), Consent::Decline); // Non
-        assert_eq!(consent_from_windows_popup("-1"), Consent::Decline); // timeout
-        assert_eq!(consent_from_windows_popup(""), Consent::Decline); // rien → refus
+        assert_eq!(consent_from_windows_popup("Yes"), Consent::Accept);
+        assert_eq!(consent_from_windows_popup("yes\r\n"), Consent::Accept); // trim + casse
+        assert_eq!(consent_from_windows_popup("No"), Consent::Decline); // Refuser
+        assert_eq!(consent_from_windows_popup("Cancel"), Consent::Decline); // fermé
+        assert_eq!(consent_from_windows_popup(""), Consent::Decline); // timeout/rien → refus
     }
 
     /// L'instrument COMPLET : à partir des arrivées par pair, on chiffre perte/ré-ordre par lien, et
