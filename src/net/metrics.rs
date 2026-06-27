@@ -629,125 +629,159 @@ fn epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// La décision du pote face à la demande de session. `Decline` est le DÉFAUT SÛR : tout ce qui n'est
-/// pas un « oui » franc (refus, fermeture, délai dépassé, pas d'outil de dialogue) = on ne mesure pas.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Consent {
-    Accept,
-    Decline,
-}
+// ===================== FENÊTRE DE SESSION (transparence) =====================
+// Modèle décidé avec l'utilisateur : une session NE BLOQUE PAS sur un consentement (les potes ne sont
+// quasi jamais devant l'écran). Elle DÉMARRE TOUTE SEULE (ils ont accepté en installant) mais s'affiche
+// dans une fenêtre VISIBLE qui montre les logs EN DIRECT, avec deux boutons : « Quitter la session »
+// (déconnexion propre ~8 s, on prévient tout le monde, le PC se range au repos → re-dispo à la session
+// SUIVANTE) et « Réduire » (continue en fond, pour quand le pote veut son PC malgré le ventilo). Si le
+// pote ne fait rien, ça continue et se range tout seul à la fin. Coordination agent↔fenêtre par 3
+// fichiers dans TEMP (dep-free) :
+//   - web3_session.log    : l'agent écrit, la fenêtre affiche (tail).
+//   - web3_session.active : présent pendant la session ; la fenêtre se ferme quand il disparaît.
+//   - web3_quit.flag      : la fenêtre l'écrit au clic « Quitter » ; l'agent le lit → déconnexion propre.
 
-/// Mappe le CODE DE SORTIE d'un dialogue Unix (zenity/kdialog : 0 = bouton OUI) en décision. PUR.
-/// Tout sauf 0 (refus, annulation, timeout=5 de zenity, outil absent) → `Decline` (refus par défaut).
-#[cfg_attr(not(unix), allow(dead_code))] // utilisé sur Unix + tests
-fn consent_from_unix_status(code: Option<i32>) -> Consent {
-    if code == Some(0) { Consent::Accept } else { Consent::Decline }
-}
+fn session_log_file() -> std::path::PathBuf { std::env::temp_dir().join("web3_session.log") }
+fn session_active_file() -> std::path::PathBuf { std::env::temp_dir().join("web3_session.active") }
+fn session_quit_file() -> std::path::PathBuf { std::env::temp_dir().join("web3_quit.flag") }
 
-/// Mappe la sortie de la fenêtre WinForms Windows (`DialogResult.ToString()`) en décision. PUR.
-/// « Yes » (bouton Accepter) → Accept ; tout le reste (« No », « Cancel », timeout, vide) → Decline.
-#[cfg_attr(not(windows), allow(dead_code))] // utilisé sur Windows + tests
-fn consent_from_windows_popup(stdout: &str) -> Consent {
-    if stdout.trim().eq_ignore_ascii_case("Yes") { Consent::Accept } else { Consent::Decline }
-}
-
-/// Le script PowerShell (ASCII) de la fenêtre de consentement Windows. `__SESSION__` est remplacé par
-/// le numéro de session. WinForms FORCÉ au premier plan (TopMost + Activate + BringToFront) + minuteur
-/// 60 s (pas de réponse → Refuser). Écrit « Yes »/« No » sur stdout. (Remplace `WScript.Shell.Popup`
-/// qui s'exécutait mais restait INVISIBLE.)
-#[cfg(windows)]
-const WINDOWS_CONSENT_PS1: &str = r#"Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'web3 - mesure reseau'
-$form.StartPosition = 'CenterScreen'
-$form.TopMost = $true
-$form.FormBorderStyle = 'FixedDialog'
-$form.MinimizeBox = $false
-$form.MaximizeBox = $false
-$form.Width = 490
-$form.Height = 215
-$lbl = New-Object System.Windows.Forms.Label
-$lbl.Text = "web3 (R&D entre potes) veut lancer une courte session de mesure reseau (session __SESSION__).`r`nCa prend un peu de reseau pendant la session. Tu peux refuser sans souci.`r`n`r`nLancer la session ?"
-$lbl.SetBounds(15, 15, 450, 95)
-$yes = New-Object System.Windows.Forms.Button
-$yes.Text = 'Accepter'
-$yes.DialogResult = [System.Windows.Forms.DialogResult]::Yes
-$yes.SetBounds(90, 125, 130, 38)
-$no = New-Object System.Windows.Forms.Button
-$no.Text = 'Refuser'
-$no.DialogResult = [System.Windows.Forms.DialogResult]::No
-$no.SetBounds(265, 125, 130, 38)
-$form.Controls.Add($lbl)
-$form.Controls.Add($yes)
-$form.Controls.Add($no)
-$form.AcceptButton = $yes
-$form.CancelButton = $no
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 60000
-$timer.add_Tick({ $timer.Stop(); $form.DialogResult = [System.Windows.Forms.DialogResult]::No; $form.Close() })
-$timer.Start()
-$form.add_Shown({ $form.Activate(); $form.BringToFront() })
-$res = $form.ShowDialog()
-[Console]::Out.Write($res.ToString())
-"#;
-
-/// DEMANDE LE CONSENTEMENT au pote avant toute session de mesure (popup Accepter/Refuser, ~60 s).
-/// Dep-free : on shell-out vers l'outil de dialogue du système. Repli = `Decline` (jamais de mesure
-/// non consentie). `WEB3_AGENT_AUTOCONSENT=accept|decline` court-circuite le popup (mes propres PC, et
-/// les tests déterministes) — JAMAIS sur les machines des potes (variable non posée → vrai popup).
-fn ask_consent(session: u64) -> Consent {
-    if let Ok(v) = std::env::var("WEB3_AGENT_AUTOCONSENT") {
-        return if v.eq_ignore_ascii_case("accept") { Consent::Accept } else { Consent::Decline };
+/// Ajoute une ligne au journal de session (que la fenêtre affiche). BORNÉ aux ~120 dernières lignes →
+/// le fichier ne gonfle pas sur une longue session.
+fn session_log_write(line: &str) {
+    let p = session_log_file();
+    let mut lines: Vec<String> =
+        std::fs::read_to_string(&p).map(|s| s.lines().map(str::to_string).collect()).unwrap_or_default();
+    lines.push(line.to_string());
+    let n = lines.len();
+    if n > 120 {
+        lines.drain(0..n - 120);
     }
+    let _ = std::fs::write(&p, lines.join("\n") + "\n");
+}
+
+/// Une ligne de journal AMICALE par fenêtre de mesure : combien de pairs, la pire fraîcheur (p95) et la
+/// pire perte vues — pour que le pote comprenne en un coup d'œil « ce qui se passe ».
+fn session_summary_line(
+    n: u64,
+    samples: &std::collections::HashMap<PeerId, Vec<f64>>,
+    links: &std::collections::HashMap<PeerId, LinkStats>,
+) -> String {
+    let k = samples.len();
+    let worst_p95 = samples
+        .values()
+        .map(|v| {
+            let mut a = v.clone();
+            a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+            percentile(&a, 95.0)
+        })
+        .fold(0.0_f64, f64::max);
+    let worst_loss = links.values().map(|s| s.loss_pct).fold(0.0_f64, f64::max) * 100.0;
+    let etat = if k == 0 {
+        "(personne en face pour l'instant)"
+    } else if worst_p95 <= 500.0 {
+        "ca repond bien"
+    } else {
+        "ca rame un peu"
+    };
+    format!("mesure #{n} : {k} pair(s) vus — pire fraicheur p95 = {worst_p95:.0} ms, perte max = {worst_loss:.0}% ({etat})")
+}
+
+/// Ouvre la fenêtre de session : nettoie un éventuel flag « quitter » périmé, (re)crée le journal avec
+/// un en-tête, pose le marqueur ACTIF, puis (Windows) lance la fenêtre WinForms en parallèle de la mesure.
+fn session_window_open(session: u64) {
+    let _ = std::fs::remove_file(session_quit_file());
+    let _ = std::fs::write(
+        session_log_file(),
+        format!("=== web3 - session de mesure #{session} demarree ===\nMerci de preter ton PC !\n"),
+    );
+    let _ = std::fs::write(session_active_file(), "1");
     #[cfg(windows)]
     {
-        // Vraie fenêtre WinForms FORCÉE au premier plan (TopMost + Activate + BringToFront), centrée,
-        // avec boutons Accepter/Refuser et un minuteur de 60 s (pas de réponse → Refuser). On l'écrit
-        // dans un .ps1 TEMP (ASCII → zéro souci d'encodage en ligne de commande) puis on l'exécute en
-        // -STA (nécessaire à WinForms). Le `WScript.Shell.Popup` d'avant S'EXÉCUTAIT mais restait
-        // INVISIBLE (prouvé : il bloquait 60 s puis expirait) → on ne pouvait pas accepter.
-        let ps = WINDOWS_CONSENT_PS1.replace("__SESSION__", &session.to_string());
-        let path = std::env::temp_dir().join("web3_consent.ps1");
-        if std::fs::write(&path, &ps).is_err() {
-            return Consent::Decline;
+        let ps = WINDOWS_SESSION_PS1
+            .replace("__LOG__", &session_log_file().to_string_lossy())
+            .replace("__ACTIVE__", &session_active_file().to_string_lossy())
+            .replace("__QUIT__", &session_quit_file().to_string_lossy());
+        let path = std::env::temp_dir().join("web3_session.ps1");
+        if std::fs::write(&path, &ps).is_ok() {
+            // spawn (PAS .output()) : la fenêtre vit À CÔTÉ de la mesure, sans la bloquer.
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File"])
+                .arg(&path)
+                .spawn();
         }
-        match std::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File"])
-            .arg(&path)
-            .output()
-        {
-            Ok(o) => return consent_from_windows_popup(&String::from_utf8_lossy(&o.stdout)),
-            Err(_) => return Consent::Decline,
-        }
-    }
-    #[cfg(unix)]
-    {
-        let text = format!(
-            "web3 (R&D entre potes) aimerait lancer une courte session de mesure réseau (session {session}).\n\
-             Ça consomme un peu de réseau pendant la session. Tu peux refuser sans souci.\n\nLancer la session ?"
-        );
-        // zenity puis kdialog (l'un des deux est presque toujours là sur un bureau Linux).
-        let zen = std::process::Command::new("zenity")
-            .args(["--question", "--title=web3 — mesure", &format!("--text={text}"),
-                   "--ok-label=Accepter", "--cancel-label=Refuser", "--timeout=60"])
-            .status();
-        if let Ok(s) = zen {
-            return consent_from_unix_status(s.code());
-        }
-        let kde = std::process::Command::new("kdialog")
-            .args(["--yesno", &text, "--title", "web3 — mesure"])
-            .status();
-        if let Ok(s) = kde {
-            return consent_from_unix_status(s.code());
-        }
-        // Aucun outil de dialogue → on PRÉVIENT (best-effort) et on REFUSE par défaut.
-        let _ = std::process::Command::new("notify-send")
-            .args(["web3", "Session de mesure demandée mais aucun dialogue dispo → refusée."])
-            .status();
-        Consent::Decline
     }
 }
+
+/// Le pote a-t-il cliqué « Quitter la session » ? (présence du flag écrit par la fenêtre.)
+fn session_quit_requested() -> bool {
+    session_quit_file().exists()
+}
+
+/// Ferme la fenêtre de session : retire le marqueur ACTIF (la fenêtre se ferme d'elle-même au prochain
+/// tick) et le flag « quitter ».
+fn session_window_close() {
+    let _ = std::fs::remove_file(session_active_file());
+    let _ = std::fs::remove_file(session_quit_file());
+}
+
+/// Le script PowerShell (ASCII) de la FENÊTRE DE SESSION Windows. `__LOG__`/`__ACTIVE__`/`__QUIT__` sont
+/// remplacés par les chemins. Affiche le journal en direct (TextBox noir/vert rafraîchi à 1 Hz), boutons
+/// « Quitter la session » (écrit le flag) et « Réduire » (minimise) ; se ferme dès que le marqueur ACTIF
+/// disparaît. Forcée au premier plan (TopMost + Activate + BringToFront).
+#[cfg(windows)]
+const WINDOWS_SESSION_PS1: &str = r#"$log = '__LOG__'
+$active = '__ACTIVE__'
+$quit = '__QUIT__'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'web3 - session de mesure (R&D entre potes)'
+$form.Width = 580
+$form.Height = 430
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$hdr = New-Object System.Windows.Forms.Label
+$hdr.Text = "Merci de preter ton PC ! On mesure le reseau pour le projet de jeu P2P. Ca tourne tout seul. Tu peux quitter quand tu veux."
+$hdr.SetBounds(12, 10, 545, 45)
+$box = New-Object System.Windows.Forms.TextBox
+$box.Multiline = $true
+$box.ReadOnly = $true
+$box.ScrollBars = 'Vertical'
+$box.BackColor = 'Black'
+$box.ForeColor = 'Lime'
+$box.Font = New-Object System.Drawing.Font('Consolas', 9)
+$box.SetBounds(12, 60, 545, 265)
+$btnQuit = New-Object System.Windows.Forms.Button
+$btnQuit.Text = 'Quitter la session (rendre mon PC)'
+$btnQuit.SetBounds(12, 335, 300, 45)
+$btnHide = New-Object System.Windows.Forms.Button
+$btnHide.Text = 'Reduire (continuer en fond)'
+$btnHide.SetBounds(322, 335, 235, 45)
+$foot = New-Object System.Windows.Forms.Label
+$foot.Text = "Si tu ne fais rien, ca continue et se range tout seul a la fin de la session."
+$foot.SetBounds(12, 385, 545, 20)
+$form.Controls.AddRange(@($hdr, $box, $btnQuit, $btnHide, $foot))
+$btnQuit.add_Click({
+    try { Set-Content -Path $quit -Value 'quit' -ErrorAction SilentlyContinue } catch {}
+    $btnQuit.Enabled = $false
+    $btnQuit.Text = 'Deconnexion en cours... (~8s)'
+})
+$btnHide.add_Click({ $form.WindowState = 'Minimized' })
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 1000
+$timer.add_Tick({
+    if (Test-Path $log) {
+        try {
+            $t = (Get-Content -Path $log -Tail 200 -ErrorAction SilentlyContinue) -join "`r`n"
+            if ($box.Text -ne $t) { $box.Text = $t; $box.SelectionStart = $box.Text.Length; $box.ScrollToCaret() }
+        } catch {}
+    }
+    if (-not (Test-Path $active)) { $timer.Stop(); $form.Close() }
+})
+$timer.Start()
+$form.add_Shown({ $form.Activate(); $form.BringToFront() })
+[void]$form.ShowDialog()
+"#;
 
 /// Issue d'une session de mesure : terminée normalement, ou interrompue par une AUTO-UPDATE (l'appelant
 /// doit alors sortir, le nouveau process prend le relais).
@@ -756,10 +790,11 @@ enum SessionEnd {
     Updated,
 }
 
-/// UNE SESSION DE MESURE consentie : on crée le nœud, on mesure fenêtre par fenêtre (fraîcheur +
-/// perte/gigue/ré-ordre), on uploade, et on RE-LIT la campagne à chaque fenêtre — si le serveur repasse
-/// en `idle` ou change de `session`, on s'arrête et on revient au repos. Le nœud P2P n'existe QUE
-/// pendant la session → au repos, zéro trafic de jeu (juste le battement de cœur).
+/// UNE SESSION DE MESURE, VISIBLE : on ouvre la fenêtre, on crée le nœud, on mesure fenêtre par fenêtre
+/// (fraîcheur + perte/gigue/ré-ordre), on uploade ET on écrit un résumé amical dans le journal visible.
+/// À chaque tour on surveille le bouton « Quitter » → déconnexion propre (~8 s, on prévient tout le monde).
+/// On RE-LIT la campagne à chaque fenêtre : si le serveur repasse `idle`/change de `session`, on range la
+/// fenêtre et on revient au repos. Le nœud P2P n'existe QUE pendant la session.
 fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     let mut bot = match Bot::new("agent", false, 0.0) {
         Some(b) => b,
@@ -768,7 +803,8 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             return SessionEnd::Normal;
         }
     };
-    println!("[agent] ✅ session {} acceptée — mesure en cours (fenêtre {}s)…", start.session, start.window);
+    println!("[agent] session {} — mesure VISIBLE en cours (fenêtre {}s)…", start.session, start.window);
+    session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
     let boot = Instant::now();
     let mut last = Instant::now();
@@ -776,7 +812,22 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     let mut samples: std::collections::HashMap<PeerId, Vec<f64>> = std::collections::HashMap::new();
     let mut first = true;
     let mut window = start.window;
+    let mut measure_n = 0u64;
     loop {
+        // Le pote a-t-il cliqué « Quitter la session » ? → DÉCONNEXION PROPRE : on prévient tout le monde
+        // (heartbeat « leaving »), on laisse ~8 s pour que le départ soit vu, puis on range et on idle.
+        // La session reste « faite » côté boucle → le PC redevient dispo à la session SUIVANTE.
+        if session_quit_requested() {
+            println!("[agent] « Quitter » demandé par le pote — déconnexion propre (~8 s)…");
+            session_log_write("Tu as demande a rendre ton PC. Deconnexion en cours... (~8 s)");
+            send_heartbeat(cfg_host, CONFIG_PORT, "leaving");
+            std::thread::sleep(std::time::Duration::from_secs(8)); // laisse les autres voir le départ
+            session_log_write("Deconnecte. Merci ! (ca reprendra a la prochaine session si tu veux)");
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            session_window_close();
+            send_heartbeat(cfg_host, CONFIG_PORT, "idle");
+            return SessionEnd::Normal;
+        }
         let dt = last.elapsed().as_secs_f32();
         last = Instant::now();
         bot.step(dt, boot.elapsed().as_secs_f32()); // horloge CONTINUE entre fenêtres (pas de saut)
@@ -786,23 +837,29 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             }
         }
         if win_start.elapsed().as_secs() >= window {
+            measure_n += 1;
             let links = link_stats_by_peer(bot.take_link_arrivals(), 16.0);
             let lines = report_freshness(&epoch_secs().to_string(), &samples, &links);
             for l in &lines {
                 let _ = http_post(cfg_host, CONFIG_PORT, "/upload", l); // brique 3
             }
+            session_log_write(&session_summary_line(measure_n, &samples, &links)); // journal VISIBLE
             samples.clear();
             send_heartbeat(cfg_host, CONFIG_PORT, "alive"); // présence pendant la session
             // La session a-t-elle été ARRÊTÉE / changée côté serveur ? (serveur muet → on continue.)
             if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
                 if c.mode != Mode::Simulate || c.session != start.session {
                     println!("[agent] session {} terminée — retour au repos.", start.session);
+                    session_log_write("Session terminee. La fenetre se ferme. Merci !");
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    session_window_close();
                     send_heartbeat(cfg_host, CONFIG_PORT, "idle");
                     return SessionEnd::Normal;
                 }
                 window = c.window; // la fenêtre peut être ajustée à chaud
             }
             if maybe_self_update(cfg_host, CONFIG_PORT) {
+                session_window_close();
                 return SessionEnd::Updated; // le nouveau process reprend
             }
             win_start = Instant::now();
@@ -812,11 +869,12 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     }
 }
 
-/// LA BOUCLE DE L'AGENT (calme + consentie). Au REPOS : aucun nœud P2P, juste un battement de cœur
-/// léger (présence « qui est en ligne quand ») + une relecture de campagne + l'auto-update. Quand le
-/// serveur demande une session (`mode=simulate` + un `session` neuf), on demande le CONSENTEMENT au
-/// pote (popup) : accepté → on mesure ; refusé/pas de réponse → on reste au repos, et on ne re-demande
-/// PAS pour cette même session (une question par `session`). Le pote garde toujours la main.
+/// LA BOUCLE DE L'AGENT (calme + TRANSPARENTE). Au REPOS : aucun nœud P2P, juste un battement de cœur
+/// léger (présence « qui est en ligne quand ») + relecture de campagne + auto-update. Quand le serveur
+/// demande une session (`mode=simulate` + un `session` neuf), on DÉMARRE DIRECTEMENT la mesure dans une
+/// fenêtre VISIBLE (pas de popup bloquant : les potes ne sont jamais à l'écran) — le pote peut Quitter ou
+/// Réduire quand il veut. Une session par `session` (set `decided`) → après un « Quitter », le PC reste
+/// au repos et redevient dispo dès que je bumpe `session`.
 fn run_agent_loop(window: u64) {
     let cfg_host = super::link::rendezvous_addr().ip().to_string();
     let fallback_window = window.max(5);
@@ -825,7 +883,7 @@ fn run_agent_loop(window: u64) {
          http://{cfg_host}:{CONFIG_PORT}/campaign (Ctrl-C pour arrêter)"
     );
     send_heartbeat(&cfg_host, CONFIG_PORT, "start");
-    let mut decided: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut done: std::collections::HashSet<u64> = std::collections::HashSet::new();
     loop {
         let campaign = http_get(&cfg_host, CONFIG_PORT, "/campaign")
             .map(|b| parse_campaign(&b))
@@ -834,19 +892,11 @@ fn run_agent_loop(window: u64) {
         if maybe_self_update(&cfg_host, CONFIG_PORT) {
             return; // le nouveau process prend le relais
         }
-        if campaign.mode == Mode::Simulate && !decided.contains(&campaign.session) {
-            decided.insert(campaign.session); // une seule question par session
-            println!("[agent] session {} demandée par le serveur — demande de consentement…", campaign.session);
-            match ask_consent(campaign.session) {
-                Consent::Accept => {
-                    if let SessionEnd::Updated = run_measure_session(&cfg_host, campaign) {
-                        return;
-                    }
-                }
-                Consent::Decline => {
-                    println!("[agent] session {} refusée (ou pas de réponse) — on reste au repos.", campaign.session);
-                    send_heartbeat(&cfg_host, CONFIG_PORT, "decline");
-                }
+        if campaign.mode == Mode::Simulate && !done.contains(&campaign.session) {
+            done.insert(campaign.session); // une session par identifiant
+            println!("[agent] session {} demandée — démarrage VISIBLE (fenêtre + mesure).", campaign.session);
+            if let SessionEnd::Updated = run_measure_session(&cfg_host, campaign) {
+                return;
             }
         } else {
             // REPOS : juste la présence (coût réseau négligeable, le pote n'est pas dérangé).
@@ -988,19 +1038,29 @@ mod tests {
         assert_eq!((c.window, c.mode, c.session), (20, Mode::Simulate, 42));
     }
 
-    /// Brique B — le CONSENTEMENT par défaut est le REFUS : seul un « oui » franc (code 0 Unix, « 6 »
-    /// Windows) accepte ; refus/annulation/timeout/outil-absent → on ne mesure pas (jamais d'agression).
+    /// Fenêtre de session — la coordination par fichiers (le contrat agent↔fenêtre) : `open` pose le
+    /// marqueur ACTIF et nettoie un flag « quitter » périmé ; le journal est BORNÉ ; un clic « Quitter »
+    /// se détecte ; `close` retire tout. (Le rendu WinForms, lui, se valide sur un vrai Windows.)
     #[test]
-    fn consentement_refus_par_defaut() {
-        assert_eq!(consent_from_unix_status(Some(0)), Consent::Accept);
-        assert_eq!(consent_from_unix_status(Some(1)), Consent::Decline); // refus
-        assert_eq!(consent_from_unix_status(Some(5)), Consent::Decline); // timeout zenity
-        assert_eq!(consent_from_unix_status(None), Consent::Decline); // tué par un signal
-        assert_eq!(consent_from_windows_popup("Yes"), Consent::Accept);
-        assert_eq!(consent_from_windows_popup("yes\r\n"), Consent::Accept); // trim + casse
-        assert_eq!(consent_from_windows_popup("No"), Consent::Decline); // Refuser
-        assert_eq!(consent_from_windows_popup("Cancel"), Consent::Decline); // fermé
-        assert_eq!(consent_from_windows_popup(""), Consent::Decline); // timeout/rien → refus
+    fn fenetre_session_coordination_fichiers() {
+        let _ = std::fs::write(session_quit_file(), "perime"); // flag d'une session précédente
+        session_window_open(42);
+        assert!(session_active_file().exists(), "le marqueur ACTIF est posé");
+        assert!(!session_quit_requested(), "le flag « quitter » périmé est nettoyé à l'ouverture");
+
+        for i in 0..200 {
+            session_log_write(&format!("ligne {i}"));
+        }
+        let content = std::fs::read_to_string(session_log_file()).unwrap();
+        assert!(content.lines().count() <= 121, "journal borné (~120 lignes), pas de gonflement");
+
+        std::fs::write(session_quit_file(), "quit").unwrap(); // la fenêtre signale le clic « Quitter »
+        assert!(session_quit_requested());
+
+        session_window_close();
+        assert!(!session_active_file().exists(), "ACTIF retiré → la fenêtre se ferme");
+        assert!(!session_quit_requested(), "flag « quitter » retiré");
+        let _ = std::fs::remove_file(session_log_file());
     }
 
     /// L'instrument COMPLET : à partir des arrivées par pair, on chiffre perte/ré-ordre par lien, et
