@@ -715,7 +715,72 @@ fn session_window_open(session: u64) {
                 .spawn();
         }
     }
+    #[cfg(unix)]
+    {
+        // Sans session graphique (serveur, service headless) → pas de fenêtre, la mesure tourne quand
+        // même (le pote la verra au prochain affichage / via la présence). On ne lance la fenêtre QUE
+        // s'il y a un affichage.
+        let has_display =
+            std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok();
+        if has_display {
+            let sh = LINUX_SESSION_SH
+                .replace("__LOG__", &session_log_file().to_string_lossy())
+                .replace("__ACTIVE__", &session_active_file().to_string_lossy())
+                .replace("__QUIT__", &session_quit_file().to_string_lossy());
+            let path = std::env::temp_dir().join("web3_session.sh");
+            if std::fs::write(&path, &sh).is_ok() {
+                // Pas de zenity garanti sur NixOS → on affiche les logs dans un TERMINAL (le plus
+                // dispo l'emporte). Chaque terminal a sa façon de lancer une commande : on essaie
+                // dans l'ordre, le premier qui se lance gagne.
+                let terms: [(&str, &[&str]); 6] = [
+                    ("kitty", &["bash"]),
+                    ("foot", &["bash"]),
+                    ("konsole", &["-e", "bash"]),
+                    ("gnome-terminal", &["--", "bash"]),
+                    ("alacritty", &["-e", "bash"]),
+                    ("xterm", &["-e", "bash"]),
+                ];
+                for (term, pre) in terms {
+                    if std::process::Command::new(term).args(pre).arg(&path).spawn().is_ok() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
+
+/// La FENÊTRE DE SESSION Linux = un terminal qui affiche le journal en direct (les chemins sont
+/// substitués dans le script). Transparence (logs) + « tape q pour quitter et libérer ton PC »
+/// (écrit le flag) ; fermer la fenêtre = cacher (la session continue). Se ferme quand le marqueur
+/// ACTIF disparaît. POSIX-friendly mais utilise `read -t` (bash) → on le lance avec `bash`.
+#[cfg(unix)]
+const LINUX_SESSION_SH: &str = r#"LOG='__LOG__'
+ACTIVE='__ACTIVE__'
+QUIT='__QUIT__'
+while [ -f "$ACTIVE" ]; do
+  clear
+  echo "=================================================================="
+  echo "  web3 - mesure du reseau (projet de jeu video)"
+  echo "  Merci de ton aide ! Cet outil mesure la qualite du reseau."
+  echo "  Il tourne tout seul, tu n'as rien a faire."
+  echo ""
+  echo "  Besoin de ton ordinateur ? Tape  q  puis Entree pour quitter et"
+  echo "  liberer CETTE machine (ca n'arrete que ton PC ; les mesures"
+  echo "  continuent ailleurs). Aucun souci pour partir."
+  echo "=================================================================="
+  tail -n 15 "$LOG" 2>/dev/null
+  echo "------------------------------------------------------------------"
+  echo "[q]+Entree = quitter et liberer mon PC   |   fermer la fenetre = cacher"
+  if read -t 1 -r key; then
+    case "$key" in
+      q|Q) printf 'quit' > "$QUIT"; echo "Deconnexion en cours... (~8 s)"; sleep 3; exit 0;;
+    esac
+  fi
+done
+echo "Mesures terminees. Merci de ton aide !"
+sleep 1
+"#;
 
 /// Le pote a-t-il cliqué « Quitter la session » ? (présence du flag écrit par la fenêtre.)
 fn session_quit_requested() -> bool {
