@@ -1,0 +1,74 @@
+name: build-linux-musl
+
+# Compile un binaire Linux PORTABLE (statiquement lié, cible musl) qui tourne sur
+# N'IMPORTE QUELLE distribution (Ubuntu, Arch, Debian, NixOS…), pas seulement NixOS.
+# C'est ce binaire qui doit alimenter le canal d'update `jeu-linux` (sinon un binaire
+# NixOS, lié à /nix/store, ne démarrerait pas chez les potes sur d'autres distros).
+# Déclenché À LA MAIN (bouton « Run workflow » dans l'onglet Actions, ou via l'API).
+
+on:
+  workflow_dispatch:
+    inputs:
+      rendezvous:
+        description: "Adresse publique du rendez-vous (ex 1.2.3.4:24000) — bakée dans serveur.txt, zéro config utilisateur"
+        required: false
+        default: ""
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain Rust stable (+ cible musl)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Outils musl (linker)
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Compiler (release, statique)
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Vérifier que c'est bien statique
+        run: |
+          ldd target/x86_64-unknown-linux-musl/release/jeu || true
+          file target/x86_64-unknown-linux-musl/release/jeu
+
+      - name: Empaqueter binaire + installeur
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/jeu dist/jeu
+          chmod +x dist/jeu
+          # Installeur : rend exécutable + installe le service systemd --user (démarrage auto).
+          cat > dist/installer-linux.sh <<'SH'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")" || exit 1
+          chmod +x jeu
+          ./jeu agent install
+          echo
+          echo "Termine ! L'agent tourne en arriere-plan, discret. Une fenetre"
+          echo "n'apparait que PENDANT une session (tu peux la fermer ou la quitter)."
+          SH
+          cat > dist/desinstaller-linux.sh <<'SH'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")" || exit 1
+          ./jeu agent uninstall
+          echo "Desinstalle : plus rien ne tourne, plus de demarrage auto."
+          SH
+          chmod +x dist/installer-linux.sh dist/desinstaller-linux.sh
+          # Adresse du rendez-vous bakée à la construction (entrée du workflow) → zéro config.
+          if [ -n "${{ inputs.rendezvous }}" ]; then
+            printf '%s' "${{ inputs.rendezvous }}" > dist/serveur.txt
+            echo "serveur.txt bake: ${{ inputs.rendezvous }}"
+          fi
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3game-linux
+          path: dist
