@@ -967,6 +967,18 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                 samples.entry(id).or_default().push(age);
             }
         }
+        // Vérification fréquente (chaque seconde) de l'arrêt de campagne pour FERMETURE INSTANTANÉE de la fenêtre
+        if last.elapsed().as_millis() % 1000 < 10 {
+            if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
+                if c.mode != Mode::Simulate || c.session != start.session {
+                    println!("[agent] session {} arrêtée à chaud — fermeture immédiate.", start.session);
+                    stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    session_window_close();
+                    send_heartbeat(cfg_host, CONFIG_PORT, "idle");
+                    return SessionEnd::Normal;
+                }
+            }
+        }
         if win_start.elapsed().as_secs() >= window {
             measure_n += 1;
             let links = link_stats_by_peer(bot.take_link_arrivals(), 16.0);
@@ -977,7 +989,6 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             session_log_write(&session_summary_line(measure_n, &samples, &links)); // journal VISIBLE
             samples.clear();
             send_heartbeat(cfg_host, CONFIG_PORT, "alive"); // présence pendant la session
-            // La session a-t-elle été ARRÊTÉE / changée côté serveur ? (serveur muet → on continue.)
             if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
                 if c.mode != Mode::Simulate || c.session != start.session {
                     println!("[agent] session {} terminée — retour au repos.", start.session);
