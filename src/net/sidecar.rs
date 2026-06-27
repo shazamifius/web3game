@@ -194,9 +194,11 @@ fn run_core(shared: Arc<Shared>) {
         bot.step(dt, now);
         // 3) publier les avatars distants RÉELS (+ fausse foule de banc si activée) pour Unreal.
         let mut avs = bot.avatars(now);
+        let reels = avs.len();
         if fake_n > 0 {
             avs.extend(fake_crowd(fake_n, now));
         }
+        let publies = avs.len(); // ce qui part RÉELLEMENT dans le SNAPSHOT vers Unreal (réels + foule)
         *shared.avatars.lock().unwrap() = avs;
 
         log_acc += dt;
@@ -204,8 +206,8 @@ fn run_core(shared: Arc<Shared>) {
             log_acc = 0.0;
             let id = bot.id().map(|i| i.short()).unwrap_or_else(|| "—".to_string());
             println!(
-                "[sidecar/cœur] t={now:.0}s | id={id} | pairs={} | avatars={} | acceptés={} rejetés={} relayés={} | ma_pos=({:.0},{:.0},{:.0}) PUSH_SELF={}",
-                bot.neighbors(), bot.avatars(now).len(), bot.accepted(), bot.rejected(), bot.relayed(),
+                "[sidecar/cœur] t={now:.0}s | id={id} | pairs={} | avatars={publies} (réels {reels}) | acceptés={} rejetés={} relayés={} | ma_pos=({:.0},{:.0},{:.0}) PUSH_SELF={}",
+                bot.neighbors(), bot.accepted(), bot.rejected(), bot.relayed(),
                 p.x, p.y, p.z, p.updates
             );
         }
