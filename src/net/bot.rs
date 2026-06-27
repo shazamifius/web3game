@@ -17,7 +17,10 @@ use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::NetLink;
-use super::message::{claimed_id, decode_canonical, encode_relay_fwd, encode_signed, sig_ok, PlayerState};
+use super::message::{
+    claimed_id, decode_canonical, decode_state_bundle, encode_relay_fwd, encode_signed,
+    encode_state_bundle, sig_ok, PlayerState,
+};
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
 use super::skin::random_color;
@@ -26,10 +29,10 @@ use super::cell::{
 };
 use super::wire::{
     kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_GOSSIP, KIND_ORB, KIND_PUNCH,
-    KIND_RELAY, KIND_STATE, KIND_WELCOME, PROTO_VERSION,
+    KIND_RELAY, KIND_STATE, KIND_STATE_BUNDLE, KIND_WELCOME, PROTO_VERSION,
 };
 use crate::math::Vec3;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -161,6 +164,9 @@ pub(crate) struct Bot {
     /// Redondance d'émission sur le chemin RELAIS (`RELAY_REDUNDANCY`, défaut 1 = inchangé). Lu UNE
     /// fois à la construction. Cf. `relay_redundancy_from_env` : écrase la traîne p95 sur lien lossy.
     relay_redundancy: usize,
+    /// Anneau de NOS K derniers états signés (le plus ancien d'abord), pour le LOT relais
+    /// (`KIND_STATE_BUNDLE`) : redondance temporelle budget-free. Borné à `relay_redundancy` (≤ 8).
+    recent_self_states: VecDeque<Vec<u8>>,
     /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
     /// que le vrai client ([netcode/send.rs]). Chaque pair accumule `débit × dt` ; à 1,
     /// on lui envoie un paquet. C'est ce qui fait que le bot mesure DÉSORMAIS le coût
@@ -245,6 +251,7 @@ impl Bot {
             relay_fallback: relay_fallback_enabled(),
             force_relay: false,
             relay_redundancy: relay_redundancy_from_env(),
+            recent_self_states: VecDeque::new(),
             send_credits: HashMap::new(),
             last_state: HashMap::new(),
             heard_count: HashMap::new(),
@@ -369,6 +376,59 @@ impl Bot {
         v.push((now as f64 * 1000.0, seq));
         if v.len() > MAX_ARRIVALS_PER_PEER {
             v.remove(0);
+        }
+    }
+
+    /// Traite UN état signé reçu (forme KIND_STATE, 182 o), qu'il arrive en DIRECT, par RELAIS, ou
+    /// éclaté d'un LOT (`KIND_STATE_BUNDLE`). Logique IDENTIQUE à l'ex-bras `KIND_STATE` (extraite
+    /// pour être partagée) : sceau → PoW/sourdine/anti-rejeu → anti-téléport → acceptation. Le seau
+    /// par-source en tête de boucle a déjà gaté le DATAGRAMME ; on ne re-facture rien par état du lot.
+    fn ingest_state(&mut self, bytes: &[u8], from: SocketAddr, now: f32) {
+        if !sig_ok(bytes) {
+            return;
+        }
+        match decode_canonical(bytes) {
+            Some(state) => {
+                if state.id.has_pow(pow_bits())
+                    && !self.link.is_muted(state.id)
+                    && self.link.accept_seq(state.id, state.seq)
+                {
+                    let np = Vec3::new(state.x, state.y, state.z);
+                    let teleport = match self.last_state.get(&state.id) {
+                        Some((prev, t)) => !move_plausible(*prev, np, now - t),
+                        None => false,
+                    };
+                    if teleport {
+                        self.link.punish(state.id, "téléport (vitesse impossible)");
+                        self.rejected += 1;
+                    } else {
+                        self.last_state.insert(state.id, (np, now));
+                        self.link.note_pos(state.id, (np.x, np.z));
+                        self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
+                        if let Some(sink) = self.avatar_sink.as_mut() {
+                            sink.insert(state.id, (state, now)); // sidecar : avatar complet
+                        }
+                        // 12.3 (fix REPRISE §2 porté dans Bot) : un état RELAYÉ arrive FROM le
+                        // rendez-vous → NE PAS croire à un trou direct (sinon on émettrait en direct
+                        // dans le vide ET on ne relaierait jamais en retour = le sens unique observé
+                        // en réel). On note la réciprocité.
+                        if from == self.link.rendezvous {
+                            self.relays_to_us.insert(state.id);
+                        } else {
+                            self.holes.insert(state.id, true);
+                        }
+                        *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
+                        self.record_arrival(state.id, now, state.seq); // instrument agent
+                        self.accepted += 1;
+                    }
+                }
+            }
+            None => {
+                if let Some(id) = claimed_id(bytes) {
+                    self.link.punish(id, "état signé impossible (NaN)");
+                    self.rejected += 1;
+                }
+            }
         }
     }
 
@@ -551,51 +611,15 @@ impl Bot {
                         }
                     }
                 }
-                Some(KIND_STATE) => {
-                    if !sig_ok(&bytes) {
-                        continue;
-                    }
-                    match decode_canonical(&bytes) {
-                        Some(state) => {
-                            if state.id.has_pow(pow_bits())
-                                && !self.link.is_muted(state.id)
-                                && self.link.accept_seq(state.id, state.seq)
-                            {
-                                let np = Vec3::new(state.x, state.y, state.z);
-                                let teleport = match self.last_state.get(&state.id) {
-                                    Some((prev, t)) => !move_plausible(*prev, np, now - t),
-                                    None => false,
-                                };
-                                if teleport {
-                                    self.link.punish(state.id, "téléport (vitesse impossible)");
-                                    self.rejected += 1;
-                                } else {
-                                    self.last_state.insert(state.id, (np, now));
-                                    self.link.note_pos(state.id, (np.x, np.z));
-                                    self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
-                                    if let Some(sink) = self.avatar_sink.as_mut() {
-                                        sink.insert(state.id, (state, now)); // sidecar : avatar complet
-                                    }
-                                    // 12.3 (fix REPRISE §2 porté dans Bot) : un état RELAYÉ arrive
-                                    // FROM le rendez-vous → NE PAS croire à un trou direct (sinon on
-                                    // émettrait en direct dans le vide ET on ne relaierait jamais en
-                                    // retour = le sens unique observé en réel). On note la réciprocité.
-                                    if from == self.link.rendezvous {
-                                        self.relays_to_us.insert(state.id);
-                                    } else {
-                                        self.holes.insert(state.id, true);
-                                    }
-                                    *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
-                                    self.record_arrival(state.id, now, state.seq); // instrument agent
-                                    self.accepted += 1;
-                                }
-                            }
-                        }
-                        None => {
-                            if let Some(id) = claimed_id(&bytes) {
-                                self.link.punish(id, "état signé impossible (NaN)");
-                                self.rejected += 1;
-                            }
+                Some(KIND_STATE) => self.ingest_state(&bytes, from, now),
+                // LOT relais (12.3 / D17) : on ÉCLATE le lot et on traite chaque état par le MÊME
+                // chemin que KIND_STATE (du + ancien au + récent) → accept_seq dédoublonne, et un seq
+                // contenu dans le lot COMBLE un trou s'il avait été perdu auparavant. Borné par le seau
+                // par-source en tête de boucle (un lot = UN datagramme = 1 crédit), anti-DoS inchangé.
+                Some(KIND_STATE_BUNDLE) => {
+                    if let Some(parts) = decode_state_bundle(&bytes) {
+                        for s in parts {
+                            self.ingest_state(s, from, now);
                         }
                     }
                 }
@@ -720,6 +744,16 @@ impl Bot {
                 let bytes = encode_signed(&me, &self.link.identity);
                 let me_xz = (pos.x, pos.z);
 
+                // LOT relais (redondance temporelle) : on garde nos `relay_redundancy` derniers états
+                // signés (le plus ancien d'abord). Sans frais quand redondance=1 (anneau d'un seul élément,
+                // jamais lu car le chemin relais reste l'envoi brut). Cf. encode_state_bundle / D17.
+                if self.relay_redundancy > 1 {
+                    self.recent_self_states.push_back(bytes.to_vec());
+                    while self.recent_self_states.len() > self.relay_redundancy {
+                        self.recent_self_states.pop_front();
+                    }
+                }
+
                 // 0) FOCUS COLLANT (chap. 8.2a-bis) : mise à jour hystérétique de l'ensemble plein
                 //    débit AVANT d'allouer → pas de recomposition du top-K à chaque tick (fin du churn).
                 self.link.refresh_focus(me_xz);
@@ -765,13 +799,18 @@ impl Bot {
                             }
                             SendKind::Relay => {
                                 // On demande au rendez-vous de porter notre état SCELLÉ jusqu'à ce pair.
-                                // REDONDANCE (défaut 1 = inchangé) : k copies back-to-back → sur lien
-                                // lossy, le trou ne survient que si les k sont perdues (p^k), ce qui
-                                // écrase la traîne p95. Récepteur dédoublonne nativement (seq le + récent).
-                                let env = encode_relay_fwd(*id, &bytes);
-                                for _ in 0..self.relay_redundancy {
-                                    let _ = self.link.socket.send_to(self.link.rendezvous, &env);
-                                }
+                                // REDONDANCE (défaut 1 = inchangé, byte-pour-byte) : à k≥2 on porte les
+                                // K DERNIERS états dans UN seul lot (budget-free : 1 envoi/tick, réparti
+                                // sur K ticks → bat la perte indépendante p^K ET la perte en rafale). Le
+                                // récepteur éclate le lot et dédoublonne nativement (accept_seq).
+                                let env = if self.relay_redundancy > 1 && !self.recent_self_states.is_empty() {
+                                    let slices: Vec<&[u8]> =
+                                        self.recent_self_states.iter().map(|v| v.as_slice()).collect();
+                                    encode_relay_fwd(*id, &encode_state_bundle(&slices))
+                                } else {
+                                    encode_relay_fwd(*id, &bytes)
+                                };
+                                let _ = self.link.socket.send_to(self.link.rendezvous, &env);
                             }
                             SendKind::Skip => {}
                         }

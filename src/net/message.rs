@@ -13,7 +13,7 @@
 //! une identité : il faudrait posséder la clé privée correspondante.
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::wire::{KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, PROTO_VERSION};
+use super::wire::{KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, KIND_STATE_BUNDLE, PROTO_VERSION};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id` = sa clé publique), où
 /// (`x,y,z`), à quelle vitesse il va (`vx,vy,vz`), comment il est orienté
@@ -206,6 +206,53 @@ pub(crate) fn encode_relay_fwd(dest: PeerId, payload: &[u8]) -> Vec<u8> {
     out
 }
 
+// ----------------------------------------------------------------------------
+// LOT D'ÉTATS (KIND_STATE_BUNDLE) — redondance TEMPORELLE budget-free (12.3 / D17).
+// ----------------------------------------------------------------------------
+// Sur un relais lossy (4G/CGNAT, ~88 % de perte), au lieu d'émettre k COPIES séparées du même état
+// (qui chacune coûtent au budget anti-amplification du rendez-vous), on émet UN SEUL paquet portant
+// les K DERNIERS états signés. Un seq donné réapparaît dans les K lots consécutifs → il n'est perdu
+// que si les K lots sont perdus (p^K), MAIS à 1 envoi/tick (aucune charge budget en plus) et réparti
+// sur K ticks (bat aussi la perte EN RAFALE). Le récepteur dédoublonne nativement (accept_seq).
+//   [0] KIND_STATE_BUNDLE | [1] version | [2] count(u8) | [3..] count × SIGNED_STATE_SIZE (182 o).
+// Chaque élément est un état signé COMPLET (forme KIND_STATE) qui s'auto-vérifie indépendamment.
+/// En-tête d'un lot = type (1) + version (1) + nombre d'états (1) = 3 o.
+pub(crate) const STATE_BUNDLE_HEADER: usize = 3;
+
+/// Construit un LOT à partir d'états DÉJÀ scellés (chacun de `SIGNED_STATE_SIZE` octets, forme
+/// KIND_STATE), du plus ANCIEN au plus récent. `states` est tronqué à 255 (compteur u8). Réciproque
+/// de `decode_state_bundle`. Émis UNIQUEMENT sur le chemin relais sous `RELAY_REDUNDANCY ≥ 2`.
+pub(crate) fn encode_state_bundle(states: &[&[u8]]) -> Vec<u8> {
+    let n = states.len().min(255);
+    let mut out = Vec::with_capacity(STATE_BUNDLE_HEADER + n * SIGNED_STATE_SIZE);
+    out.push(KIND_STATE_BUNDLE);
+    out.push(PROTO_VERSION);
+    out.push(n as u8);
+    for s in states.iter().take(n) {
+        out.extend_from_slice(s);
+    }
+    out
+}
+
+/// Décode un LOT → la liste des tranches d'états signés (chacune `SIGNED_STATE_SIZE`), du plus ancien
+/// au plus récent, ou `None` si malformé (mauvais type/version, ou longueur incohérente avec `count`).
+/// Chaque tranche est rendue VERBATIM : c'est le destinataire qui vérifie chaque sceau.
+pub(crate) fn decode_state_bundle(buf: &[u8]) -> Option<Vec<&[u8]>> {
+    if buf.len() < STATE_BUNDLE_HEADER || buf[0] != KIND_STATE_BUNDLE || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    let count = buf[2] as usize;
+    if buf.len() != STATE_BUNDLE_HEADER + count * SIGNED_STATE_SIZE {
+        return None; // longueur déclarée ≠ longueur réelle → on jette (jamais de lecture partielle)
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = STATE_BUNDLE_HEADER + i * SIGNED_STATE_SIZE;
+        out.push(&buf[off..off + SIGNED_STATE_SIZE]);
+    }
+    Some(out)
+}
+
 /// Lit l'id (clé) revendiqué dans un paquet d'état, sans rien vérifier. Sert à la
 /// réputation : quand le sceau est valide mais le contenu impossible, on sait QUI accuser.
 pub(crate) fn claimed_id(buf: &[u8]) -> Option<PeerId> {
@@ -302,6 +349,38 @@ mod tests {
             id: pid(5), x: 1.0, y: 0.7, z: -2.0, vx: 0.5, vy: 0.0, vz: -1.0,
             yaw: 0.3, pitch: 0.1, r: 0.9, g: 0.4, b: 0.2, parent: None, seq: 1,
         }
+    }
+
+    /// LOT d'états : round-trip exact (les tranches ressortent VERBATIM, dans l'ordre), chaque
+    /// élément reste un état signé valide, et une longueur trafiquée est REJETÉE (jamais de lecture
+    /// partielle). C'est la redondance temporelle budget-free du relais (12.3 / D17).
+    #[test]
+    fn lot_d_etats_round_trip_et_rejette_la_longueur_fausse() {
+        let a = Identity::generate();
+        let mut s1 = etat_exemple();
+        s1.id = a.id();
+        s1.seq = 7;
+        let mut s2 = s1.clone();
+        s2.seq = 8;
+        let b1 = encode_signed(&s1, &a);
+        let b2 = encode_signed(&s2, &a);
+
+        let lot = encode_state_bundle(&[&b1[..], &b2[..]]);
+        assert_eq!(lot[0], KIND_STATE_BUNDLE);
+        assert_eq!(lot.len(), STATE_BUNDLE_HEADER + 2 * SIGNED_STATE_SIZE);
+
+        let parts = decode_state_bundle(&lot).expect("lot valide");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], &b1[..]); // ordre préservé : ancien d'abord
+        assert_eq!(parts[1], &b2[..]);
+        // chaque tranche s'auto-vérifie indépendamment
+        assert_eq!(decode_verified(parts[0]).unwrap().seq, 7);
+        assert_eq!(decode_verified(parts[1]).unwrap().seq, 8);
+
+        // longueur déclarée incohérente (un octet en trop) → rejet, pas de lecture partielle.
+        let mut trafique = lot.clone();
+        trafique.push(0);
+        assert!(decode_state_bundle(&trafique).is_none());
     }
 
     /// Un état signé par une vraie identité se vérifie et se décode ; son `id`
