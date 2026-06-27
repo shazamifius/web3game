@@ -1060,6 +1060,137 @@ pub fn run_serve_config(dir: &str, port: u16) {
     }
 }
 
+#[derive(Clone, Debug)]
+struct HeartbeatRecord {
+    ts: u64,
+    host: String,
+    _ver: String,
+    ev: String,
+}
+
+fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
+    let line = line.trim();
+    if !line.starts_with('{') || !line.ends_with('}') {
+        return None;
+    }
+    let mut ts = 0u64;
+    let mut host = String::new();
+    let mut _ver = String::new();
+    let mut ev = String::new();
+
+    for part in line[1..line.len() - 1].split(',') {
+        if let Some((k, v)) = part.split_once(':') {
+            let k = k.trim().trim_matches('"');
+            let v = v.trim().trim_matches('"');
+            match k {
+                "ts" => ts = v.parse().unwrap_or(0),
+                "host" => host = v.to_string(),
+                "ver" => _ver = v.to_string(),
+                "ev" => ev = v.to_string(),
+                _ => {}
+            }
+        }
+    }
+    if ts > 0 && !host.is_empty() {
+        Some(HeartbeatRecord { ts, host, _ver, ev })
+    } else {
+        None
+    }
+}
+
+/// AFFICHE LES STATISTIQUES DE PRÉSENCE (machines actives + dispo moyenne par heure).
+pub fn run_stats() {
+    ensure_rendezvous_from_file();
+    let cfg_host = super::link::rendezvous_addr().ip().to_string();
+    println!("[stats] Analyse de la présence réseau depuis http://{cfg_host}:{CONFIG_PORT}/presence.ndjson ...");
+
+    let content = std::fs::read_to_string("presence.ndjson")
+        .or_else(|_| std::fs::read_to_string("/home/shaza/web3-serve/presence.ndjson"))
+        .ok()
+        .or_else(|| http_get(&cfg_host, CONFIG_PORT, "/presence.ndjson"));
+
+    let body = match content {
+        Some(b) => b,
+        None => {
+            eprintln!("[stats] Impossible de récupérer presence.ndjson depuis le serveur.");
+            return;
+        }
+    };
+
+    let records: Vec<HeartbeatRecord> = body.lines().filter_map(parse_heartbeat).collect();
+    if records.is_empty() {
+        println!("[stats] Aucune donnée de présence enregistrée pour l'instant.");
+        return;
+    }
+
+    let now = epoch_secs();
+
+    let mut latest_by_host: std::collections::HashMap<String, &HeartbeatRecord> = std::collections::HashMap::new();
+    for r in &records {
+        let entry = latest_by_host.entry(r.host.clone()).or_insert(r);
+        if r.ts > entry.ts {
+            *entry = r;
+        }
+    }
+
+    let active_threshold = 120;
+    let mut active_hosts: Vec<(&String, u64, &str)> = Vec::new();
+    for (host, rec) in &latest_by_host {
+        if now >= rec.ts && (now - rec.ts) <= active_threshold && rec.ev != "leaving" {
+            active_hosts.push((host, now - rec.ts, &rec.ev));
+        }
+    }
+    active_hosts.sort_by_key(|h| h.1);
+
+    println!("\n==================================================================");
+    println!("  💻 STATUT ACTUEL DU RÉSEAU");
+    println!("==================================================================");
+    if active_hosts.is_empty() {
+        println!("  Aucune machine active actuellement (dernier battement > 2 min).");
+    } else {
+        println!("  {} machine(s) connectée(s) et prête(s) pour une simulation :", active_hosts.len());
+        for (host, age, ev) in &active_hosts {
+            println!("   • {:<20} (actif il y a {:>3}s, mode: {})", host, age, ev);
+        }
+    }
+
+    let mut hour_day_hosts: std::collections::HashMap<(u64, u32), std::collections::HashSet<String>> = std::collections::HashMap::new();
+    let mut days_seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+    for r in &records {
+        let day = r.ts / 86400;
+        let hour = ((r.ts % 86400) / 3600) as u32;
+        days_seen.insert(day);
+        hour_day_hosts.entry((day, hour)).or_default().insert(r.host.clone());
+    }
+
+    let n_days = days_seen.len().max(1) as f64;
+    let mut hourly_avg = [0.0f64; 24];
+    for hour in 0..24 {
+        let mut total_hosts_for_hour = 0usize;
+        for &day in &days_seen {
+            if let Some(hosts) = hour_day_hosts.get(&(day, hour)) {
+                total_hosts_for_hour += hosts.len();
+            }
+        }
+        hourly_avg[hour as usize] = total_hosts_for_hour as f64 / n_days;
+    }
+
+    let max_avg = hourly_avg.iter().copied().fold(0.0f64, f64::max);
+
+    println!("\n==================================================================");
+    println!("  📊 HISTORIQUE ET DISPONIBILITÉ MOYENNE PAR HEURE (UTC)");
+    println!("==================================================================");
+    for hour in 0..24 {
+        let avg = hourly_avg[hour];
+        let bar_len = if max_avg > 0.0 { ((avg / max_avg) * 20.0).round() as usize } else { 0 };
+        let bar = "█".repeat(bar_len);
+        let peak_marker = if max_avg > 0.0 && (avg - max_avg).abs() < 1e-5 { " ⭐ PIC" } else { "" };
+        println!("  {:02}h00 - {:02}h59 | {:<20} | {:.1} PC(s){}", hour, hour, bar, avg, peak_marker);
+    }
+    println!("==================================================================\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1199,5 +1330,15 @@ mod tests {
         assert!(!looks_like_exe(b"404 Not Found")); // page d'erreur → REFUSÉ
         assert!(!looks_like_exe(&[0x7f, b'E', b'L', b'F'])); // ELF mais trop petit → REFUSÉ
         assert!(!looks_like_exe(&vec![0u8; 60_000])); // gros mais pas de magie → REFUSÉ
+    }
+
+    /// PRÉSENCE — le parsing de ligne heartbeat extrait correctement ts, host et ev.
+    #[test]
+    fn parse_heartbeat_bien_forme() {
+        let line = "{\"ts\":1782577843,\"host\":\"nixos\",\"ver\":\"7253577\",\"ev\":\"alive\"}";
+        let r = parse_heartbeat(line).unwrap();
+        assert_eq!(r.ts, 1782577843);
+        assert_eq!(r.host, "nixos");
+        assert_eq!(r.ev, "alive");
     }
 }
