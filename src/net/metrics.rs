@@ -231,25 +231,53 @@ fn run_agent_recv(secs: u64) {
     report_freshness("", &samples);
 }
 
-/// Imprime un rapport de fraîcheur (un JSON par pair) — partagé par `recv` et `loop`.
-/// `ts` = horodatage époque (vide pour une mesure unique ; rempli dans la boucle → série temporelle).
-fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f64>>) {
+/// Construit le rapport de fraîcheur (un JSON par pair), l'IMPRIME, et RENVOIE les lignes (pour
+/// l'upload). Partagé par `recv` et `loop`. `ts` = horodatage époque (vide pour une mesure unique).
+fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f64>>) -> Vec<String> {
     let tsf = if ts.is_empty() { String::new() } else { format!("\"ts\":{ts},") };
+    let mut lines = Vec::new();
     if samples.is_empty() {
-        println!("{{{tsf}\"note\":\"aucun pair vu\"}}");
-        return;
+        lines.push(format!("{{{tsf}\"note\":\"aucun pair vu\"}}"));
+    } else {
+        for (id, ages) in samples {
+            let mut a = ages.clone();
+            a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+            let p95 = percentile(&a, 95.0);
+            let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
+            lines.push(format!(
+                "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
+                 \"fresh_p95_ms\":{:.0},\"fresh_max_ms\":{:.0},\"verdict\":\"{}\"}}",
+                id.short(), a.len(), percentile(&a, 50.0), p95, a.last().copied().unwrap_or(0.0), verdict
+            ));
+        }
     }
-    for (id, ages) in samples {
-        let mut a = ages.clone();
-        a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-        let p95 = percentile(&a, 95.0);
-        let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
-        println!(
-            "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
-             \"fresh_p95_ms\":{:.0},\"fresh_max_ms\":{:.0},\"verdict\":\"{}\"}}",
-            id.short(), a.len(), percentile(&a, 50.0), p95, a.last().copied().unwrap_or(0.0), verdict
-        );
+    for l in &lines {
+        println!("{l}");
     }
+    lines
+}
+
+/// POST HTTP/1.0 minimaliste (upload des résultats), SANS dépendance. true si envoyé.
+fn http_post(host: &str, port: u16, path: &str, body: &str) -> bool {
+    use std::io::{Read, Write};
+    let timeout = std::time::Duration::from_secs(5);
+    let mut stream = match std::net::TcpStream::connect((host, port)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let _ = stream.set_write_timeout(Some(timeout));
+    let _ = stream.set_read_timeout(Some(timeout));
+    let req = format!(
+        "POST {path} HTTP/1.0\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut sink = Vec::new();
+    let _ = stream.read_to_end(&mut sink); // on lit (et ignore) l'accusé
+    true
 }
 
 /// Port HTTP où le serveur sert la CAMPAGNE (sur la même machine que le rendez-vous).
@@ -530,7 +558,11 @@ fn run_agent_loop(window: u64) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            report_freshness(&ts.to_string(), &samples);
+            let lines = report_freshness(&ts.to_string(), &samples);
+            // AUTO-UPLOAD (brique 3) : on POST chaque ligne au collecteur du serveur.
+            for l in &lines {
+                let _ = http_post(&cfg_host, CONFIG_PORT, "/upload", l);
+            }
             samples.clear();
             // PILOTAGE À DISTANCE : on relit la campagne entre deux fenêtres ; serveur muet → on
             // garde la courante (jamais de blocage).
@@ -568,9 +600,28 @@ pub fn run_serve_config(dir: &str, port: u16) {
             Err(_) => continue,
         };
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
-        let mut scratch = [0u8; 1024];
+        let mut scratch = [0u8; 4096]; // plus grand : peut contenir le corps d'un POST d'upload
         let n = stream.read(&mut scratch).unwrap_or(0);
         let req = String::from_utf8_lossy(&scratch[..n]);
+        // POST /upload (brique 3) → on AJOUTE le corps au journal `uploads.ndjson`.
+        if req.split_whitespace().next() == Some("POST") {
+            if let Some(p) = req.find("\r\n\r\n") {
+                let payload = req[p + 4..].trim();
+                if !payload.is_empty() {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(format!("{dir}/uploads.ndjson"))
+                    {
+                        let _ = writeln!(f, "{payload}");
+                    }
+                }
+            }
+            let _ = stream.write_all(b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n");
+            continue;
+        }
+        // GET /nom → fichier `dir/nom`
         let name = req.split_whitespace().nth(1).unwrap_or("/").trim_start_matches('/');
         let safe = !name.is_empty() && !name.contains("..") && !name.contains('/') && !name.contains('\\');
         let body = if safe { std::fs::read(format!("{dir}/{name}")).ok() } else { None };
