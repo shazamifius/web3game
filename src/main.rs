@@ -11,7 +11,7 @@
 //!   rendezvous            l'annuaire (à lancer en premier)
 //!   sidecar               le pont vers Unreal (socket locale 127.0.0.1:47800)
 //!   bot <nom>             un client headless (le vrai protocole, sans 3D)
-//!   agent [recv|loop] [s] l'agent de MESURE : fraîcheur en chiffres (recv = 1 fenêtre ; loop = autonome, en continu)
+//!   agent [recv|loop|install|uninstall] [s]  l'agent de MESURE : recv = 1 fenêtre ; loop = autonome (config+auto-update) ; install = démarrage auto au boot
 //!   serve-config <dir> [p] sert campagne+version+binaires aux agents (côté serveur) — HTTP fait main
 //!   sim [N] [att] [s]     simulation massive : N nœuds + att attaquants
 //!   crowd <N> [s]         foule dense au même endroit (couverture de perception)

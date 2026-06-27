@@ -148,8 +148,16 @@ pub(crate) fn report_json(observer: &str, target: &str, s: &LinkStats) -> String
 /// mesure LIVE : on rejoint le rendez-vous comme un vrai nœud et on chiffre la fraîcheur des pairs.
 pub fn run_agent(mode: Option<&str>, secs: u64) {
     match mode {
-        Some("recv") => run_agent_recv(secs),
-        Some("loop") => run_agent_loop(secs),
+        Some("install") => run_agent_install(false),
+        Some("uninstall") => run_agent_install(true),
+        Some("recv") => {
+            ensure_rendezvous_from_file();
+            run_agent_recv(secs)
+        }
+        Some("loop") => {
+            ensure_rendezvous_from_file();
+            run_agent_loop(secs)
+        }
         _ => run_agent_demo(),
     }
 }
@@ -298,6 +306,114 @@ fn http_get_bytes(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
 /// (l'agent garde alors sa config courante → self-sufficient).
 fn http_get(host: &str, port: u16, path: &str) -> Option<String> {
     http_get_bytes(host, port, path).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// Si `RENDEZVOUS_ADDR` n'est pas dans l'environnement, on le lit dans `serveur.txt` à côté de
+/// l'exe. INDISPENSABLE à l'auto-démarrage : le service/tâche n'a pas l'env du `.bat` → l'agent se
+/// configure SEUL depuis le fichier. (Appelé tôt, mono-thread → set_var sûr.)
+fn ensure_rendezvous_from_file() {
+    if std::env::var("RENDEZVOUS_ADDR").is_ok() {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            if let Ok(s) = std::fs::read_to_string(parent.join("serveur.txt")) {
+                let addr = s.trim();
+                if !addr.is_empty() {
+                    // SÛR : appelé au tout début de l'agent, mono-thread, avant tout spawn réseau.
+                    unsafe { std::env::set_var("RENDEZVOUS_ADDR", addr) };
+                }
+            }
+        }
+    }
+}
+
+/// Brique 4 — DÉMARRAGE AUTO au boot. `agent install` copie l'agent (+ son `serveur.txt`) dans un
+/// dossier STABLE et l'enregistre pour qu'il se lance seul à l'ouverture de session (Windows : tâche
+/// planifiée `schtasks` ; Linux : service `systemd --user`, Restart=always). `agent uninstall` retire.
+/// Dep-free : on appelle les outils système. Après l'install, l'agent est démarré tout de suite.
+fn run_agent_install(uninstall: bool) {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("[install] exe introuvable.");
+            return;
+        }
+    };
+    let serveur_txt = exe.parent().map(|p| p.join("serveur.txt"));
+
+    #[cfg(windows)]
+    {
+        let tn = "web3-agent";
+        if uninstall {
+            let _ = std::process::Command::new("schtasks").args(["/delete", "/tn", tn, "/f"]).status();
+            println!("[install] auto-démarrage RETIRÉ (tâche {tn}).");
+            return;
+        }
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+        let dir = std::path::Path::new(&base).join("web3-agent");
+        let _ = std::fs::create_dir_all(&dir);
+        let dest = dir.join("jeu.exe");
+        let _ = std::fs::copy(&exe, &dest);
+        if let Some(s) = serveur_txt {
+            if s.exists() {
+                let _ = std::fs::copy(&s, dir.join("serveur.txt"));
+            }
+        }
+        let tr = format!("\"{}\" agent loop", dest.to_string_lossy());
+        let st = std::process::Command::new("schtasks")
+            .args(["/create", "/tn", tn, "/tr", &tr, "/sc", "onlogon", "/f"])
+            .status();
+        match st {
+            Ok(s) if s.success() => {
+                println!("[install] ✅ DÉMARRAGE AUTO installé — tâche « {tn} » à chaque ouverture de session.");
+                println!("[install] dossier : {}", dir.to_string_lossy());
+                let _ = std::process::Command::new(&dest).args(["agent", "loop"]).spawn();
+                println!("[install] agent démarré.");
+            }
+            _ => eprintln!("[install] échec de la création de la tâche planifiée."),
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let svc_dir = std::path::Path::new(&home).join(".config/systemd/user");
+        let svc = svc_dir.join("web3-agent.service");
+        if uninstall {
+            let _ = std::process::Command::new("systemctl").args(["--user", "disable", "--now", "web3-agent"]).status();
+            let _ = std::fs::remove_file(&svc);
+            println!("[install] auto-démarrage RETIRÉ (service web3-agent).");
+            return;
+        }
+        let data = std::path::Path::new(&home).join(".local/share/web3-agent");
+        let _ = std::fs::create_dir_all(&data);
+        let dest = data.join("jeu");
+        let _ = std::fs::copy(&exe, &dest);
+        if let Some(s) = serveur_txt {
+            if s.exists() {
+                let _ = std::fs::copy(&s, data.join("serveur.txt"));
+            }
+        }
+        let _ = std::fs::create_dir_all(&svc_dir);
+        let unit = format!(
+            "[Unit]\nDescription=web3 agent de mesure\n\n[Service]\nExecStart={} agent loop\nWorkingDirectory={}\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+            dest.to_string_lossy(),
+            data.to_string_lossy()
+        );
+        if std::fs::write(&svc, unit).is_err() {
+            eprintln!("[install] impossible d'écrire le service systemd.");
+            return;
+        }
+        let _ = std::process::Command::new("systemctl").args(["--user", "daemon-reload"]).status();
+        let st = std::process::Command::new("systemctl").args(["--user", "enable", "--now", "web3-agent"]).status();
+        match st {
+            Ok(s) if s.success() => {
+                println!("[install] ✅ DÉMARRAGE AUTO installé (service systemd --user web3-agent, Restart=always).");
+            }
+            _ => eprintln!("[install] service écrit mais `systemctl --user enable` a échoué (essaie `loginctl enable-linger`)."),
+        }
+    }
 }
 
 /// La version courante de l'agent, lue dans `version.local` à côté de l'exe (« 0 » si absent → au
