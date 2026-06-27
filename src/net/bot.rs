@@ -152,6 +152,11 @@ pub(crate) struct Bot {
     /// la fenêtre de mesure. Sert à classer, à la fin, qui on a ENTENDU à plein débit (focus)
     /// vs en basse fidélité (conscience) — au lieu de juste compter les pairs CONNUS.
     heard_count: HashMap<PeerId, u64>,
+    /// INSTRUMENT (agent) : journal des ARRIVÉES d'état par pair sur la fenêtre — `(recv_ms, seq)`.
+    /// Lecture pure (peuplé aux points d'acceptation, drainé par l'agent à chaque fenêtre). Permet à
+    /// `metrics::link_stats` de chiffrer perte/gigue/ré-ordre des VRAIS liens, pas juste la fraîcheur.
+    /// Borné par pair (`MAX_ARRIVALS_PER_PEER`) → jamais de fuite mémoire sur longue session.
+    link_arrivals: HashMap<PeerId, Vec<(f64, u64)>>,
     orb: Orb,
     seq: u64,
     hello_acc: f32,
@@ -223,6 +228,7 @@ impl Bot {
             send_credits: HashMap::new(),
             last_state: HashMap::new(),
             heard_count: HashMap::new(),
+            link_arrivals: HashMap::new(),
             orb: Orb::headless(),
             seq: 0,
             hello_acc: HELLO_PERIOD,
@@ -331,6 +337,31 @@ impl Bot {
             .peer_seen
             .iter()
             .map(|(id, seen)| (*id, now.saturating_duration_since(*seen).as_secs_f64() * 1000.0))
+            .collect()
+    }
+
+    /// INSTRUMENT (agent) : note une arrivée d'état acceptée `(now_s, seq)` pour le pair `id`. Borné :
+    /// au-delà de `MAX_ARRIVALS_PER_PEER` on oublie la plus ancienne (anneau) → mémoire plate même si
+    /// l'agent tourne des heures sans drainer. Appelé UNIQUEMENT aux points d'acceptation (lecture pure).
+    fn record_arrival(&mut self, id: PeerId, now: f32, seq: u64) {
+        const MAX_ARRIVALS_PER_PEER: usize = 8192;
+        let v = self.link_arrivals.entry(id).or_default();
+        v.push((now as f64 * 1000.0, seq));
+        if v.len() > MAX_ARRIVALS_PER_PEER {
+            v.remove(0);
+        }
+    }
+
+    /// INSTRUMENT (agent) : DRAINE le journal des arrivées par pair, converti en `metrics::Arrival`
+    /// (instant de réception + `seq`). Vide le tampon → la prochaine fenêtre repart de zéro. Nourrit
+    /// `metrics::link_stats` (perte/gigue/ré-ordre) sur de VRAIS liens. Lecture pure, cœur intouché.
+    pub(crate) fn take_link_arrivals(&mut self) -> HashMap<PeerId, Vec<super::metrics::Arrival>> {
+        std::mem::take(&mut self.link_arrivals)
+            .into_iter()
+            .map(|(id, v)| {
+                let arr = v.into_iter().map(|(recv_ms, seq)| super::metrics::Arrival { recv_ms, seq }).collect();
+                (id, arr)
+            })
             .collect()
     }
 
@@ -535,6 +566,7 @@ impl Bot {
                                         self.holes.insert(state.id, true);
                                     }
                                     *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
+                                    self.record_arrival(state.id, now, state.seq); // instrument agent
                                     self.accepted += 1;
                                 }
                             }
@@ -566,6 +598,7 @@ impl Bot {
                                 self.rejected += 1;
                             } else {
                                 self.last_state.insert(state.id, (np, now));
+                                self.record_arrival(state.id, now, state.seq); // instrument agent (relais)
                                 self.link.note_pos(state.id, (np.x, np.z));
                                 self.link.remember_signed_state(state.id, bytes.to_vec()); // C-sécu-2 (gaté)
                                 if let Some(sink) = self.avatar_sink.as_mut() {

@@ -14,10 +14,13 @@
 //!   - **fraîcheur** = l'ÂGE du dernier état connu, échantillonné dans le temps (la grandeur
 //!     reine : cible ≤ 500 ms = jouable ; au-delà = mort).
 //!
-//! **v0 (ce fichier) = la logique de mesure + le format de rapport, prouvés par un test
-//! déterministe.** Ce qu'il ne fait PAS encore (honnêteté) : se brancher sur de vrais pairs
-//! (prochain pas), et le score « robotique » (l'ampleur des corrections de dead-reckoning),
-//! qui a besoin du modèle d'interpolation → il arrive avec le branchement live.
+//! **Statut.** La logique de mesure est prouvée par tests déterministes ET branchée sur de VRAIS
+//! pairs : `agent recv`/`loop` rejoignent le rendez-vous, et chaque état accepté est journalisé
+//! `(recv_ms, seq)` (cf. `Bot::take_link_arrivals`). À chaque fenêtre, `link_stats` chiffre alors
+//! **perte / ré-ordre / gigue** par pair, à côté de la fraîcheur — l'instrument ne dit plus seulement
+//! « est-ce vivant ? » mais **POURQUOI** (paquets perdus ? gigue ? ré-ordre ?). Ce qu'il ne fait PAS
+//! encore (honnêteté) : le score « robotique » (l'ampleur des corrections de dead-reckoning), qui a
+//! besoin du modèle d'interpolation d'Unreal → il arrivera avec le branchement sidecar.
 
 use super::bot::Bot;
 use super::crypto::PeerId;
@@ -228,12 +231,21 @@ fn run_agent_recv(secs: u64) {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
-    report_freshness("", &samples);
+    let links = link_stats_by_peer(bot.take_link_arrivals(), 16.0);
+    report_freshness("", &samples, &links);
 }
 
-/// Construit le rapport de fraîcheur (un JSON par pair), l'IMPRIME, et RENVOIE les lignes (pour
-/// l'upload). Partagé par `recv` et `loop`. `ts` = horodatage époque (vide pour une mesure unique).
-fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f64>>) -> Vec<String> {
+/// Construit le rapport par pair (un JSON), l'IMPRIME, et RENVOIE les lignes (pour l'upload). Partagé
+/// par `recv` et `loop`. `ts` = horodatage époque (vide pour une mesure unique). La FRAÎCHEUR vient du
+/// sondage par tick (`samples`, le verdict éprouvé en réel) ; perte/ré-ordre/gigue viennent du journal
+/// d'arrivées `links` (chiffré par `link_stats` à partir des `seq`) → l'instrument complet, pas juste
+/// « est-ce vivant » mais « POURQUOI » (paquets perdus ? gigue ? ré-ordre ?). `links` peut être vide
+/// (pair entendu mais aucune arrivée chiffrée) → on ne sort alors que la fraîcheur, jamais de crash.
+fn report_freshness(
+    ts: &str,
+    samples: &std::collections::HashMap<PeerId, Vec<f64>>,
+    links: &std::collections::HashMap<PeerId, LinkStats>,
+) -> Vec<String> {
     let tsf = if ts.is_empty() { String::new() } else { format!("\"ts\":{ts},") };
     let mut lines = Vec::new();
     if samples.is_empty() {
@@ -244,10 +256,18 @@ fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f6
             a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
             let p95 = percentile(&a, 95.0);
             let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
+            // Qualité de lien (perte/gigue/ré-ordre) si on a chiffré des arrivées pour ce pair.
+            let quality = match links.get(id) {
+                Some(s) => format!(
+                    "\"recv\":{},\"expected\":{},\"loss_pct\":{:.1},\"reorder_pct\":{:.1},\"jitter_ms\":{:.1},",
+                    s.received, s.expected, s.loss_pct * 100.0, s.reorder_pct * 100.0, s.jitter_ms
+                ),
+                None => String::new(),
+            };
             lines.push(format!(
-                "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},\"fresh_p50_ms\":{:.0},\
+                "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},{}\"fresh_p50_ms\":{:.0},\
                  \"fresh_p95_ms\":{:.0},\"fresh_max_ms\":{:.0},\"verdict\":\"{}\"}}",
-                id.short(), a.len(), percentile(&a, 50.0), p95, a.last().copied().unwrap_or(0.0), verdict
+                id.short(), a.len(), quality, percentile(&a, 50.0), p95, a.last().copied().unwrap_or(0.0), verdict
             ));
         }
     }
@@ -255,6 +275,20 @@ fn report_freshness(ts: &str, samples: &std::collections::HashMap<PeerId, Vec<f6
         println!("{l}");
     }
     lines
+}
+
+/// Chiffre les stats de LIEN (perte/gigue/ré-ordre/fraîcheur-paquet) par pair à partir du journal
+/// d'arrivées drainé du bot. `tick_ms` = cadence d'observation (pas de rendu). Pairs sans arrivée
+/// suffisante → ignorés (link_stats par défaut, peu informatif). Pur (testable, sans réseau).
+fn link_stats_by_peer(
+    arrivals: std::collections::HashMap<PeerId, Vec<Arrival>>,
+    tick_ms: f64,
+) -> std::collections::HashMap<PeerId, LinkStats> {
+    arrivals
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 2) // <2 arrivées = aucune perte/gigue chiffrable
+        .map(|(id, v)| (id, link_stats(&v, tick_ms)))
+        .collect()
 }
 
 /// POST HTTP/1.0 minimaliste (upload des résultats), SANS dépendance. true si envoyé.
@@ -558,7 +592,8 @@ fn run_agent_loop(window: u64) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let lines = report_freshness(&ts.to_string(), &samples);
+            let links = link_stats_by_peer(bot.take_link_arrivals(), 16.0);
+            let lines = report_freshness(&ts.to_string(), &samples, &links);
             // AUTO-UPLOAD (brique 3) : on POST chaque ligne au collecteur du serveur.
             for l in &lines {
                 let _ = http_post(&cfg_host, CONFIG_PORT, "/upload", l);
@@ -692,6 +727,29 @@ mod tests {
         assert_eq!(parse_campaign("window=99999").window, 3600); // borné haut
         assert_eq!(parse_campaign("window=1").window, 5); // borné bas
         assert_eq!(parse_campaign("window=oops").window, 30); // illisible → défaut
+    }
+
+    /// L'instrument COMPLET : à partir des arrivées par pair, on chiffre perte/ré-ordre par lien, et
+    /// un pair à <2 arrivées (rien à chiffrer) est écarté → le rapport reste honnête (pas de 0 % faux).
+    #[test]
+    fn link_stats_by_peer_chiffre_et_ecarte_le_trop_court() {
+        use super::super::crypto::PeerId;
+        let bon = PeerId::from_bytes([1u8; 32]);
+        let perte = PeerId::from_bytes([2u8; 32]);
+        let muet = PeerId::from_bytes([3u8; 32]);
+        let mut arr: std::collections::HashMap<PeerId, Vec<Arrival>> = std::collections::HashMap::new();
+        // bon : 0..10 sans trou ni recul.
+        arr.insert(bon, (0..10u64).map(|i| Arrival { recv_ms: i as f64 * 50.0, seq: i }).collect());
+        // perte : le seq 3 manque (1 perdu sur 6 attendus).
+        arr.insert(perte, [0u64, 1, 2, 4, 5].iter().enumerate()
+            .map(|(i, &seq)| Arrival { recv_ms: i as f64 * 50.0, seq }).collect());
+        // muet : une seule arrivée → rien à chiffrer, doit être écarté.
+        arr.insert(muet, vec![Arrival { recv_ms: 0.0, seq: 0 }]);
+
+        let out = link_stats_by_peer(arr, 16.0);
+        assert!(!out.contains_key(&muet), "un pair à 1 arrivée est écarté");
+        assert!(out[&bon].loss_pct.abs() < 1e-9, "lien bon = 0 % de perte");
+        assert!((out[&perte].loss_pct - 1.0 / 6.0).abs() < 1e-9, "perte lue dans le trou de seq");
     }
 
     /// Brique 5 — le garde-fou anti-binaire-corrompu : on n'installe QUE de l'ELF/PE assez gros.
