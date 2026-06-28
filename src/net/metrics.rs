@@ -520,10 +520,17 @@ fn run_agent_install(uninstall: bool) {
         let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
         let dir = std::path::Path::new(&base).join("web3-agent");
         let vbs = dir.join("start.vbs");
+        // Auto-démarrage SANS ADMIN : le dossier « Démarrage » de l'utilisateur. Contrairement à
+        // `schtasks /sc onlogon` (qui crée une tâche racine → exige l'élévation → « Accès refusé »
+        // chez un ami sans droits admin, 28 juin), déposer un shim ici est TOUJOURS autorisé.
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+        let startup_vbs = std::path::Path::new(&appdata)
+            .join("Microsoft\\Windows\\Start Menu\\Programs\\Startup\\web3-agent.vbs");
         if uninstall {
             let _ = std::process::Command::new("schtasks").args(["/delete", "/tn", tn, "/f"]).status();
             let _ = std::fs::remove_file(&vbs);
-            println!("[install] auto-démarrage RETIRÉ (tâche {tn}).");
+            let _ = std::fs::remove_file(&startup_vbs);
+            println!("[install] auto-démarrage RETIRÉ (tâche {tn} + dossier Démarrage).");
             return;
         }
         let _ = std::fs::create_dir_all(&dir);
@@ -535,27 +542,28 @@ fn run_agent_install(uninstall: bool) {
             }
         }
         // CALME : un shim VBScript qui lance l'agent FENÊTRE CACHÉE (style 0) → plus de gros terminal.
-        // C'est ce que la tâche exécute (via `wscript`), au lieu de l'exe directement (qui ouvre une
-        // console). Dep-free (juste un fichier texte). `0` = caché, `False` = ne pas attendre.
+        // Dep-free (juste un fichier texte). `0` = caché, `False` = ne pas attendre.
         let vbs_body = format!(
             "Set s = CreateObject(\"WScript.Shell\")\r\ns.Run \"\"\"{}\"\" agent loop\", 0, False\r\n",
             dest.to_string_lossy()
         );
-        let _ = std::fs::write(&vbs, vbs_body);
+        let _ = std::fs::write(&vbs, &vbs_body);
+        // 1) Auto-start ROBUSTE = dossier Démarrage (aucun admin requis).
+        let startup_ok = std::fs::write(&startup_vbs, &vbs_body).is_ok();
+        // 2) BONUS best-effort = tâche planifiée (si on a les droits). Son échec n'est PLUS bloquant.
         let tr = format!("wscript.exe \"{}\"", vbs.to_string_lossy());
-        let st = std::process::Command::new("schtasks")
+        let _ = std::process::Command::new("schtasks")
             .args(["/create", "/tn", tn, "/tr", &tr, "/sc", "onlogon", "/f"])
             .status();
-        match st {
-            Ok(s) if s.success() => {
-                println!("[install] ✅ DÉMARRAGE AUTO installé — tâche « {tn} » à chaque ouverture de session (fenêtre cachée).");
-                println!("[install] dossier : {}", dir.to_string_lossy());
-                // Démarrage immédiat, AUSSI caché (via le shim) → pas de terminal qui s'ouvre.
-                let _ = std::process::Command::new("wscript.exe").arg(&vbs).spawn();
-                println!("[install] agent démarré (en tâche de fond, sans fenêtre).");
-            }
-            _ => eprintln!("[install] échec de la création de la tâche planifiée."),
+        if startup_ok {
+            println!("[install] ✅ DÉMARRAGE AUTO installé (dossier Démarrage, sans admin requis).");
+        } else {
+            eprintln!("[install] ⚠ auto-démarrage non posé, mais l'agent va tourner pour cette session.");
         }
+        println!("[install] dossier : {}", dir.to_string_lossy());
+        // 3) TOUJOURS démarrer l'agent maintenant (même si l'auto-start a échoué) → il se connecte tout de suite.
+        let _ = std::process::Command::new("wscript.exe").arg(&vbs).spawn();
+        println!("[install] agent démarré (en tâche de fond, sans fenêtre).");
     }
 
     #[cfg(unix)]
