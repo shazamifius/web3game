@@ -81,3 +81,38 @@ gardée **sous le coude** pour les cas avérés — pas allumée « au cas où �
 ouvert n'est plus la perte, mais la **pertinence** (donner le plein débit à qui compte, même loin) — le chantier
 suivant. Et ça mesure le **substrat** (la présence transportée), pas encore le **ressenti** d'humains qui jouent
 ensemble (D27, « la forteresse vide », s'allège sans se fermer).*
+
+---
+
+## Enquête n°2 — « certains liens lointains sont *morts* » (28 juin 2026)
+
+### Le symptôme
+L'instrument corrigé tournait dehors, et la plupart des liens distants étaient **vivants**. Mais certains
+revenaient avec un verdict brutal : **`MORT (>500 ms)`**, fraîcheur p95 ~950 ms. Le doute repointait : aurait-on,
+là, de vrais liens qui ne passent pas ?
+
+### La belle hypothèse (la « saison 2 » de l'enquête n°1)
+Le réflexe, après la n°1 : *c'est encore notre propre économie de bande passante, mal mesurée.* Notre moteur
+envoie le **plein débit** à un petit cercle (focus) et un **filet basse fréquence** (~2/seconde, palier
+« conscience ») à tous les autres. Un pair dans ce filet est **frais à ~500 ms par conception** — le seuil plat
+« > 500 ms = mort » le condamnerait à tort, exactement comme le « 89 % perdu » de la n°1. Élégant… et on a corrigé
+le verdict dans ce sens.
+
+### Le twist (la mesure a, encore, corrigé le récit)
+Sauf que la donnée disait autre chose. Les fenêtres « mortes » n'avaient pas une cadence basse (un filet à 2/s) —
+elles avaient **zéro réception**. Le même lien alternait, sur un cycle de ~7 secondes, entre **plein débit (frais
+~200 ms)** et **silence total (~950 ms)**. Pas « basse fidélité par conception » : **bimodal — tout ou rien.** Le
+filet « conscience » n'atteignait tout simplement **pas** ces pairs hors-focus.
+
+### Ce qu'on a corrigé — et ce qu'on a, honnêtement, seulement *révélé*
+On a rendu le verdict **conscient de la cadence ET de la réception**, en trois états au lieu de deux :
+**vivant** · **lointain (basse fidélité)** — bridé exprès, donc *vivant* même au-delà de 500 ms · **mort
+(silencieux)** — connu mais **zéro paquet reçu** cette fenêtre. Et l'instrument **affiche désormais toujours la
+réception** (`recv:0` = silence rendu visible), pour qu'on ne confonde plus « volontairement discret » et
+« réellement muet ».
+
+Mais soyons nets : **ça n'a rien réparé du fond.** Ça a rendu l'instrument *honnête*, et du coup le vrai mur
+apparaît en pleine lumière : **pourquoi un pair hors-focus devient-il complètement silencieux**, au lieu de rester
+vivant à basse fidélité via le filet ? C'est une question d'**inclusivité de l'aire d'intérêt** (le faible, le
+lointain, doivent rester *perçus*) — le prochain chantier de fond, côté cœur. *Comme la n°1 : la meilleure avancée
+n'est pas le code écrit, c'est la question rendue visible. À suivre.*

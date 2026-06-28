@@ -42,7 +42,7 @@ foule (~55 000, une salle de concert). *C'est une **direction de recherche**, pa
 
 Le cœur est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance externe est la bibliothèque
 de cryptographie). Ce qui suit a été écrit puis vérifié — en distinguant honnêtement ce qui est prouvé de ce qui ne
-l'est pas encore (cf. *En toute transparence*). **133 tests automatiques, 0 warning** ; chaque chiffre est
+l'est pas encore (cf. *En toute transparence*). **134 tests automatiques, 0 warning** ; chaque chiffre est
 **reproductible** (détail mesuré + commandes : [revue chiffrée](docs/etat-du-projet.md)) :
 
 - **Identité = ta clé.** Chaque message est signé : impossible de se faire passer pour un autre, aucun annuaire

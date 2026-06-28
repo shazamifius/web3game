@@ -282,6 +282,24 @@ fn run_agent_recv(secs: u64) {
 
 /// Construit le rapport par pair (un JSON), l'IMPRIME, et RENVOIE les lignes (pour l'upload). Partagé
 /// par `recv` et `loop`. `ts` = horodatage époque (vide pour une mesure unique). La FRAÎCHEUR vient du
+/// VERDICT de vivacité, CADENCE-CONSCIENT (« inspecteur Eve » saison 2, 28 juin). Un seuil plat de
+/// 500 ms MENT : un pair en palier CONSCIENCE (bridé ~2 Hz EXPRÈS, le « filet ») est « stale » SANS
+/// être mort. Trois états honnêtes, en lisant la RÉCEPTION réelle de la fenêtre :
+///  • `recv == 0` (pair connu mais AUCUNE arrivée) → SILENCIEUX : le vrai suspect (relais / inclusivité) ;
+///  • cadence BRIDÉE (≥ 4× le plein débit) → LOINTAIN basse fidélité = VIVANT, pas mort ;
+///  • plein débit attendu mais en retard → vraiment MORT.
+fn liveness_verdict(fresh_p95_ms: f64, recv: usize, cadence_step: u64) -> &'static str {
+    if fresh_p95_ms <= 500.0 {
+        "vivant"
+    } else if recv == 0 {
+        "MORT(silencieux)"
+    } else if cadence_step >= 4 {
+        "lointain(basse-fidelite)"
+    } else {
+        "MORT(>500ms)"
+    }
+}
+
 /// sondage par tick (`samples`, le verdict éprouvé en réel) ; perte/ré-ordre/gigue viennent du journal
 /// d'arrivées `links` (chiffré par `link_stats` à partir des `seq`) → l'instrument complet, pas juste
 /// « est-ce vivant » mais « POURQUOI » (paquets perdus ? gigue ? ré-ordre ?). `links` peut être vide
@@ -300,14 +318,20 @@ fn report_freshness(
             let mut a = ages.clone();
             a.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
             let p95 = percentile(&a, 95.0);
-            let verdict = if p95 <= 500.0 { "vivant" } else { "MORT(>500ms)" };
-            // Qualité de lien (perte/gigue/ré-ordre) si on a chiffré des arrivées pour ce pair.
-            let quality = match links.get(id) {
+            // VERDICT CADENCE-CONSCIENT : on lit la RÉCEPTION réelle de la fenêtre (pas juste un seuil
+            // plat de 500 ms qui mentirait sur un pair bridé EXPRÈS). cf. `liveness_verdict`.
+            let link = links.get(id);
+            let recv = link.map(|s| s.received).unwrap_or(0);
+            let cadence = link.map(|s| s.cadence_step).unwrap_or(0);
+            let verdict = liveness_verdict(p95, recv, cadence);
+            // Qualité de lien : `recv` apparaît TOUJOURS (0 = silence VISIBLE → on voit le vrai
+            // problème), avec perte/gigue/cadence quand on a chiffré des arrivées pour ce pair.
+            let quality = match link {
                 Some(s) => format!(
                     "\"recv\":{},\"expected\":{},\"loss_pct\":{:.1},\"real_loss_pct\":{:.1},\"cadence_step\":{},\"reorder_pct\":{:.1},\"jitter_ms\":{:.1},",
                     s.received, s.expected, s.loss_pct * 100.0, s.real_loss_pct * 100.0, s.cadence_step, s.reorder_pct * 100.0, s.jitter_ms
                 ),
-                None => String::new(),
+                None => "\"recv\":0,".to_string(),
             };
             lines.push(format!(
                 "{{{tsf}\"observer\":\"agent\",\"target\":\"{}\",\"samples\":{},{}\"fresh_p50_ms\":{:.0},\
@@ -1548,5 +1572,19 @@ mod tests {
             Some(&b"hello"[..]),
             "un corps complet doit passer, coupé à la taille annoncée"
         );
+    }
+
+    /// « Inspecteur Eve » saison 2 (28 juin) : le verdict ne se laisse plus berner par un pair BRIDÉ
+    /// (palier conscience), et rend le SILENCE (recv=0) explicite — distinct d'un vrai retard.
+    #[test]
+    fn verdict_cadence_conscient_trois_etats() {
+        // Frais (focus) → vivant, quelle que soit la cadence.
+        assert_eq!(liveness_verdict(200.0, 50, 1), "vivant");
+        // p95 > 500 mais cadence BRIDÉE (~2 Hz conscience) → LOINTAIN basse fidélité, PAS mort.
+        assert_eq!(liveness_verdict(900.0, 8, 10), "lointain(basse-fidelite)");
+        // p95 > 500, plein débit attendu (cadence ~1) mais reçu et en retard → vraiment MORT.
+        assert_eq!(liveness_verdict(900.0, 40, 1), "MORT(>500ms)");
+        // p95 > 500 et AUCUNE arrivée (recv=0) → SILENCIEUX = le vrai suspect (relais/inclusivité).
+        assert_eq!(liveness_verdict(900.0, 0, 0), "MORT(silencieux)");
     }
 }
