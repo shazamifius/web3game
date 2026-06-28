@@ -25,6 +25,7 @@ pub(crate) const KIND_CELL_SUMMARY: u8 = 9; // hôte de cellule → observateurs
 pub(crate) const KIND_CELL_SUMMARY_V2: u8 = 10; // idem + TRAILER de preuves auto-signées (8.3★ C-sécu-2, gaté SIGNED_SAMPLES)
 pub(crate) const KIND_RELAY_FWD: u8 = 11; // A → rendez-vous : « route cet état SCELLÉ vers B » (repli NAT, 12.3 / D17, gaté RENDEZVOUS_RELAY)
 pub(crate) const KIND_STATE_BUNDLE: u8 = 12; // pair → pair (RELAIS) : LOT des K derniers états signés (redondance temporelle budget-free, gaté RELAY_REDUNDANCY≥2)
+pub(crate) const KIND_RECV_BUDGET: u8 = 13; // receveur → ses émetteurs : « ne m'envoie pas plus vite que X Hz » (AoI BILATÉRALE, couche 2, gaté AOI_BILATERAL)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {

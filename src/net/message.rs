@@ -13,7 +13,7 @@
 //! une identité : il faudrait posséder la clé privée correspondante.
 
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::wire::{KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, KIND_STATE_BUNDLE, PROTO_VERSION};
+use super::wire::{KIND_RECV_BUDGET, KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, KIND_STATE_BUNDLE, PROTO_VERSION};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id` = sa clé publique), où
 /// (`x,y,z`), à quelle vitesse il va (`vx,vy,vz`), comment il est orienté
@@ -253,6 +253,46 @@ pub(crate) fn decode_state_bundle(buf: &[u8]) -> Option<Vec<&[u8]>> {
     Some(out)
 }
 
+// ----------------------------------------------------------------------------
+// ANNONCE DE BUDGET DE RÉCEPTION (KIND_RECV_BUDGET) — couche 2, AoI BILATÉRALE.
+//   [0] KIND_RECV_BUDGET | [1] version | [2..34] id de l'émetteur (à qui le plafond appartient)
+//   | [34..38] cap (f32 Hz, LE).
+// Un nœud annonce à ses émetteurs « ne m'envoie pas plus vite que `cap` Hz ». ADVISORY (non signé
+// v1) : au pire un attaquant fait RÉDUIRE le trafic vers une victime (jamais l'augmenter) ; on
+// n'accepte d'ailleurs un cap QUE depuis l'adresse du pair concerné (côté réception, bot.rs). Le
+// `cap` est TOUJOURS fini sur le wire : `∞` (pas de surcharge) = on N'ÉMET PAS d'annonce, et le
+// stock côté émetteur expire → retour à « pas de bride ». Gaté `AOI_BILATERAL` (défaut OFF).
+// ----------------------------------------------------------------------------
+const RECV_BUDGET_SIZE: usize = 2 + PUBKEY_LEN + 4; // 38 o
+
+/// Encode une annonce de budget de réception : mon id + le plafond (Hz) que mes émetteurs
+/// doivent respecter. `cap_hz` doit être fini et ≥ 0 (on n'annonce jamais `∞` : on se tait).
+pub(crate) fn encode_recv_budget(id: &PeerId, cap_hz: f32) -> [u8; RECV_BUDGET_SIZE] {
+    let mut buf = [0u8; RECV_BUDGET_SIZE];
+    buf[0] = KIND_RECV_BUDGET;
+    buf[1] = PROTO_VERSION;
+    buf[2..2 + PUBKEY_LEN].copy_from_slice(id.bytes());
+    buf[2 + PUBKEY_LEN..].copy_from_slice(&cap_hz.to_le_bytes());
+    buf
+}
+
+/// Décode une annonce de budget → `(id du pair, cap Hz)`, ou `None` si malformée. On REJETTE
+/// tout cap non fini ou négatif (on ne fait jamais confiance aveuglément au réseau ; un cap
+/// pourri ne doit pas pouvoir devenir un plafond aberrant).
+pub(crate) fn decode_recv_budget(buf: &[u8]) -> Option<(PeerId, f32)> {
+    if buf.len() < RECV_BUDGET_SIZE || buf[0] != KIND_RECV_BUDGET || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    let mut idb = [0u8; PUBKEY_LEN];
+    idb.copy_from_slice(&buf[2..2 + PUBKEY_LEN]);
+    let id = PeerId::from_bytes(idb);
+    let cap = f32::from_le_bytes(buf[2 + PUBKEY_LEN..RECV_BUDGET_SIZE].try_into().ok()?);
+    if !cap.is_finite() || cap < 0.0 {
+        return None;
+    }
+    Some((id, cap))
+}
+
 /// Lit l'id (clé) revendiqué dans un paquet d'état, sans rien vérifier. Sert à la
 /// réputation : quand le sceau est valide mais le contenu impossible, on sait QUI accuser.
 pub(crate) fn claimed_id(buf: &[u8]) -> Option<PeerId> {
@@ -381,6 +421,26 @@ mod tests {
         let mut trafique = lot.clone();
         trafique.push(0);
         assert!(decode_state_bundle(&trafique).is_none());
+    }
+
+    /// COUCHE 2 — l'annonce de budget de réception fait l'aller-retour (id + cap préservés), et
+    /// un cap non fini (NaN/∞) ou négatif est REJETÉ (on ne laisse jamais un plafond aberrant
+    /// entrer depuis le réseau).
+    #[test]
+    fn annonce_budget_round_trip_et_rejette_cap_aberrant() {
+        let id = Identity::generate().id();
+        let buf = encode_recv_budget(&id, 12.5);
+        assert_eq!(buf[0], KIND_RECV_BUDGET);
+        let (got_id, cap) = decode_recv_budget(&buf).expect("annonce valide");
+        assert_eq!(got_id, id);
+        assert!((cap - 12.5).abs() < 1.0e-6);
+
+        // cap = +∞ injecté à la main sur le wire → rejeté (on n'annonce jamais ∞, et on s'en protège).
+        let mut pourri = buf;
+        pourri[34..38].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert!(decode_recv_budget(&pourri).is_none());
+        // trop court → rejeté.
+        assert!(decode_recv_budget(&buf[..10]).is_none());
     }
 
     /// Un état signé par une vraie identité se vérifie et se décode ; son `id`

@@ -12,14 +12,17 @@
 
 use super::accuse::decode_accuse;
 use super::anticheat::move_plausible;
-use super::aoi::{allocate_tiers, dist2, relevance_weight, CELL_SIZE, SEND_BUDGET_HZ};
+use super::aoi::{
+    advertised_recv_cap, allocate_tiers, allocate_tiers_bilateral, dist2, relevance_weight, CELL_SIZE,
+    RECV_BUDGET_HZ, SEND_BUDGET_HZ,
+};
 use super::control::{decode_welcome, encode_hello};
 use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::NetLink;
 use super::message::{
-    claimed_id, decode_canonical, decode_state_bundle, encode_relay_fwd, encode_signed,
-    encode_state_bundle, sig_ok, PlayerState,
+    claimed_id, decode_canonical, decode_recv_budget, decode_state_bundle, encode_recv_budget,
+    encode_relay_fwd, encode_signed, encode_state_bundle, sig_ok, PlayerState,
 };
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned};
@@ -29,7 +32,7 @@ use super::cell::{
 };
 use super::wire::{
     kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_GOSSIP, KIND_ORB, KIND_PUNCH,
-    KIND_RELAY, KIND_STATE, KIND_STATE_BUNDLE, KIND_WELCOME, PROTO_VERSION,
+    KIND_RECV_BUDGET, KIND_RELAY, KIND_STATE, KIND_STATE_BUNDLE, KIND_WELCOME, PROTO_VERSION,
 };
 use crate::math::Vec3;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -45,6 +48,19 @@ pub(crate) fn relay_fallback_enabled() -> bool {
 
 /// Politique du drapeau (PURE, testable sans toucher l'environnement). Défaut sûr = OFF.
 fn relay_fallback_on(v: Option<&str>) -> bool {
+    matches!(v, Some("1") | Some("true"))
+}
+
+/// COUCHE 2 — l'AoI BILATÉRALE est-elle ACTIVE ? (`AOI_BILATERAL`, défaut **OFF** = byte-pour-byte.)
+/// Quand ON, le nœud ANNONCE son budget de réception (`KIND_RECV_BUDGET`) et RESPECTE celui des
+/// pairs (`allocate_tiers_bilateral`). OFF → `recv_caps` reste vide → comportement historique exact.
+/// Gaté pour pouvoir embarquer le mécanisme dans la flotte sans changer le live tant qu'on ne l'allume
+/// pas (la preuve live = un test de mesure dédié, on n'expose rien au hasard).
+pub(crate) fn aoi_bilateral_enabled() -> bool {
+    aoi_bilateral_on(std::env::var("AOI_BILATERAL").ok().as_deref())
+}
+/// Politique du drapeau couche 2 (PURE, testable). Défaut sûr = OFF.
+fn aoi_bilateral_on(v: Option<&str>) -> bool {
     matches!(v, Some("1") | Some("true"))
 }
 
@@ -119,6 +135,13 @@ const RELAY_RATE: f32 = 30.0;
 const RELAY_CAP: f32 = 60.0;
 const MAX_RELAY_FANOUT: usize = 12;
 const SEND_HZ: f32 = 20.0;
+/// COUCHE 2 — période de (re)calcul + d'annonce du budget de réception (`KIND_RECV_BUDGET`), en s.
+/// 1 s = on réévalue sa surcharge une fois par seconde (assez réactif, négligeable en débit).
+const BUDGET_PERIOD: f32 = 1.0;
+/// COUCHE 2 — durée de vie d'un plafond ANNONCÉ par un pair : passé ce délai sans nouvelle annonce,
+/// on l'oublie (∞ = plus de bride). Le pair n'annonce QUE s'il est en surcharge → l'absence d'annonce
+/// fraîche signifie « je vais bien, envoie normalement ». > BUDGET_PERIOD pour tolérer une annonce ratée.
+const RECV_CAP_TTL: f32 = 3.0;
 const HELLO_PERIOD: f32 = 1.0;
 const PUNCH_PERIOD: f32 = 0.25;
 const SUMMARY_PERIOD: f32 = 2.0;
@@ -213,6 +236,16 @@ pub(crate) struct Bot {
     /// SIDECAR (palier 2) : puits des avatars distants COMPLETS (PlayerState + instant), pour les
     /// exposer à Unreal. None = désactivé (défaut) → aucune écriture, comportement inchangé.
     avatar_sink: Option<HashMap<PeerId, (PlayerState, f32)>>,
+    /// COUCHE 2 — AoI BILATÉRALE active (`AOI_BILATERAL`, lu UNE fois). `false` par défaut → tout ce
+    /// qui suit est inerte et l'émission reste byte-pour-byte historique.
+    aoi_bilateral: bool,
+    /// COUCHE 2 — plafonds de réception ANNONCÉS PAR les pairs : `id du pair → (cap Hz, instant `now`)`.
+    /// On n'émet jamais vers un pair plus vite que `cap`. Entrée périmée (`> RECV_CAP_TTL`) = ignorée (∞).
+    recv_caps: HashMap<PeerId, (f32, f32)>,
+    /// COUCHE 2 — compteur d'états ACCEPTÉS depuis le dernier calcul de budget (→ Hz reçu mesuré).
+    recv_in_window: u32,
+    /// COUCHE 2 — accumulateur de la période d'annonce de budget (`BUDGET_PERIOD`).
+    budget_acc: f32,
 }
 
 impl Bot {
@@ -283,6 +316,10 @@ impl Bot {
             relayed: 0,
             external_pose: None,
             avatar_sink: None,
+            aoi_bilateral: aoi_bilateral_enabled(),
+            recv_caps: HashMap::new(),
+            recv_in_window: 0,
+            budget_acc: 0.0,
         }
     }
 
@@ -428,6 +465,7 @@ impl Bot {
                         }
                         *self.heard_count.entry(state.id).or_insert(0) += 1; // 8.2b
                         self.record_arrival(state.id, now, state.seq); // instrument agent
+                        self.recv_in_window = self.recv_in_window.saturating_add(1); // couche 2 : Hz reçu mesuré
                         self.accepted += 1;
                     }
                 }
@@ -620,6 +658,19 @@ impl Bot {
                         }
                     }
                 }
+                // COUCHE 2 — un pair nous ANNONCE son plafond de réception (gaté AOI_BILATERAL). On ne
+                // l'accepte QUE depuis l'ADRESSE du pair concerné (anti-usurpation simple : un tiers ne
+                // peut pas brider le trafic d'autrui). Stocké avec `now` → expire après RECV_CAP_TTL
+                // (le silence = « je vais bien, envoie normalement »).
+                Some(KIND_RECV_BUDGET) => {
+                    if self.aoi_bilateral {
+                        if let Some((id, cap)) = decode_recv_budget(&bytes) {
+                            if self.link.peers.get(&id) == Some(&from) {
+                                self.recv_caps.insert(id, (cap, now));
+                            }
+                        }
+                    }
+                }
                 Some(KIND_STATE) => self.ingest_state(&bytes, from, now),
                 // LOT relais (12.3 / D17) : on ÉCLATE le lot et on traite chaque état par le MÊME
                 // chemin que KIND_STATE (du + ancien au + récent) → accept_seq dédoublonne, et un seq
@@ -785,7 +836,22 @@ impl Bot {
                 // b) AoI À DEUX TIERS (chap. 8.2 / 8.2a-bis) : le FOCUS COLLANT au plein débit,
                 //    la conscience (le reste) en basse fidélité — comme le vrai client.
                 let is_focus: Vec<bool> = peers.iter().map(|(id, _)| self.link.is_focus(id)).collect();
-                let rates = allocate_tiers(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ);
+                // COUCHE 2 — quand l'AoI bilatérale est ACTIVE, on respecte le plafond de réception
+                // ANNONCÉ par chaque pair (∞ si pas d'annonce fraîche) → on n'émet jamais vers un pair
+                // plus vite qu'il ne peut encaisser. OFF → on appelle l'`allocate_tiers` ORIGINAL
+                // intouché (chemin par défaut byte-pour-byte, aucune entrée bilatérale possible).
+                let rates = if self.aoi_bilateral {
+                    let recv_caps: Vec<f32> = peers
+                        .iter()
+                        .map(|(id, _)| match self.recv_caps.get(id) {
+                            Some(&(cap, t)) if now - t < RECV_CAP_TTL => cap,
+                            _ => f32::INFINITY,
+                        })
+                        .collect();
+                    allocate_tiers_bilateral(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ, &recv_caps)
+                } else {
+                    allocate_tiers(&weights, &is_focus, SEND_BUDGET_HZ, SEND_HZ)
+                };
                 // c) CADENCEMENT par crédit. Direct vers les trous OUVERTS ; REPLI (gaté) via le
                 //    rendez-vous vers les pairs qui ne percent pas. Défaut : trou ouvert seulement
                 //    (byte-pour-byte). Décision isolée et testée dans `bot_send_kind`.
@@ -826,6 +892,34 @@ impl Bot {
                     }
                 }
                 self.send_credits.retain(|id, _| self.link.peers.contains_key(id));
+            }
+        }
+
+        // 4ter) COUCHE 2 — ANNONCE DU BUDGET DE RÉCEPTION (gaté AOI_BILATERAL, défaut OFF → bloc
+        //       INERTE, émission byte-pour-byte). Une fois par BUDGET_PERIOD : si on encaisse PLUS
+        //       que notre budget (`measured_recv_hz > RECV_BUDGET_HZ`), on annonce à nos émetteurs
+        //       un plafond par-lien (part équitable) ; sinon on se TAIT (∞ = pas de bride, le cas
+        //       courant n'émet rien). Advisory, best-effort, négligeable (38 o/pair, 1×/s).
+        if self.aoi_bilateral {
+            self.budget_acc += dt;
+            if self.budget_acc >= BUDGET_PERIOD {
+                let measured_recv_hz = self.recv_in_window as f32 / self.budget_acc.max(1.0e-3);
+                let n_senders = self.link.peers.len();
+                let cap = advertised_recv_cap(RECV_BUDGET_HZ, measured_recv_hz, n_senders);
+                if cap.is_finite() {
+                    if let Some(my_id) = self.link.my_id {
+                        let advert = encode_recv_budget(&my_id, cap);
+                        let addrs: Vec<SocketAddr> = self.link.peers.values().copied().collect();
+                        for addr in addrs {
+                            let _ = self.link.socket.send_to(addr, &advert);
+                        }
+                    }
+                }
+                self.recv_in_window = 0;
+                self.budget_acc = 0.0;
+                // Oubli des plafonds périmés (le silence d'un pair = il va bien → ∞). TTL seul suffit
+                // (un pair parti cesse d'annoncer → son entrée expire) : pas de fuite, pas de bride fantôme.
+                self.recv_caps.retain(|_, (_, t)| now - *t < RECV_CAP_TTL);
             }
         }
 
@@ -985,7 +1079,7 @@ pub fn run_bot(label: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{bot_send_kind, relay_fallback_on, relay_redundancy_of, SendKind};
+    use super::{aoi_bilateral_on, bot_send_kind, relay_fallback_on, relay_redundancy_of, SendKind};
 
     /// Le drapeau de repli relais : par défaut OFF (chemin direct historique intact), ON seulement
     /// sur `1`/`true`. Relogé depuis l'ancien `netcode/send.rs` avec sa logique.
@@ -996,6 +1090,18 @@ mod tests {
         assert!(!relay_fallback_on(Some("nope"))); // valeur inattendue → OFF (défaut sûr)
         assert!(relay_fallback_on(Some("1")));
         assert!(relay_fallback_on(Some("true")));
+    }
+
+    /// COUCHE 2 — le drapeau de l'AoI BILATÉRALE : OFF par défaut (émission byte-pour-byte historique),
+    /// ON seulement sur `1`/`true`. Tant qu'il est OFF, le bot appelle l'`allocate_tiers` original et
+    /// n'annonce/n'applique aucun budget → garantie « zéro impact tant qu'on ne l'allume pas ».
+    #[test]
+    fn aoi_bilateral_eteint_par_defaut() {
+        assert!(!aoi_bilateral_on(None)); // absent → OFF (le défaut sûr : rien ne change dans la flotte)
+        assert!(!aoi_bilateral_on(Some("0")));
+        assert!(!aoi_bilateral_on(Some("nope")));
+        assert!(aoi_bilateral_on(Some("1")));
+        assert!(aoi_bilateral_on(Some("true")));
     }
 
     /// REDONDANCE relais : défaut 1 (byte-pour-byte), bornée à [1, 8] ; absent/invalide → 1.
