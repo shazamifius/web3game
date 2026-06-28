@@ -301,14 +301,22 @@ fn run_agent_recv(secs: u64) {
 /// 500 ms MENT : un pair en palier CONSCIENCE (bridé ~2 Hz EXPRÈS, le « filet ») est « stale » SANS
 /// être mort. Trois états honnêtes, en lisant la RÉCEPTION réelle de la fenêtre :
 ///  • `recv == 0` (pair connu mais AUCUNE arrivée) → SILENCIEUX : le vrai suspect (relais / inclusivité) ;
-///  • cadence BRIDÉE (≥ 4× le plein débit) → LOINTAIN basse fidélité = VIVANT, pas mort ;
-///  • plein débit attendu mais en retard → vraiment MORT.
-fn liveness_verdict(fresh_p95_ms: f64, recv: usize, cadence_step: u64) -> &'static str {
+///  • cadence BRIDÉE (≥ 4×) OU perte RÉELLE faible (≤ 20 %) → LOINTAIN basse fidélité = VIVANT : il
+///    délivre fiablement ce qu'il promet à sa cadence, juste lointain — PAS mort ;
+///  • réellement lossy (perte RÉELLE élevée, ex. CGNAT non perçable) ET en retard → vraiment MORT.
+///
+/// Levier A (29 juin) : ne plus DIFFAMER un lien `real_loss~0`. La session 112 a montré que ~moitié des
+/// `MORT(>500ms)` étaient des liens SAINS (recv=expected, real_loss 0, bas débit) que le verdict tuait à
+/// tort en ne lisant QUE la fraîcheur brute. Les deux populations sont nettes (sain ≈ 0 % vs CGNAT lossy
+/// 50-81 %) → tout seuil dans [10,40] % les sépare ; on prend 20 % (marge confortable).
+const REAL_LOSS_MORT_PCT: f64 = 0.20;
+
+fn liveness_verdict(fresh_p95_ms: f64, recv: usize, cadence_step: u64, real_loss_pct: f64) -> &'static str {
     if fresh_p95_ms <= 500.0 {
         "vivant"
     } else if recv == 0 {
         "MORT(silencieux)"
-    } else if cadence_step >= 4 {
+    } else if cadence_step >= 4 || real_loss_pct <= REAL_LOSS_MORT_PCT {
         "lointain(basse-fidelite)"
     } else {
         "MORT(>500ms)"
@@ -338,7 +346,8 @@ fn report_freshness(
             let link = links.get(id);
             let recv = link.map(|s| s.received).unwrap_or(0);
             let cadence = link.map(|s| s.cadence_step).unwrap_or(0);
-            let verdict = liveness_verdict(p95, recv, cadence);
+            let real_loss = link.map(|s| s.real_loss_pct).unwrap_or(0.0);
+            let verdict = liveness_verdict(p95, recv, cadence, real_loss);
             // Qualité de lien : `recv` apparaît TOUJOURS (0 = silence VISIBLE → on voit le vrai
             // problème), avec perte/gigue/cadence quand on a chiffré des arrivées pour ce pair.
             let quality = match link {
@@ -1714,16 +1723,24 @@ mod tests {
 
     /// « Inspecteur Eve » saison 2 (28 juin) : le verdict ne se laisse plus berner par un pair BRIDÉ
     /// (palier conscience), et rend le SILENCE (recv=0) explicite — distinct d'un vrai retard.
+    /// Saison 3 (Levier A, 29 juin) : il ne DIFFAME plus un lien `real_loss~0` (sain mais lointain).
     #[test]
     fn verdict_cadence_conscient_trois_etats() {
-        // Frais (focus) → vivant, quelle que soit la cadence.
-        assert_eq!(liveness_verdict(200.0, 50, 1), "vivant");
+        // Frais (focus) → vivant, quelle que soit la cadence/perte.
+        assert_eq!(liveness_verdict(200.0, 50, 1, 0.5), "vivant");
         // p95 > 500 mais cadence BRIDÉE (~2 Hz conscience) → LOINTAIN basse fidélité, PAS mort.
-        assert_eq!(liveness_verdict(900.0, 8, 10), "lointain(basse-fidelite)");
-        // p95 > 500, plein débit attendu (cadence ~1) mais reçu et en retard → vraiment MORT.
-        assert_eq!(liveness_verdict(900.0, 40, 1), "MORT(>500ms)");
+        assert_eq!(liveness_verdict(900.0, 8, 10, 0.0), "lointain(basse-fidelite)");
         // p95 > 500 et AUCUNE arrivée (recv=0) → SILENCIEUX = le vrai suspect (relais/inclusivité).
-        assert_eq!(liveness_verdict(900.0, 0, 0), "MORT(silencieux)");
+        assert_eq!(liveness_verdict(900.0, 0, 0, 0.0), "MORT(silencieux)");
+
+        // ⭐ LEVIER A — le cœur du fix. MÊME entrée (p95 900 ms, recv 40, cadence 1) : seule la PERTE
+        // RÉELLE décide. Lien SAIN (real_loss 0 %, il délivre tout ce qu'il promet, juste lointain) →
+        // VIVANT lointain, plus jamais « MORT ». Lien vraiment lossy (CGNAT 60 %) → MORT, lui, mérité.
+        assert_eq!(liveness_verdict(900.0, 40, 1, 0.0), "lointain(basse-fidelite)");
+        assert_eq!(liveness_verdict(900.0, 40, 1, 0.60), "MORT(>500ms)");
+        // Le seuil (20 %) sépare net les deux populations observées en live.
+        assert_eq!(liveness_verdict(900.0, 40, 1, 0.20), "lointain(basse-fidelite)");
+        assert_eq!(liveness_verdict(900.0, 40, 1, 0.21), "MORT(>500ms)");
     }
 
     /// RESPECT DE L'HÔTE (29 juin) : le capteur de charge CPU répond une valeur SENSÉE (0..100 %) sur
