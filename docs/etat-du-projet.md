@@ -26,7 +26,7 @@
 | Taille d'un **paquet d'état signé** | **182 octets** (118 utiles + 64 de sceau Ed25519) | format, cf. [ARCHITECTURE.md](ARCHITECTURE.md) |
 | **Traversée NAT symétrique** via relais | établie **dans les deux sens** (réseaux réels) | `cargo run -- relay-test 6` *(banc déterministe)* |
 | **Fraîcheur** sur liens **distants réels** (plusieurs pays, dont CGNAT) | **p95 ~200–335 ms** (< seuil 500 ms « vivant »), **perte réelle ~0** | instrument de mesure (agent) + journal du rendez-vous |
-| **Tests** automatiques | **118**, 0 warning | `cargo test` |
+| **Tests** automatiques | **133**, 0 warning | `cargo test` |
 | Plafond du **banc** de simulation | **~1 500 nœuds** (1 thread OS / nœud, 12 cœurs) | limite matérielle (voir §4) |
 
 > **Ce que ces chiffres NE prouvent PAS** (honnêteté de méthode) : ils sont pris en **simulation / localhost** — le

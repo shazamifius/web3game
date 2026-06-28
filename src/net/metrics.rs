@@ -465,6 +465,20 @@ fn parse_campaign(body: &str) -> Campaign {
 
 /// GET HTTP/1.0 BINAIRE, SANS dépendance (std seulement) — sert au fetch de campagne ET au
 /// téléchargement du nouveau binaire (auto-update). Renvoie le CORPS (octets) sur 200, sinon None.
+/// Lit l'en-tête `Content-Length` (insensible à la casse) dans le bloc d'en-têtes HTTP.
+/// None s'il est absent → l'appelant garde l'ancien comportement (corps tel quel).
+fn parse_content_length(headers: &[u8]) -> Option<usize> {
+    let text = std::str::from_utf8(headers).ok()?;
+    for line in text.split("\r\n") {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                return v.trim().parse::<usize>().ok();
+            }
+        }
+    }
+    None
+}
+
 fn http_get_bytes(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
     let timeout = std::time::Duration::from_secs(10); // un binaire est gros → marge
@@ -479,7 +493,18 @@ fn http_get_bytes(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
     if !resp.starts_with(b"HTTP/1.0 200") && !resp.starts_with(b"HTTP/1.1 200") {
         return None; // 404 ou autre → on ne renvoie rien
     }
-    Some(resp[pos + 4..].to_vec())
+    let body = &resp[pos + 4..];
+    // INTÉGRITÉ (anti-brick sur lien bas débit, ex. mobile instable) : si le serveur
+    // ANNONCE une taille (Content-Length), on EXIGE un corps complet. Un téléchargement
+    // coupé en route → None : on garde l'ancien binaire qui tourne et on réessaiera,
+    // plutôt que d'installer un .exe TRONQUÉ (qui briquerait l'agent en silence).
+    if let Some(declared) = parse_content_length(&resp[..pos]) {
+        if body.len() < declared {
+            return None; // tronqué → refus net
+        }
+        return Some(body[..declared].to_vec()); // exactement la taille annoncée
+    }
+    Some(body.to_vec())
 }
 
 /// GET texte (campagne) — enveloppe de `http_get_bytes`. None si le serveur ne répond pas
@@ -1482,5 +1507,46 @@ mod tests {
         assert_eq!(r.ts, 1782577843);
         assert_eq!(r.host, "nixos");
         assert_eq!(r.ev, "alive");
+    }
+
+    /// B1 (28 juin) — anti-brick sur lien bas débit : `http_get_bytes` REFUSE un corps tronqué
+    /// (plus court que le `Content-Length` annoncé) → on n'installe jamais un binaire incomplet ;
+    /// un corps complet passe, coupé EXACTEMENT à la taille annoncée.
+    #[test]
+    fn telechargement_tronque_refuse_corps_complet_accepte() {
+        use std::io::{Read, Write};
+        // Le parseur d'en-tête (insensible à la casse, absent → None).
+        assert_eq!(parse_content_length(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nConnection: close"), Some(5));
+        assert_eq!(parse_content_length(b"HTTP/1.0 200 OK\r\nConnection: close"), None);
+
+        // Mini-serveur qui répond UNE fois avec `resp`, puis ferme. Renvoie le port éphémère.
+        fn serve_once(resp: &'static [u8]) -> u16 {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                if let Ok((mut s, _)) = l.accept() {
+                    let mut buf = [0u8; 256];
+                    let _ = s.read(&mut buf); // on lit la requête, on l'ignore
+                    let _ = s.write_all(resp); // puis close en sortant de la closure
+                }
+            });
+            port
+        }
+
+        // (a) TRONQUÉ : annonce 10 octets, n'en envoie que 3 → REFUS (None).
+        let p_tronque = serve_once(b"HTTP/1.0 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc");
+        assert_eq!(
+            http_get_bytes("127.0.0.1", p_tronque, "/jeu-linux"),
+            None,
+            "un corps plus court que Content-Length doit être refusé (anti-brick)"
+        );
+
+        // (b) COMPLET : annonce 5, envoie 5 → on reçoit EXACTEMENT ces 5 octets.
+        let p_ok = serve_once(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+        assert_eq!(
+            http_get_bytes("127.0.0.1", p_ok, "/jeu-linux").as_deref(),
+            Some(&b"hello"[..]),
+            "un corps complet doit passer, coupé à la taille annoncée"
+        );
     }
 }
