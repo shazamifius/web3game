@@ -1179,7 +1179,7 @@ fn cpu_busy_pct() -> Option<f64> {
         }
     }
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetSystemTimes(idle: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
     }
     // kernel INCLUT l'idle → busy = (kernel + user) − idle ; total = kernel + user.
@@ -1216,7 +1216,7 @@ const HOST_BUSY_PCT: f64 = 85.0;
 #[cfg(target_os = "windows")]
 fn lower_own_priority() {
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetCurrentProcess() -> isize;
         fn SetPriorityClass(h: isize, class: u32) -> i32;
     }
