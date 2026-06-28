@@ -304,8 +304,8 @@ fn report_freshness(
             // Qualité de lien (perte/gigue/ré-ordre) si on a chiffré des arrivées pour ce pair.
             let quality = match links.get(id) {
                 Some(s) => format!(
-                    "\"recv\":{},\"expected\":{},\"loss_pct\":{:.1},\"reorder_pct\":{:.1},\"jitter_ms\":{:.1},",
-                    s.received, s.expected, s.loss_pct * 100.0, s.reorder_pct * 100.0, s.jitter_ms
+                    "\"recv\":{},\"expected\":{},\"loss_pct\":{:.1},\"real_loss_pct\":{:.1},\"cadence_step\":{},\"reorder_pct\":{:.1},\"jitter_ms\":{:.1},",
+                    s.received, s.expected, s.loss_pct * 100.0, s.real_loss_pct * 100.0, s.cadence_step, s.reorder_pct * 100.0, s.jitter_ms
                 ),
                 None => String::new(),
             };
