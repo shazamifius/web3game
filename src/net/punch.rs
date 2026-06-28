@@ -37,6 +37,26 @@ pub(crate) fn punch_abandoned(tries: u32) -> bool {
     tries >= PUNCH_GIVEUP
 }
 
+/// Longueur d'une SALVE de re-perçage (chap. 12.x, durcissement relais) : après abandon, on ne
+/// re-tente PAS un cycle complet de 10 s — juste cette poignée de sondes (≈ `× PUNCH_INTERVAL` = 1 s).
+const PUNCH_RETRY_BURST: u32 = 4;
+
+/// RE-ARME une courte salve de perçage pour un lien ABANDONNÉ (durcissement relais, 29 juin). Le
+/// goulot mesuré du « vivant » : un pair abandonné au bout de 10 s reste sur le relais LOSSY à VIE,
+/// même si le perçage redeviendrait possible (échec INITIAL transitoire : perte passagère, pair
+/// arrivé en retard, salves de perçage non synchronisées — PAS forcément un NAT symétrique). On le
+/// re-tente périodiquement par une COURTE salve : un vrai NAT symétrique re-échoue (coût ~4 sondes),
+/// un échec transitoire se rattrape → le lien passe du relais lossy au DIRECT frais. PURE/testable :
+/// si abandonné → on ramène à `PUNCH_GIVEUP - PUNCH_RETRY_BURST` (relance `BURST` sondes) ; sinon
+/// inchangé (un perçage encore en cours n'est pas perturbé).
+pub(crate) fn punch_retry_tries(tries: u32) -> u32 {
+    if tries >= PUNCH_GIVEUP {
+        PUNCH_GIVEUP.saturating_sub(PUNCH_RETRY_BURST)
+    } else {
+        tries
+    }
+}
+
 /// Taille d'un PUNCH : type + version + identité (clé, 32) = 34.
 const PUNCH_SIZE: usize = 2 + PUBKEY_LEN;
 
@@ -78,6 +98,21 @@ mod tests {
         assert!(!punch_abandoned(PUNCH_GIVEUP - 1)); // juste avant le seuil : on perce encore
         assert!(punch_abandoned(PUNCH_GIVEUP)); // au seuil : abandon
         assert!(punch_abandoned(PUNCH_GIVEUP + 100)); // au-delà : toujours abandonné
+    }
+
+    /// 12.x (durcissement relais) — la re-salve : un lien ABANDONNÉ est ré-armé pour une COURTE
+    /// salve (`PUNCH_RETRY_BURST` sondes), PAS un cycle complet ; un perçage encore en cours n'est
+    /// pas touché. C'est ce qui sort un lien du relais lossy quand le direct redevient possible.
+    #[test]
+    fn re_salve_de_perçage_apres_abandon() {
+        // Abandonné → ré-armé juste sous le seuil (relance BURST sondes, pas 10 s).
+        assert_eq!(punch_retry_tries(PUNCH_GIVEUP), PUNCH_GIVEUP - PUNCH_RETRY_BURST);
+        assert_eq!(punch_retry_tries(PUNCH_GIVEUP + 50), PUNCH_GIVEUP - PUNCH_RETRY_BURST);
+        // …et après ré-arme, on N'EST PLUS abandonné → la boucle de perçage re-sonde bien.
+        assert!(!punch_abandoned(punch_retry_tries(PUNCH_GIVEUP)));
+        // Un perçage EN COURS (pas encore abandonné) n'est pas perturbé.
+        assert_eq!(punch_retry_tries(0), 0);
+        assert_eq!(punch_retry_tries(10), 10);
     }
 
     /// Aller-retour d'un PUNCH (sérialisation à la main) : ce qu'on encode se redécode.

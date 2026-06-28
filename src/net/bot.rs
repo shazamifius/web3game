@@ -25,7 +25,7 @@ use super::message::{
     encode_relay_fwd, encode_signed, encode_state_bundle, sig_ok, PlayerState,
 };
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
-use super::punch::{decode_punch, encode_punch, punch_abandoned};
+use super::punch::{decode_punch, encode_punch, punch_abandoned, punch_retry_tries};
 use super::skin::random_color;
 use super::cell::{
     decode_cell_summary, decode_cell_summary_v2, encode_cell_summary, encode_cell_summary_v2, CellSummary,
@@ -144,6 +144,11 @@ const BUDGET_PERIOD: f32 = 1.0;
 const RECV_CAP_TTL: f32 = 3.0;
 const HELLO_PERIOD: f32 = 1.0;
 const PUNCH_PERIOD: f32 = 0.25;
+/// DURCISSEMENT RELAIS (29 juin) — période de RE-SALVE du perçage des liens abandonnés : toutes les
+/// 30 s, un lien abandonné au trou fermé re-tente une courte salve (cf. `punch_retry_tries`). Assez
+/// rare pour que re-sonder un vrai NAT symétrique reste négligeable, assez fréquent pour sortir vite
+/// un lien du relais lossy dès que le direct redevient possible (échec initial transitoire).
+const PUNCH_RETRY_PERIOD: f32 = 30.0;
 const SUMMARY_PERIOD: f32 = 2.0;
 /// Période d'émission du gossip (chap. 8.1) : à chaque tic, on présente un lot de
 /// « cartes de visite » à quelques pairs. 0,5 s = découverte rapide sans bavardage.
@@ -218,6 +223,8 @@ pub(crate) struct Bot {
     seq: u64,
     hello_acc: f32,
     punch_acc: f32,
+    /// DURCISSEMENT RELAIS — accumulateur de la période de RE-SALVE du perçage (`PUNCH_RETRY_PERIOD`).
+    punch_retry_acc: f32,
     send_acc: f32,
     gossip_acc: f32,
     gossip_cursor: usize,
@@ -302,6 +309,7 @@ impl Bot {
             seq: 0,
             hello_acc: HELLO_PERIOD,
             punch_acc: 0.0,
+            punch_retry_acc: 0.0,
             send_acc: 0.0,
             gossip_acc: 0.0,
             gossip_cursor: 0,
@@ -1020,6 +1028,26 @@ impl Bot {
                         // la rotation des preuves avance d'un cran par période → couvre tous les ids au fil du temps
                         self.proof_cursor = self.proof_cursor.wrapping_add(1);
                     }
+                }
+            }
+        }
+
+        // 5bis) DURCISSEMENT RELAIS (29 juin) — RE-SALVE périodique : on ré-arme une courte salve de
+        //       perçage pour les liens ABANDONNÉS encore au trou FERMÉ. Un échec INITIAL transitoire
+        //       (perte, arrivée tardive, salves désynchronisées) ne condamne plus le lien au relais
+        //       lossy à vie ; dès que le direct redevient possible, la boucle 5) le rouvre → DIRECT frais.
+        self.punch_retry_acc += dt;
+        if self.punch_retry_acc >= PUNCH_RETRY_PERIOD {
+            self.punch_retry_acc = 0.0;
+            let to_rearm: Vec<PeerId> = self
+                .punch_tries
+                .iter()
+                .filter(|(id, t)| punch_abandoned(**t) && !*self.holes.get(*id).unwrap_or(&false))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in to_rearm {
+                if let Some(t) = self.punch_tries.get(&id).copied() {
+                    self.punch_tries.insert(id, punch_retry_tries(t));
                 }
             }
         }
