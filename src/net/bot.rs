@@ -198,8 +198,9 @@ pub(crate) struct Bot {
     /// Banc déterministe — simule un NAT infranchissable (perçage jamais « ouvert » côté émission →
     /// tout passe par le relais), pour PROUVER le repli bidirectionnel sans vrai mobile. `false` par défaut.
     force_relay: bool,
-    /// Redondance d'émission sur le chemin RELAIS (`RELAY_REDUNDANCY`, défaut 1 = inchangé). Lu UNE
-    /// fois à la construction. Cf. `relay_redundancy_from_env` : écrase la traîne p95 sur lien lossy.
+    /// Redondance d'émission sur le chemin RELAIS (`RELAY_REDUNDANCY`, défaut 1 = inchangé). Initialisé
+    /// depuis l'env à la construction, PUIS pilotable par session via [Bot::set_relay_redundancy]
+    /// (campagne `redundancy=K`). Cf. `relay_redundancy_from_env` : écrase la traîne p95 sur lien lossy.
     relay_redundancy: usize,
     /// Anneau de NOS K derniers états signés (le plus ancien d'abord), pour le LOT relais
     /// (`KIND_STATE_BUNDLE`) : redondance temporelle budget-free. Borné à `relay_redundancy` (≤ 8).
@@ -356,6 +357,14 @@ impl Bot {
     /// `AOI_BILATERAL=1`. Reste gaté/par-session : on n'allume rien en dehors d'une mesure consentie.
     pub(crate) fn enable_aoi_bilateral(&mut self) {
         self.aoi_bilateral = true;
+    }
+
+    /// RELAIS — règle la REDONDANCE d'émission (`KIND_STATE_BUNDLE`, les K derniers états par envoi
+    /// relais) sur CE bot, le temps d'une session, depuis la CAMPAGNE (`redundancy=K`) — au lieu d'un
+    /// rebuild avec `RELAY_REDUNDANCY=K`. Borné à [1, 8] (anti-abus du budget relais) ; 1 = inchangé.
+    /// C'est le levier B : battre la perte des VRAIS liens CGNAT lossy (relais obligatoire) par `p^k`.
+    pub(crate) fn set_relay_redundancy(&mut self, k: usize) {
+        self.relay_redundancy = k.clamp(1, 8);
     }
 
     /// SIDECAR (palier 2) : les avatars distants FRAIS (PlayerState copiés, filtrés ≤ REMOTE_TIMEOUT).

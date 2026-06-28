@@ -473,10 +473,14 @@ struct Campaign {
     /// COUCHE 2 — allume l'AoI BILATÉRALE le temps de la session (`aoi=1`). Défaut `false` → émission
     /// byte-pour-byte. Permet de PROUVER la couche 2 dehors par un simple flip serveur, sans rebuild.
     aoi: bool,
+    /// LEVIER B — REDONDANCE relais (`redundancy=K`, [1,8]) le temps de la session. Défaut `1` =
+    /// byte-pour-byte. Émet les K derniers états par envoi relais (`KIND_STATE_BUNDLE`) → bat la perte
+    /// des vrais liens CGNAT lossy (`p^k`). Flip serveur, sans rebuild `RELAY_REDUNDANCY=K`.
+    redundancy: usize,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false }
+        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false, redundancy: 1 }
     }
 }
 
@@ -509,6 +513,11 @@ fn parse_campaign(body: &str) -> Campaign {
                 }
                 "aoi" => {
                     c.aoi = matches!(v, "1" | "true"); // couche 2 ON le temps de la session
+                }
+                "redundancy" => {
+                    if let Ok(n) = v.parse::<usize>() {
+                        c.redundancy = n.clamp(1, 8); // levier B : K copies relais (borné anti-abus budget)
+                    }
                 }
                 _ => {}
             }
@@ -1041,10 +1050,14 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     if start.aoi {
         bot.enable_aoi_bilateral(); // couche 2 ON le temps de cette session (flip serveur)
     }
+    if start.redundancy > 1 {
+        bot.set_relay_redundancy(start.redundancy); // levier B : redondance relais ON (flip serveur)
+    }
     println!(
-        "[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s){})…",
+        "[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s){}{})…",
         start.session, start.window, start.bots,
-        if start.aoi { ", AoI bilatérale ON" } else { "" }
+        if start.aoi { ", AoI bilatérale ON" } else { "" },
+        if start.redundancy > 1 { format!(", redondance relais ×{}", start.redundancy) } else { String::new() }
     );
     session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
@@ -1060,6 +1073,9 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                 if let Some(mut b) = Bot::new(format!("b_{i}"), false, phase) {
                     if start.aoi {
                         b.enable_aoi_bilateral(); // les bots de foule aussi → vraie réception bornée
+                    }
+                    if start.redundancy > 1 {
+                        b.set_relay_redundancy(start.redundancy); // foule aussi → vraie charge relais redondante
                     }
                     let boot = Instant::now();
                     let mut last = Instant::now();
@@ -1586,9 +1602,18 @@ mod tests {
         assert!(!parse_campaign("aoi=0").aoi);
         assert!(parse_campaign("aoi=1").aoi);
         assert!(parse_campaign("aoi=true").aoi);
+        // LEVIER B — le flip `redundancy` : absent → 1 (byte-pour-byte), borné à [1,8], illisible → 1.
+        assert_eq!(parse_campaign("").redundancy, 1); // défaut = inchangé
+        assert_eq!(parse_campaign("redundancy=3").redundancy, 3);
+        assert_eq!(parse_campaign("redundancy=0").redundancy, 1); // 0 ramené au plancher
+        assert_eq!(parse_campaign("redundancy=99").redundancy, 8); // borné haut (anti-abus budget relais)
+        assert_eq!(parse_campaign("redundancy=oops").redundancy, 1); // illisible → défaut
         // une campagne complète et réaliste :
-        let c = parse_campaign("window=20\nmode=simulate\nsession=42\nbots=500\naoi=1\n");
-        assert_eq!((c.window, c.mode, c.session, c.bots, c.aoi), (20, Mode::Simulate, 42, 500, true));
+        let c = parse_campaign("window=20\nmode=simulate\nsession=42\nbots=500\naoi=1\nredundancy=3\n");
+        assert_eq!(
+            (c.window, c.mode, c.session, c.bots, c.aoi, c.redundancy),
+            (20, Mode::Simulate, 42, 500, true, 3)
+        );
     }
 
     /// Fenêtre de session — la coordination par fichiers (le contrat agent↔fenêtre) : `open` pose le
