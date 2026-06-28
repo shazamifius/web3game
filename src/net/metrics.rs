@@ -379,19 +379,27 @@ fn host_label() -> String {
 /// La ligne de PRÉSENCE (battement de cœur), JSON fait main. PUR (testable) : un horodatage, le nom
 /// du PC, la version de l'agent, l'événement. Volontairement MINUSCULE → coût réseau négligeable au
 /// repos (« peu de connexion hors simulation »). Le serveur l'empile dans `presence.ndjson`.
-fn heartbeat_json(ts: u64, host: &str, ver: &str, ev: &str) -> String {
-    format!("{{\"ts\":{ts},\"host\":\"{host}\",\"ver\":\"{ver}\",\"ev\":\"{ev}\"}}")
+fn heartbeat_json(ts: u64, host: &str, ver: &str, ev: &str, diag: &str) -> String {
+    format!("{{\"ts\":{ts},\"host\":\"{host}\",\"ver\":\"{ver}\",\"ev\":\"{ev}\"{diag}}}")
 }
 
 /// Envoie un battement de cœur au collecteur (POST /heartbeat). Best-effort : un échec est silencieux
 /// (serveur muet → on n'insiste pas, l'agent ne se bloque jamais). C'est l'observabilité « qui est en
 /// ligne, quand » SANS lancer de simulation — juste savoir quels PC sont dispo et à quelles heures.
 fn send_heartbeat(host_addr: &str, port: u16, ev: &str) {
+    send_heartbeat_diag(host_addr, port, ev, "");
+}
+
+/// Battement ENRICHI (observabilité, 28 juin) : `diag` = champs JSON supplémentaires (ex.
+/// `,"peers":3,"recv":120,"sent":5`) collés tels quels avant la `}`. Sert à VOIR à distance ce qu'un
+/// agent ami fait vraiment (combien de pairs il voit, combien d'états il reçoit, combien il uploade) —
+/// fini la chasse aux captures d'écran. `diag` vide = battement simple. Best-effort, jamais bloquant.
+fn send_heartbeat_diag(host_addr: &str, port: u16, ev: &str, diag: &str) {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let body = heartbeat_json(ts, &host_label(), &agent_version(), ev);
+    let body = heartbeat_json(ts, &host_label(), &agent_version(), ev, diag);
     let _ = http_post(host_addr, port, "/heartbeat", &body);
 }
 
@@ -1028,8 +1036,13 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                 let _ = http_post(cfg_host, CONFIG_PORT, "/upload", l); // brique 3
             }
             session_log_write(&session_summary_line(measure_n, &samples, &links)); // journal VISIBLE
+            // OBSERVABILITÉ (28 juin) : on RACONTE au serveur ce qu'on a vu/reçu/envoyé cette fenêtre.
+            // `recv=0` à distance = on ne reçoit RIEN (relais-retour mort) ; `peers=0` = on ne découvre
+            // personne ; `sent` = mesures uploadées. On voit le vrai état de chaque ami SANS capture d'écran.
+            let recv_total: usize = links.values().map(|s| s.received).sum();
+            let diag = format!(",\"peers\":{},\"recv\":{},\"sent\":{}", samples.len(), recv_total, lines.len());
             samples.clear();
-            send_heartbeat(cfg_host, CONFIG_PORT, "alive"); // présence pendant la session
+            send_heartbeat_diag(cfg_host, CONFIG_PORT, "alive", &diag); // présence + diagnostic pendant la session
             if let Some(c) = http_get(cfg_host, CONFIG_PORT, "/campaign").map(|b| parse_campaign(&b)) {
                 if c.mode != Mode::Simulate || c.session != start.session {
                     println!("[agent] session {} terminée — retour au repos.", start.session);
@@ -1434,12 +1447,17 @@ mod tests {
     /// (Coût réseau négligeable : c'est l'observabilité « qui est en ligne quand » sans simulation.)
     #[test]
     fn heartbeat_json_bien_forme() {
-        let h = heartbeat_json(1782520000, "PC-de-Tom", "871699e", "start");
+        let h = heartbeat_json(1782520000, "PC-de-Tom", "871699e", "start", "");
         assert!(h.contains("\"ts\":1782520000"));
         assert!(h.contains("\"host\":\"PC-de-Tom\""));
         assert!(h.contains("\"ver\":\"871699e\""));
         assert!(h.contains("\"ev\":\"start\""));
         assert!(h.starts_with('{') && h.ends_with('}'));
+
+        // OBSERVABILITÉ : les champs diagnostic s'insèrent AVANT la } finale, JSON valide.
+        let d = heartbeat_json(1782520000, "PC-de-Tom", "0", "alive", ",\"peers\":3,\"recv\":120,\"sent\":5");
+        assert!(d.contains("\"ev\":\"alive\",\"peers\":3,\"recv\":120,\"sent\":5}"));
+        assert!(d.starts_with('{') && d.ends_with('}'));
     }
 
     /// Brique 5 — le garde-fou anti-binaire-corrompu : on n'installe QUE de l'ELF/PE assez gros.
