@@ -72,6 +72,8 @@ fn relay_redundancy_of(v: Option<&str>) -> usize {
 ///
 /// Défaut (`relay_fallback=false`, `force_relay=false`) : `Direct` si le trou est ouvert, sinon
 /// `Skip` — comportement HISTORIQUE byte-pour-byte (le `Bot` n'émettait QUE vers les trous ouverts).
+/// `relay_fallback=true` (agent CGNAT) : trou fermé → `Relay`, pour que le FILET CONSCIENCE atteigne
+/// les pairs non-perçés (couche 1 inclusivité, 29 juin) — borné par l'anti-amplification du rendez-vous.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum SendKind {
     Direct,
@@ -86,17 +88,24 @@ pub(crate) fn bot_send_kind(
     relay_fallback: bool,
     force_relay: bool,
 ) -> SendKind {
+    // `abandoned`/`relays_to_us` ne décident plus (couche 1, 29 juin) — gardés dans la signature pour
+    // la couche 2/3 (priorisation par budget du receveur). cf. le commentaire d'inclusivité ci-dessous.
+    let _ = (abandoned, relays_to_us);
     // Banc déterministe : NAT infranchissable simulé → tout l'état part par le relais.
     if force_relay {
         return SendKind::Relay;
     }
-    // Trou direct ouvert → on émet en direct (inchangé).
+    // Trou direct ouvert → on émet en direct (inchangé, byte-pour-byte).
     if open {
         return SendKind::Direct;
     }
-    // Repli (gaté) : on relaie via le rendez-vous dès que le pair le VEUT — perçage abandonné OU
-    // pair qui nous joint déjà par relais (réciprocité immédiate, ferme la fenêtre de reconnexion).
-    if relay_fallback && (abandoned || relays_to_us) {
+    // INCLUSIVITÉ (couche 1) : trou fermé + repli relais ACTIF → on RELAIE, y compris le FILET
+    // CONSCIENCE (2 Hz), pour qu'un pair CGNAT hors-focus reste VIVANT au lieu de tomber dans le noir
+    // (le « bimodal » mesuré : plein débit OU silence). On ne fait PLUS dépendre ça d'un perçage
+    // abandonné ni d'une réciprocité (qui CLIGNOTENT → c'était la source du silence). Borné par
+    // l'anti-amplification du rendez-vous (RELAY_RATE = 30/s) → budget-driven, jamais un plafond en
+    // dur ; au-delà du budget = champ de densité continu (couche 3, à venir).
+    if relay_fallback {
         return SendKind::Relay;
     }
     SendKind::Skip
@@ -1012,14 +1021,17 @@ mod tests {
     }
 
     #[test]
-    fn bot_send_kind_repli_relaie_quand_le_pair_le_veut() {
-        // Repli ALLUMÉ : on relaie dès que le perçage est abandonné OU que le pair nous joint par relais.
+    fn bot_send_kind_repli_garde_le_lien_vivant() {
+        // COUCHE 1 (inclusivité) : repli ALLUMÉ + trou fermé → on RELAIE TOUJOURS, pour que le filet
+        // conscience atteigne le pair non-perçé (fini le silence bimodal) — que le perçage soit
+        // abandonné ou non, réciproque ou non.
         assert_eq!(bot_send_kind(false, true, false, true, false), SendKind::Relay); // abandonné → relais
-        assert_eq!(bot_send_kind(false, false, true, true, false), SendKind::Relay); // pair-relais → relais (réciprocité)
+        assert_eq!(bot_send_kind(false, false, true, true, false), SendKind::Relay); // pair-relais → relais
+        // LE FIX : perçage EN COURS (ni abandon ni réciprocité) → on relaie QUAND MÊME, au lieu de
+        // se taire et de laisser le pair tomber dans le noir.
+        assert_eq!(bot_send_kind(false, false, false, true, false), SendKind::Relay);
         // Trou direct ouvert → JAMAIS de relais, même repli ON (on a une vraie connexion directe).
         assert_eq!(bot_send_kind(true, true, true, true, false), SendKind::Direct);
-        // Repli ON mais ni abandon ni pair-relais → perçage en cours, on attend (pas de relais prématuré).
-        assert_eq!(bot_send_kind(false, false, false, true, false), SendKind::Skip);
     }
 
     #[test]
