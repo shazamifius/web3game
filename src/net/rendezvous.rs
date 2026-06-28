@@ -279,10 +279,15 @@ pub fn run_rendezvous() {
             let _ = socket.send_to(from, &encode_welcome(world_hue, &roster));
         }
 
-        // On oublie les clients silencieux depuis plus de 5 s (déconnectés).
+        // On oublie les clients silencieux depuis plus de CLIENT_TTL (déconnectés). 28 juin (D17) :
+        // passé de 5 s à 20 s. Sur un lien LOINTAIN/lossy (ami CGNAT réel), perdre 5 s de HELLO
+        // d'affilée est facile → le client était évincé puis ré-admis en boucle (« churn » observé :
+        // même id rejoint 16-25× depuis la MÊME adresse) → le relais s'effondrait sans arrêt, donc
+        // aucun flux descendant stable, donc rien à mesurer. 20 s tolère la perte transitoire sans
+        // garder éternellement un vrai disparu (borné par MAX_CLIENTS de toute façon).
         let now = Instant::now();
         clients.retain(|addr, info| {
-            let keep = now.duration_since(info.seen) < Duration::from_secs(5);
+            let keep = now.duration_since(info.seen) < Duration::from_secs(20);
             if !keep {
                 println!("Joueur {} parti ({addr}).", info.id.short());
                 // 12.3 (diag) : on oublie ses paires de relais → s'il se reconnecte, le ré-établissement
