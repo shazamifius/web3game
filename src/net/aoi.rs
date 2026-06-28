@@ -24,6 +24,17 @@ pub(crate) const CANDIDATE_RADIUS: f32 = 500.0;
 /// pairs réunis. Plus tard : fonction de la qualité du lien (bon wifi = grand B).
 pub(crate) const SEND_BUDGET_HZ: f32 = 240.0;
 
+/// COUCHE 2 — AoI BILATÉRALE (le receveur a son mot à dire ; cf. `CONTRAT_SIDECAR` §7.3, D3).
+/// Budget de RÉCEPTION qu'un nœud s'autorise à ENCAISSER de TOUS ses émetteurs réunis (maj/s).
+/// Symétrique de `SEND_BUDGET_HZ` mais côté RÉCEPTION — c'est LE garde-fou du lien FAIBLE : l'AoI
+/// classique borne ce qu'on ÉMET, jamais ce qu'on REÇOIT, et un petit lien se NOIE en réception
+/// (mesure live du 28 juin : ~25 % des liens à >500 ms sous foule lourde = sur-réception/congestion).
+/// Défaut = `SEND_BUDGET_HZ` → AUCUN bridage (régime actuel préservé exactement). Un lien contraint
+/// pose un plafond plus bas ; à terme MESURÉ (auto-adaptatif, fibre → grand budget ; JAMAIS un cap en
+/// dur — §7.3). Le fort n'impose rien, le faible n'est jamais noyé.
+#[allow(dead_code)] // EN ATTENTE : valeur prouvée par test ; branchée à l'étape wire (le receveur l'annonce).
+pub(crate) const RECV_BUDGET_HZ: f32 = SEND_BUDGET_HZ;
+
 /// Côté d'une CELLULE spatiale (m), chap. 8.3 : une cellule = une RÉGION qu'un hôte élu
 /// RÉSUME. Plus grand que la portée de focus (~`COMFORT_DIST`) : ce qui est dans une cellule
 /// LOINTAINE est perçu via UN résumé basse fréquence, pas N flux individuels → la fraîcheur
@@ -125,6 +136,7 @@ pub(crate) fn relevance_transitive(ids: &[PeerId], base: &[f32], engaged: &[Vec<
 /// Principe (cf. le cours) : on monte un niveau commun `λ` tel que débit_i = λ·w_i.
 /// Ceux qui dépasseraient `r_max` sont fixés à `r_max` et leur surplus est rendu
 /// au reste ; on recommence avec le budget restant. Converge en quelques passes.
+///
 pub(crate) fn allocate_rates(weights: &[f32], budget: f32, r_max: f32) -> Vec<f32> {
     let n = weights.len();
     let mut rates = vec![0.0f32; n];
@@ -161,6 +173,72 @@ pub(crate) fn allocate_rates(weights: &[f32], budget: f32, r_max: f32) -> Vec<f3
         }
     }
     rates
+}
+
+/// WATER-FILLING à plafonds PAR PAIR (couche 2) : généralise `allocate_rates` — au lieu d'un
+/// plafond scalaire commun, CHAQUE pair `i` a SON plafond `caps[i]` (Hz). Sert l'AoI BILATÉRALE :
+/// le plafond d'un pair = le min(son tier, ce qu'il a ANNONCÉ pouvoir encaisser). Le surplus d'un
+/// pair plafonné BAS (lien faible qui s'est annoncé petit) est RENDU aux autres (water-filling) →
+/// le budget d'émission n'est pas gaspillé, le fort en profite. `caps[i]` absent → ∞ (pas de bride).
+///
+/// Implémentation JUMELLE de `allocate_rates` (mêmes passes), seul le plafond devient par-pair → avec
+/// tous les `caps` égaux le résultat est IDENTIQUE (le test `capped_uniforme_egale_allocate_rates`
+/// croise les deux, donc l'AoI à sens unique d'origine reste prouvée intacte).
+pub(crate) fn allocate_rates_capped(weights: &[f32], budget: f32, caps: &[f32]) -> Vec<f32> {
+    let n = weights.len();
+    let mut rates = vec![0.0f32; n];
+    let mut capped = vec![false; n];
+    let mut remaining = budget;
+
+    loop {
+        // Somme des poids encore non plafonnés.
+        let sum_w: f32 = (0..n).filter(|&i| !capped[i]).map(|i| weights[i]).sum();
+        if sum_w <= 0.0 || remaining <= 0.0 {
+            break;
+        }
+        let lambda = remaining / sum_w;
+
+        // Qui dépasse SON plafond à ce niveau ? On le plafonne et on rend son surplus.
+        let mut newly_capped = false;
+        for i in 0..n {
+            let cap = caps.get(i).copied().unwrap_or(f32::INFINITY);
+            if !capped[i] && lambda * weights[i] > cap {
+                capped[i] = true;
+                rates[i] = cap;
+                remaining -= cap;
+                newly_capped = true;
+            }
+        }
+
+        // Personne ne dépasse : les non-plafonnés prennent λ·w et c'est fini.
+        if !newly_capped {
+            for i in 0..n {
+                if !capped[i] {
+                    rates[i] = lambda * weights[i];
+                }
+            }
+            break;
+        }
+    }
+    rates
+}
+
+/// COUCHE 2 — le plafond par-lien qu'un RECEVEUR annonce à ses émetteurs (Hz). AUTO-ADAPTATIF
+/// (jamais un cap en dur, §7.3) : tant que la réception MESURÉE (`measured_recv_hz`, ce que le nœud
+/// encaisse réellement) tient dans son budget (`recv_budget_hz`), on n'annonce RIEN (`∞`) → le cas
+/// courant n'est JAMAIS bridé (un fort sur fibre laisse tout passer). EN SURCHARGE seulement, on
+/// partage le budget ÉQUITABLEMENT entre les `n_senders` → chaque émetteur réduit, et la réception
+/// totale du faible retombe sous le budget (sommé sur n émetteurs ≈ `recv_budget_hz`). C'est
+/// l'invariant qui manquait à l'AoI à sens unique : la réception du FAIBLE bornée quel que soit N.
+/// `n_senders = 0` → `∞` (personne ne m'émet). Partage ÉGAL d'abord (simple, sûr) ; pondérer par
+/// l'intérêt du receveur = raffinement futur.
+#[allow(dead_code)] // EN ATTENTE : logique prouvée (test) ; branchée à l'étape wire (annonce du budget).
+pub(crate) fn advertised_recv_cap(recv_budget_hz: f32, measured_recv_hz: f32, n_senders: usize) -> f32 {
+    if n_senders == 0 || measured_recv_hz <= recv_budget_hz {
+        f32::INFINITY // sous le budget (ou personne) → aucun bridage : le cas courant est préservé
+    } else {
+        recv_budget_hz / (n_senders as f32) // surcharge → part équitable, la réception retombe sous le budget
+    }
 }
 
 /// Nombre de pairs au FOCUS (chap. 8.2) : lien plein débit (jusqu'à `SEND_HZ`), prédiction,
@@ -213,6 +291,49 @@ pub(crate) fn allocate_tiers(weights: &[f32], is_focus: &[bool], budget: f32, r_
     let consc_budget = (budget - focus_used).max(0.0);
     let consc_w: Vec<f32> = consc_idx.iter().map(|&i| weights[i]).collect();
     let consc_rates = allocate_rates(&consc_w, consc_budget, CONSCIENCE_HZ);
+
+    // Remappe vers l'ordre d'entrée.
+    let mut rates = vec![0.0f32; n];
+    for (k, &i) in focus_idx.iter().enumerate() {
+        rates[i] = focus_rates[k];
+    }
+    for (k, &i) in consc_idx.iter().enumerate() {
+        rates[i] = consc_rates[k];
+    }
+    rates
+}
+
+/// COUCHE 2 — variante BILATÉRALE de `allocate_tiers` (JUMELLE : même structure focus/conscience,
+/// mais via `allocate_rates_capped`) : en plus du tier, chaque pair impose SON
+/// plafond de RÉCEPTION annoncé (`recv_caps[i]`, Hz ; absent/∞ = pas d'annonce → régime actuel).
+/// Le débit vers un pair ne dépasse JAMAIS `min(plafond de son tier, ce qu'il a annoncé encaisser)`.
+/// → le FAIBLE est protégé (jamais noyé) ; le surplus libéré est rendu par water-filling, donc le
+/// FORT n'est pas bridé pour autant. `recv_caps` tout à ∞ (ou `&[]`) → IDENTIQUE à `allocate_tiers`.
+pub(crate) fn allocate_tiers_bilateral(
+    weights: &[f32],
+    is_focus: &[bool],
+    budget: f32,
+    r_max: f32,
+    recv_caps: &[f32],
+) -> Vec<f32> {
+    let n = weights.len();
+    let focus_idx: Vec<usize> = (0..n).filter(|&i| is_focus.get(i).copied().unwrap_or(false)).collect();
+    let consc_idx: Vec<usize> = (0..n).filter(|&i| !is_focus.get(i).copied().unwrap_or(false)).collect();
+
+    // Plafond EFFECTIF d'un pair = min(plafond de son tier, ce qu'il a annoncé pouvoir encaisser).
+    let cap_at = |i: usize, tier_max: f32| tier_max.min(recv_caps.get(i).copied().unwrap_or(f32::INFINITY));
+
+    // FOCUS : tout le budget leur est offert, mais bornés à `r_max` (ou MOINS si le pair l'a annoncé).
+    let focus_w: Vec<f32> = focus_idx.iter().map(|&i| weights[i]).collect();
+    let focus_caps: Vec<f32> = focus_idx.iter().map(|&i| cap_at(i, r_max)).collect();
+    let focus_rates = allocate_rates_capped(&focus_w, budget, &focus_caps);
+    let focus_used: f32 = focus_rates.iter().sum();
+
+    // CONSCIENCE : ce qui RESTE du budget, plafond bas (ou MOINS si le pair l'a annoncé).
+    let consc_budget = (budget - focus_used).max(0.0);
+    let consc_w: Vec<f32> = consc_idx.iter().map(|&i| weights[i]).collect();
+    let consc_caps: Vec<f32> = consc_idx.iter().map(|&i| cap_at(i, CONSCIENCE_HZ)).collect();
+    let consc_rates = allocate_rates_capped(&consc_w, consc_budget, &consc_caps);
 
     // Remappe vers l'ordre d'entrée.
     let mut rates = vec![0.0f32; n];
@@ -315,6 +436,69 @@ mod tests {
         let r = allocate_tiers(&weights, &is_focus, 240.0, 20.0);
         assert!(r[0] <= CONSCIENCE_HZ + 0.01); // gros poids mais conscience → plafonné bas
         assert!((r[1] - 20.0).abs() < 0.01); // le focus (même petit poids) est servi plein
+    }
+
+    /// COUCHE 2 — `allocate_rates_capped` avec un plafond UNIFORME doit redonner EXACTEMENT le
+    /// water-filling d'origine (`allocate_rates`). C'est le filet qui garantit « zéro régression ».
+    #[test]
+    fn capped_uniforme_egale_allocate_rates() {
+        let w = [8.0, 3.0, 2.0, 1.0];
+        let a = allocate_rates(&w, 50.0, 20.0);
+        let b = allocate_rates_capped(&w, 50.0, &[20.0; 4]);
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert!((x - y).abs() < 1.0e-6, "capped uniforme ≠ allocate_rates");
+        }
+    }
+
+    /// COUCHE 2 — SANS annonce de réception (`recv_caps` vide ou tout ∞), la variante bilatérale
+    /// est IDENTIQUE à l'AoI d'origine : aucune régression tant que personne n'annonce de budget.
+    #[test]
+    fn bilateral_sans_annonce_identique_a_tiers() {
+        let weights = vec![1.0f32; 50];
+        let mut is_focus = vec![false; 50];
+        for f in is_focus.iter_mut().take(K_FOCUS) {
+            *f = true;
+        }
+        let base = allocate_tiers(&weights, &is_focus, 240.0, 20.0);
+        let vide = allocate_tiers_bilateral(&weights, &is_focus, 240.0, 20.0, &[]);
+        let infinis = allocate_tiers_bilateral(&weights, &is_focus, 240.0, 20.0, &vec![f32::INFINITY; 50]);
+        for ((a, b), c) in base.iter().zip(vide.iter()).zip(infinis.iter()) {
+            assert!((a - b).abs() < 1.0e-6 && (a - c).abs() < 1.0e-6, "bilatéral sans annonce doit être identique");
+        }
+    }
+
+    /// COUCHE 2 — LE test qui compte : un lien FAIBLE annonce un petit budget → son débit est borné
+    /// à ce qu'il a annoncé (jamais noyé), et le surplus libéré est REDISTRIBUÉ aux autres (le fort
+    /// n'est pas bridé pour autant). C'est l'« AoI bilatérale » : le faible protégé, le fort servi.
+    #[test]
+    fn bilateral_protege_le_faible_et_redistribue() {
+        // 4 pairs au focus, budget volontairement SERRÉ (40) → sans annonce, chacun a 10 Hz.
+        let weights = [1.0, 1.0, 1.0, 1.0];
+        let is_focus = [true, true, true, true];
+        let sans = allocate_tiers(&weights, &is_focus, 40.0, 20.0);
+        assert!(sans.iter().all(|&x| (x - 10.0).abs() < 0.01), "sans annonce : 10 Hz chacun");
+
+        // Le pair 0 (lien faible) annonce 2 Hz max. Les autres n'annoncent rien (∞).
+        let caps = [2.0, f32::INFINITY, f32::INFINITY, f32::INFINITY];
+        let avec = allocate_tiers_bilateral(&weights, &is_focus, 40.0, 20.0, &caps);
+        assert!((avec[0] - 2.0).abs() < 0.01, "le faible est borné à ce qu'il a annoncé (2 Hz)");
+        assert!(avec[1] > 10.5 && avec[2] > 10.5 && avec[3] > 10.5, "le surplus libéré profite aux autres");
+        assert!((avec.iter().sum::<f32>() - 40.0).abs() < 0.01, "budget total inchangé (rien gaspillé)");
+    }
+
+    /// COUCHE 2 — l'annonce du receveur est AUTO-ADAPTATIVE : ∞ (rien bridé) tant que la réception
+    /// MESURÉE tient dans le budget — le cas COURANT n'est jamais throttlé. En SURCHARGE seulement,
+    /// part équitable, et sommée sur les n émetteurs elle ramène la réception sous le budget.
+    #[test]
+    fn advertised_recv_cap_auto_adaptatif() {
+        // Sous le budget (240 dispo, on encaisse 172) → AUCUN bridage, même avec 14 émetteurs.
+        assert_eq!(advertised_recv_cap(240.0, 172.0, 14), f32::INFINITY);
+        // Personne n'émet → ∞.
+        assert_eq!(advertised_recv_cap(240.0, 999.0, 0), f32::INFINITY);
+        // SURCHARGE (on encaisserait 400 > 240) avec 20 émetteurs → part équitable 12 Hz.
+        let cap = advertised_recv_cap(240.0, 400.0, 20);
+        assert!((cap - 12.0).abs() < 1.0e-6); // 240 / 20
+        assert!((cap * 20.0 - 240.0).abs() < 1.0e-3); // sommé sur 20 émetteurs ≈ budget → faible borné
     }
 
     /// 8.3a — la grille de cellules : origine, frontières, et coordonnées NÉGATIVES (le piège
