@@ -343,6 +343,13 @@ impl Bot {
         self.force_relay = true;
     }
 
+    /// COUCHE 2 — active l'AoI BILATÉRALE sur CE bot (sans toucher l'environnement) : pour la piloter
+    /// depuis la CAMPAGNE (`aoi=1`) le temps d'une session de mesure, au lieu d'un rebuild avec
+    /// `AOI_BILATERAL=1`. Reste gaté/par-session : on n'allume rien en dehors d'une mesure consentie.
+    pub(crate) fn enable_aoi_bilateral(&mut self) {
+        self.aoi_bilateral = true;
+    }
+
     /// SIDECAR (palier 2) : les avatars distants FRAIS (PlayerState copiés, filtrés ≤ REMOTE_TIMEOUT).
     /// Vide si le puits n'est pas activé.
     pub(crate) fn avatars(&self, now: f32) -> Vec<PlayerState> {

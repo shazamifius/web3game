@@ -461,10 +461,13 @@ struct Campaign {
     mode: Mode,
     session: u64,
     bots: usize,
+    /// COUCHE 2 — allume l'AoI BILATÉRALE le temps de la session (`aoi=1`). Défaut `false` → émission
+    /// byte-pour-byte. Permet de PROUVER la couche 2 dehors par un simple flip serveur, sans rebuild.
+    aoi: bool,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1 }
+        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false }
     }
 }
 
@@ -494,6 +497,9 @@ fn parse_campaign(body: &str) -> Campaign {
                     if let Ok(n) = v.parse::<usize>() {
                         c.bots = n.clamp(1, 1000);
                     }
+                }
+                "aoi" => {
+                    c.aoi = matches!(v, "1" | "true"); // couche 2 ON le temps de la session
                 }
                 _ => {}
             }
@@ -1023,7 +1029,14 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             return SessionEnd::Normal;
         }
     };
-    println!("[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s))…", start.session, start.window, start.bots);
+    if start.aoi {
+        bot.enable_aoi_bilateral(); // couche 2 ON le temps de cette session (flip serveur)
+    }
+    println!(
+        "[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s){})…",
+        start.session, start.window, start.bots,
+        if start.aoi { ", AoI bilatérale ON" } else { "" }
+    );
     session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
 
@@ -1036,6 +1049,9 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             worker_handles.push(std::thread::spawn(move || {
                 let phase = i as f32 * 0.37;
                 if let Some(mut b) = Bot::new(format!("b_{i}"), false, phase) {
+                    if start.aoi {
+                        b.enable_aoi_bilateral(); // les bots de foule aussi → vraie réception bornée
+                    }
                     let boot = Instant::now();
                     let mut last = Instant::now();
                     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1556,9 +1572,14 @@ mod tests {
         assert_eq!(parse_campaign("mode=Simulate").mode, Mode::Simulate); // casse ignorée
         assert_eq!(parse_campaign("mode=simulate\nsession=7\n").session, 7);
         assert_eq!(parse_campaign("").session, 0);
+        // COUCHE 2 — le flip `aoi` : absent → OFF (byte-pour-byte), `1`/`true` → ON.
+        assert!(!parse_campaign("").aoi);
+        assert!(!parse_campaign("aoi=0").aoi);
+        assert!(parse_campaign("aoi=1").aoi);
+        assert!(parse_campaign("aoi=true").aoi);
         // une campagne complète et réaliste :
-        let c = parse_campaign("window=20\nmode=simulate\nsession=42\nbots=500\n");
-        assert_eq!((c.window, c.mode, c.session, c.bots), (20, Mode::Simulate, 42, 500));
+        let c = parse_campaign("window=20\nmode=simulate\nsession=42\nbots=500\naoi=1\n");
+        assert_eq!((c.window, c.mode, c.session, c.bots, c.aoi), (20, Mode::Simulate, 42, 500, true));
     }
 
     /// Fenêtre de session — la coordination par fichiers (le contrat agent↔fenêtre) : `open` pose le
