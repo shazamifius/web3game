@@ -39,8 +39,10 @@ pub(crate) struct Arrival {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LinkStats {
     pub received: usize,   // nombre de paquets reçus
-    pub expected: u64,     // attendus sur la plage de seq (max − min + 1)
-    pub loss_pct: f64,     // perte : 1 − reçus / attendus
+    pub expected: u64,     // attendus sur la plage de seq (max − min + 1) — RÉFÉRENCE PLEIN DÉBIT
+    pub loss_pct: f64,     // perte APPARENTE : 1 − reçus / attendus (inclut le bridage AoI !)
+    pub real_loss_pct: f64, // perte RÉELLE : relative à la cadence INFÉRÉE (hors bridage volontaire)
+    pub cadence_step: u64, // pas de seq inféré entre deux envois reçus (1 = plein débit ; 10 ≈ bridé 2 Hz)
     pub reorder_pct: f64,  // fraction d'arrivées dont le seq recule
     pub jitter_ms: f64,    // écart absolu moyen des intervalles inter-arrivées
     pub fresh_p50_ms: f64, // FRAÎCHEUR (âge du dernier état connu) — médiane
@@ -96,6 +98,33 @@ pub(crate) fn link_stats(arrivals: &[Arrival], tick_ms: f64) -> LinkStats {
     let expected = max_seq - min_seq + 1;
     let loss_pct = (1.0 - received as f64 / expected as f64).max(0.0);
 
+    // VRAIE PERTE vs BRIDAGE VOLONTAIRE (l'enquête « inspecteur Eve », 28 juin).
+    // L'émetteur incrémente son seq à plein débit (SEND_HZ, 20/s) pour TOUS, mais n'émet vers un
+    // pair LOINTAIN qu'à CONSCIENCE_HZ (2/s) par l'AoI : ce pair voit seq 1,11,21… → `loss_pct`
+    // (vs seq global) le compte « perdu » alors que RIEN ne l'est. On INFÈRE le pas de cadence
+    // (médiane des sauts de seq consécutifs, robuste : une vraie perte fait un saut ~double) et on
+    // mesure la perte RELATIVE à cette cadence : saut ≈ 1 pas = normal ; ≈ 2 pas = 1 envoi vraiment perdu.
+    let mut by_seq: Vec<u64> = by_time.iter().map(|a| a.seq).collect();
+    by_seq.sort_unstable();
+    by_seq.dedup();
+    let step_gaps: Vec<u64> = by_seq.windows(2).map(|w| w[1] - w[0]).collect();
+    let (cadence_step, real_loss_pct) = if step_gaps.len() < 2 {
+        (1, 0.0) // pas assez d'arrivées pour inférer une cadence → on ne prétend rien
+    } else {
+        let mut sorted_gaps = step_gaps.clone();
+        sorted_gaps.sort_unstable();
+        let base = sorted_gaps[sorted_gaps.len() / 2].max(1); // médiane (≥1) = le pas de cadence
+        let mut slots = 0u64; // nb de créneaux d'émission attendus À CETTE CADENCE
+        let mut missing = 0u64; // créneaux manquants = vraies pertes
+        for &g in &step_gaps {
+            let k = ((g as f64 / base as f64).round() as u64).max(1);
+            slots += k;
+            missing += k - 1;
+        }
+        let rl = if slots > 0 { missing as f64 / slots as f64 } else { 0.0 };
+        (base, rl)
+    };
+
     // Ré-ordonnancement : un seq qui recule par rapport à l'arrivée précédente (en temps).
     let reorders = by_time.windows(2).filter(|w| w[1].seq < w[0].seq).count();
     let reorder_pct = if received > 1 {
@@ -121,6 +150,8 @@ pub(crate) fn link_stats(arrivals: &[Arrival], tick_ms: f64) -> LinkStats {
         received,
         expected,
         loss_pct,
+        real_loss_pct,
+        cadence_step,
         reorder_pct,
         jitter_ms,
         fresh_p50_ms: percentile(&ages, 50.0),
@@ -134,11 +165,13 @@ pub(crate) fn link_stats(arrivals: &[Arrival], tick_ms: f64) -> LinkStats {
 pub(crate) fn report_json(observer: &str, target: &str, s: &LinkStats) -> String {
     format!(
         "{{\"observer\":\"{observer}\",\"target\":\"{target}\",\"received\":{},\"expected\":{},\
-         \"loss_pct\":{:.2},\"reorder_pct\":{:.2},\"jitter_ms\":{:.1},\
+         \"loss_pct\":{:.2},\"real_loss_pct\":{:.2},\"cadence_step\":{},\"reorder_pct\":{:.2},\"jitter_ms\":{:.1},\
          \"fresh_p50_ms\":{:.1},\"fresh_p95_ms\":{:.1},\"fresh_max_ms\":{:.1}}}",
         s.received,
         s.expected,
         s.loss_pct * 100.0,
+        s.real_loss_pct * 100.0,
+        s.cadence_step,
         s.reorder_pct * 100.0,
         s.jitter_ms,
         s.fresh_p50_ms,
@@ -1274,6 +1307,34 @@ mod tests {
         let s = link_stats(&b, 50.0);
         assert!((s.reorder_pct - 0.25).abs() < 1e-9, "1 ré-ordre sur 4");
         assert!(s.loss_pct.abs() < 1e-9, "aucune perte ici (0..4 complet)");
+    }
+
+    /// ENQUÊTE « inspecteur Eve » (28 juin) : un pair BRIDÉ par l'AoI (2 Hz sur un seq global à
+    /// 20 Hz) affiche une `loss_pct` énorme (FAUX : rien n'est perdu, l'émetteur n'a pas envoyé
+    /// exprès) mais une `real_loss_pct` ~nulle. Et une VRAIE perte par-dessus se lit, elle, dans
+    /// `real_loss_pct`. C'est la correction qui sépare « pas envoyé » de « envoyé puis perdu ».
+    #[test]
+    fn vraie_perte_distinguee_du_bridage_aoi() {
+        // BRIDÉ SANS PERTE : seq 1,11,21,31,41 (cadence 10 = 2 Hz sur 20 Hz). Plein débit aurait
+        // « attendu » 41 paquets → loss_pct ~88 % (faux positif). Cadence régulière → real_loss = 0.
+        let bride: Vec<Arrival> = [1u64, 11, 21, 31, 41]
+            .iter().enumerate()
+            .map(|(i, &seq)| Arrival { recv_ms: i as f64 * 500.0, seq })
+            .collect();
+        let s = link_stats(&bride, 50.0);
+        assert_eq!(s.cadence_step, 10, "cadence inférée = 10 (le bridage 2 Hz)");
+        assert!(s.loss_pct > 0.85, "perte APPARENTE énorme (vs plein débit) : {}", s.loss_pct);
+        assert!(s.real_loss_pct.abs() < 1e-9, "AUCUNE vraie perte (rien n'a été perdu) : {}", s.real_loss_pct);
+
+        // BRIDÉ + 1 VRAIE PERTE : seq 1,11,31,41 (le 21 manque). Cadence toujours 10 (médiane) ;
+        // le saut de 20 = 2 créneaux → 1 manquant sur 4 créneaux = 25 % de VRAIE perte.
+        let perdu: Vec<Arrival> = [1u64, 11, 31, 41]
+            .iter().enumerate()
+            .map(|(i, &seq)| Arrival { recv_ms: i as f64 * 500.0, seq })
+            .collect();
+        let s = link_stats(&perdu, 50.0);
+        assert_eq!(s.cadence_step, 10, "cadence inférée toujours 10");
+        assert!((s.real_loss_pct - 0.25).abs() < 1e-9, "1 vraie perte sur 4 créneaux = 25 % : {}", s.real_loss_pct);
     }
 
     /// La FRAÎCHEUR grandit quand les paquets s'espacent : un lien à 1 paquet/seconde donne
