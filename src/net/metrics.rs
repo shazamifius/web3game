@@ -1122,6 +1122,79 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
 /// fenêtre VISIBLE (pas de popup bloquant : les potes ne sont jamais à l'écran) — le pote peut Quitter ou
 /// Réduire quand il veut. Une session par `session` (set `decided`) → après un « Quitter », le PC reste
 /// au repos et redevient dispo dès que je bumpe `session`.
+/// Usage CPU GLOBAL de la machine (0..100 %), mesuré sur un court échantillon (~120 ms). `None` si la
+/// plateforme n'est pas gérée → on ne bride alors RIEN (comportement inchangé). 100 % dep-free.
+/// Sert au RESPECT DE L'HÔTE : si le pote est occupé (jeu, simu lourde…), l'agent s'efface.
+#[cfg(target_os = "linux")]
+fn cpu_busy_pct() -> Option<f64> {
+    // /proc/stat ligne « cpu  user nice system idle iowait irq softirq steal … » (jiffies cumulés).
+    fn snap() -> Option<(u64, u64)> {
+        let s = std::fs::read_to_string("/proc/stat").ok()?;
+        let line = s.lines().next()?;
+        let v: Vec<u64> = line.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
+        if v.len() < 4 {
+            return None;
+        }
+        let idle = v[3] + v.get(4).copied().unwrap_or(0); // idle + iowait
+        let total: u64 = v.iter().sum();
+        Some((idle, total))
+    }
+    let (i0, t0) = snap()?;
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let (i1, t1) = snap()?;
+    let dt = t1.checked_sub(t0)?;
+    if dt == 0 {
+        return None;
+    }
+    let di = i1.saturating_sub(i0);
+    Some(((1.0 - di as f64 / dt as f64) * 100.0).clamp(0.0, 100.0))
+}
+
+#[cfg(target_os = "windows")]
+fn cpu_busy_pct() -> Option<f64> {
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    impl FileTime {
+        fn as_u64(self) -> u64 {
+            ((self.high as u64) << 32) | self.low as u64
+        }
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetSystemTimes(idle: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+    }
+    // kernel INCLUT l'idle → busy = (kernel + user) − idle ; total = kernel + user.
+    fn snap() -> Option<(u64, u64)> {
+        let (mut i, mut k, mut u) = (FileTime::default(), FileTime::default(), FileTime::default());
+        if unsafe { GetSystemTimes(&mut i, &mut k, &mut u) } == 0 {
+            return None;
+        }
+        Some((i.as_u64(), k.as_u64() + u.as_u64()))
+    }
+    let (i0, t0) = snap()?;
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let (i1, t1) = snap()?;
+    let dt = t1.checked_sub(t0)?;
+    if dt == 0 {
+        return None;
+    }
+    let di = i1.saturating_sub(i0);
+    Some(((1.0 - di as f64 / dt as f64) * 100.0).clamp(0.0, 100.0))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn cpu_busy_pct() -> Option<f64> {
+    None
+}
+
+/// Seuil de RESPECT : au-dessus, la machine du pote est jugée OCCUPÉE → l'agent NE mesure PAS (il
+/// reste en simple battement de cœur et réessaiera au calme). « Si 90 % d'usage, on ne lance pas. »
+const HOST_BUSY_PCT: f64 = 85.0;
+
 fn run_agent_loop(window: u64) {
     let cfg_host = super::link::rendezvous_addr().ip().to_string();
     let fallback_window = window.max(5);
@@ -1140,10 +1213,18 @@ fn run_agent_loop(window: u64) {
             return; // le nouveau process prend le relais
         }
         if campaign.mode == Mode::Simulate && !done.contains(&campaign.session) {
-            done.insert(campaign.session); // une session par identifiant
-            println!("[agent] session {} demandée — démarrage VISIBLE (fenêtre + mesure).", campaign.session);
-            if let SessionEnd::Updated = run_measure_session(&cfg_host, campaign) {
-                return;
+            // RESPECT DE L'HÔTE : si sa machine est OCCUPÉE (jeu, simu lourde…), on NE lance PAS la
+            // mesure — on s'efface et on réessaiera au calme. On ne marque PAS la session « faite »
+            // (donc elle se relancera dès que ça se calme). cf. cpu_busy_pct / HOST_BUSY_PCT.
+            if let Some(p) = cpu_busy_pct().filter(|&p| p >= HOST_BUSY_PCT) {
+                println!("[agent] machine occupée ({p:.0}% CPU ≥ {HOST_BUSY_PCT:.0}%) — je m'efface, je réessaierai au calme.");
+                send_heartbeat_diag(&cfg_host, CONFIG_PORT, "busy", &format!(",\"cpu_pct\":{p:.0}"));
+            } else {
+                done.insert(campaign.session); // une session par identifiant
+                println!("[agent] session {} demandée — démarrage VISIBLE (fenêtre + mesure).", campaign.session);
+                if let SessionEnd::Updated = run_measure_session(&cfg_host, campaign) {
+                    return;
+                }
             }
         } else {
             // REPOS : juste la présence (coût réseau négligeable, le pote n'est pas dérangé).
@@ -1586,5 +1667,15 @@ mod tests {
         assert_eq!(liveness_verdict(900.0, 40, 1), "MORT(>500ms)");
         // p95 > 500 et AUCUNE arrivée (recv=0) → SILENCIEUX = le vrai suspect (relais/inclusivité).
         assert_eq!(liveness_verdict(900.0, 0, 0), "MORT(silencieux)");
+    }
+
+    /// RESPECT DE L'HÔTE (29 juin) : le capteur de charge CPU répond une valeur SENSÉE (0..100 %) sur
+    /// les plateformes gérées → l'agent peut décider de s'effacer quand le pote est occupé.
+    #[test]
+    fn cpu_busy_pct_est_sense() {
+        if let Some(p) = cpu_busy_pct() {
+            assert!((0.0..=100.0).contains(&p), "usage CPU attendu dans [0,100], obtenu {p}");
+        }
+        // None sur plateforme non gérée = acceptable (on ne bride pas → comportement inchangé).
     }
 }
