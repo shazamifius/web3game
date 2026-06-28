@@ -52,10 +52,26 @@ jobs:
           # config pour le pote.
           $inst = @(
             '@echo off',
+            'rem === Installeur PROPRE : droits admin (UAC), nettoyage total, install neuve ===',
+            '>nul 2>&1 net session',
+            'if %errorlevel% neq 0 (',
+            '  echo Demande des droits administrateur...',
+            '  powershell -Command "Start-Process -FilePath ''%~f0'' -Verb RunAs"',
+            '  exit /b',
+            ')',
+            'cd /d "%~dp0"',
+            'echo.',
+            'echo === Nettoyage de TOUTES les anciennes versions ===',
+            'taskkill /F /IM jeu.exe >nul 2>&1',
+            '"%~dp0jeu.exe" agent uninstall >nul 2>&1',
+            'del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\web3-agent.vbs" >nul 2>&1',
+            'schtasks /delete /tn web3-agent /f >nul 2>&1',
+            'rmdir /s /q "%LOCALAPPDATA%\web3-agent" >nul 2>&1',
+            'echo Anciennes versions supprimees.',
+            'echo === Installation PROPRE ===',
             '"%~dp0jeu.exe" agent install',
             'echo.',
-            'echo C''est installe ! L''agent tourne en arriere-plan, discret et a TRES BASSE priorite.',
-            'echo Il ne mesure JAMAIS quand ton PC est occupe (jeu, calcul lourd). Tu peux fermer.',
+            'echo C''est installe PROPREMENT. Agent persistant, TRES basse priorite, se met en retrait si occupe.',
             'pause'
           )
           Set-Content -Path dist/INSTALLER.bat -Value $inst -Encoding ascii
