@@ -182,15 +182,30 @@ pub(crate) fn report_json(observer: &str, target: &str, s: &LinkStats) -> String
 
 /// L'agent (v0). Sans argument → DÉMO (flux synthétiques, le format de rapport). `recv [secs]` →
 /// mesure LIVE : on rejoint le rendez-vous comme un vrai nœud et on chiffre la fraîcheur des pairs.
+/// Réglages que l'AGENT doit avoir QUOI QU'IL ARRIVE (il vit sur des liens CGNAT) : le repli relais
+/// et la difficulté PoW du réseau. On les pose SI ABSENTS → un agent persistant lancé par le shim
+/// (Windows) ou le service (Linux), SANS l'environnement du `.bat`, fonctionne quand même (relais +
+/// identité valides). N'écrase JAMAIS un réglage explicite de l'utilisateur.
+fn ensure_agent_env() {
+    if std::env::var("RELAY_FALLBACK").is_err() {
+        unsafe { std::env::set_var("RELAY_FALLBACK", "1") };
+    }
+    if std::env::var("POW_BITS").is_err() {
+        unsafe { std::env::set_var("POW_BITS", "18") };
+    }
+}
+
 pub fn run_agent(mode: Option<&str>, secs: u64) {
     match mode {
         Some("install") => run_agent_install(false),
         Some("uninstall") => run_agent_install(true),
         Some("recv") => {
+            ensure_agent_env();
             ensure_rendezvous_from_file();
             run_agent_recv(secs)
         }
         Some("loop") => {
+            ensure_agent_env();
             ensure_rendezvous_from_file();
             run_agent_loop(secs)
         }
@@ -645,7 +660,7 @@ fn run_agent_install(uninstall: bool) {
         }
         let _ = std::fs::create_dir_all(&svc_dir);
         let unit = format!(
-            "[Unit]\nDescription=web3 agent de mesure\n\n[Service]\nExecStart={} agent loop\nWorkingDirectory={}\nRestart=always\n\n[Install]\nWantedBy=default.target\n",
+            "[Unit]\nDescription=web3 agent de mesure\n\n[Service]\nExecStart={} agent loop\nWorkingDirectory={}\nRestart=always\nNice=19\nCPUSchedulingPolicy=idle\n\n[Install]\nWantedBy=default.target\n",
             dest.to_string_lossy(),
             data.to_string_lossy()
         );
@@ -1195,7 +1210,28 @@ fn cpu_busy_pct() -> Option<f64> {
 /// reste en simple battement de cœur et réessaiera au calme). « Si 90 % d'usage, on ne lance pas. »
 const HOST_BUSY_PCT: f64 = 85.0;
 
+/// Met le process à la PRIORITÉ LA PLUS BASSE (« comme un démon Linux `nice` ») → l'OS ne lui donne
+/// que les MIETTES de CPU : il ne dispute jamais un cycle au jeu ou à la simu du pote. Dep-free.
+/// (Linux : posé en plus par le service systemd — `Nice=19` + `CPUSchedulingPolicy=idle`.)
+#[cfg(target_os = "windows")]
+fn lower_own_priority() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn SetPriorityClass(h: isize, class: u32) -> i32;
+    }
+    const IDLE_PRIORITY_CLASS: u32 = 0x0000_0040;
+    unsafe {
+        let _ = SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn lower_own_priority() {
+    // Linux : la priorité basse vient du service systemd (Nice=19 + CPUSchedulingPolicy=idle).
+}
+
 fn run_agent_loop(window: u64) {
+    lower_own_priority(); // RESPECT : on se met en retrait du CPU dès le départ (« comme Linux »).
     let cfg_host = super::link::rendezvous_addr().ip().to_string();
     let fallback_window = window.max(5);
     println!(

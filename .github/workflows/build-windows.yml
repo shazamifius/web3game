@@ -46,6 +46,26 @@ jobs:
             'pause'
           )
           Set-Content -Path dist/LANCER_mesure.bat -Value $bat -Encoding ascii
+          # INSTALLER PERSISTANT (rejoindre la flotte) : démarrage auto (dossier Démarrage, SANS
+          # admin), TRÈS basse priorité, et l'agent s'efface quand le PC est occupé. `agent install`
+          # copie aussi `serveur.txt` à côté, et l'agent pose lui-même RELAY_FALLBACK/POW_BITS → zéro
+          # config pour le pote.
+          $inst = @(
+            '@echo off',
+            '"%~dp0jeu.exe" agent install',
+            'echo.',
+            'echo C''est installe ! L''agent tourne en arriere-plan, discret et a TRES BASSE priorite.',
+            'echo Il ne mesure JAMAIS quand ton PC est occupe (jeu, calcul lourd). Tu peux fermer.',
+            'pause'
+          )
+          Set-Content -Path dist/INSTALLER.bat -Value $inst -Encoding ascii
+          $des = @(
+            '@echo off',
+            '"%~dp0jeu.exe" agent uninstall',
+            'echo Desinstalle : plus rien ne tourne, plus de demarrage auto.',
+            'pause'
+          )
+          Set-Content -Path dist/DESINSTALLER.bat -Value $des -Encoding ascii
           # Adresse du rendez-vous BAKÉE à la construction (entrée du workflow) → l'utilisateur
           # n'a RIEN à remplir : double-clic et ça vise le serveur. (Pas d'IP dans le dépôt :
           # elle vient de l'input au déclenchement, et n'atterrit que dans l'artefact téléchargé.)
