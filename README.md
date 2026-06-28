@@ -60,6 +60,10 @@ l'est pas encore (cf. *En toute transparence*). **118 tests automatiques, 0 warn
   rend la plateforme multi-moteur crédible.
 - **Présence vivante.** Les avatars distants bougent de façon fluide et « habitée » dans Unreal (interpolation +
   vie procédurale), même sous perte de paquets.
+- **Mesuré dehors, pas seulement simulé.** Un **instrument de mesure** — un agent autonome que des volontaires
+  lancent — a relevé, sur de **vrais liens distants** (plusieurs pays, certains derrière le NAT le plus dur), une
+  présence **vivante** : fraîcheur **p95 ~200–335 ms** (sous le seuil de 500 ms), **perte réelle ~0**. Un premier
+  fait concret contre la crainte d'une « belle infra où personne ne se retrouve » (voir *En toute transparence*).
 
 > Le cœur réseau est en **Rust pur, sans aucun moteur 3D**. La présentation se fait dans **Unreal Engine** (un
 > client léger branché par une socket locale). La logique réseau resterait la même avec n'importe quel moteur.
@@ -82,7 +86,10 @@ C'est une **règle du projet** : on écrit ce qui est prouvé **et** ce qui ne l
   présentations uniquement) ; la décentralisation complète de cette dernière brique est un chantier à venir.
 - **Le chiffrement bout-à-bout n'est pas encore là** : aujourd'hui les positions circulent en clair (la signature
   garantit l'authenticité, pas le secret) ; c'est planifié.
-- **Le test décisif reste à faire dehors, avec de vrais joueurs** : prouver que l'espace est *vivant* à plusieurs.
+- **Le test décisif est *entamé*, pas franchi** : on a une première mesure dehors — des nœuds **distants réels** sont
+  **vivants** (fraîcheur p95 < 500 ms, perte réelle ~0), donc l'infrastructure n'est pas *vide*. Mais ça mesure le
+  **substrat** (la présence transportée), pas encore le **ressenti** de vrais joueurs qui **bougent et jouent
+  ensemble**. Ce test-là reste devant.
 
 ## Conçu avec l'IA — assumé, et revendiqué
 

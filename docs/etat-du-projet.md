@@ -25,6 +25,7 @@
 | **Latence** du pont local (sidecar Rust↔moteur) | RTT **médian 47 µs**, p95 67 µs | `cargo run -- sidecar` |
 | Taille d'un **paquet d'état signé** | **182 octets** (118 utiles + 64 de sceau Ed25519) | format, cf. [ARCHITECTURE.md](ARCHITECTURE.md) |
 | **Traversée NAT symétrique** via relais | établie **dans les deux sens** (réseaux réels) | `cargo run -- relay-test 6` *(banc déterministe)* |
+| **Fraîcheur** sur liens **distants réels** (plusieurs pays, dont CGNAT) | **p95 ~200–335 ms** (< seuil 500 ms « vivant »), **perte réelle ~0** | instrument de mesure (agent) + journal du rendez-vous |
 | **Tests** automatiques | **118**, 0 warning | `cargo test` |
 | Plafond du **banc** de simulation | **~1 500 nœuds** (1 thread OS / nœud, 12 cœurs) | limite matérielle (voir §4) |
 
@@ -62,6 +63,10 @@ L'échelle se fait donc en **ajoutant des machines**, jamais en chargeant une se
 - **Indépendance du moteur 3D.** Deux moteurs (Bevy et Unreal) réunis **dans le même espace** via un pont local
   (latence **~47 µs**). *(prouvé à l'écran.)*
 - **Présence « vivante ».** Avatars distants fluides et habités (interpolation + vie procédurale), même sous perte.
+- **Mesuré dehors, pas seulement simulé.** Un **instrument de mesure** (un agent autonome que des volontaires
+  lancent) a relevé, sur de **vrais liens distants** (plusieurs pays, certains derrière le NAT le plus dur), une
+  présence **vivante** : fraîcheur **p95 ~200–335 ms** (sous le seuil de 500 ms), **perte réelle ~0**. *(Premier fait
+  dur contre la « forteresse vide » — voir §6.)*
 
 ## 4. Les combats menés (la méthode)
 
@@ -83,8 +88,11 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 - **« Sans serveur » garde un astérisque** : l'amorçage passe par un rendez-vous (présentations uniquement) ; le
   décentraliser entièrement est ouvert.
 - **Pas de chiffrement bout-à-bout** : positions en clair (la signature garantit l'authenticité, pas le secret).
-- **Le test décisif n'a pas eu lieu** : prouver qu'un espace est *vivant* à plusieurs ne se fait pas en simulation —
-  il faut de vrais joueurs, dehors. C'est le mur le plus important, et il est devant.
+- **Le test décisif est *entamé*, pas franchi.** On a une **première mesure dehors** : des nœuds **distants réels**
+  (plusieurs pays, dont CGNAT) sont **vivants** (fraîcheur p95 < 500 ms, perte réelle ~0). C'est un fait dur —
+  l'infrastructure n'est plus *vide*. Mais ça mesure le **substrat** (la présence transportée), pas encore le
+  **ressenti** : des humains qui **bougent et jouent ensemble** et le **sentent** vivant. Ce test-là, le plus
+  important, reste devant.
 
 ## 6. Les doutes ouverts — le cœur de la démarche
 
@@ -98,7 +106,9 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 - **La persistance sans serveur** : où vit l'état d'un joueur entre deux sessions, et qui empêche de le forger ?
 - **La distribution / l'arrivée des joueurs** : installer, traverser les box, se retrouver — un mur d'usage réel.
 - **La « forteresse vide »** : a-t-on bâti une belle infrastructure dans laquelle deux humains ne se sont jamais
-  *vraiment* retrouvés, en mouvement, via le vrai Internet ? Tant que ce n'est pas vécu dehors, le doute reste.
+  *vraiment* retrouvés, en mouvement, via le vrai Internet ? **Première réponse mesurée :** des nœuds distants réels
+  y sont **vivants** (p95 < 500 ms, perte réelle ~0) — l'infrastructure n'est plus *vide*. Mais le **ressenti** (des
+  humains qui bougent et jouent ensemble) n'est pas encore prouvé : le doute s'allège, il ne se ferme pas.
 
 ---
 

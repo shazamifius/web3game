@@ -135,10 +135,15 @@
 
 ## Périmètre — les doutes qui peuvent décider du projet
 
-- **D27 — « La forteresse vide ».** 🔴 *A-t-on bâti une belle infrastructure dans laquelle deux humains ne se sont
+- **D27 — « La forteresse vide ».** 🟡 *A-t-on bâti une belle infrastructure dans laquelle deux humains ne se sont
   jamais vraiment retrouvés, en mouvement, via le vrai Internet ?* **Réponse :** il n'y en a qu'une honnête — **le
-  test dehors**, avec de vrais joueurs, critère pré-enregistré (latence ≤ 500 ms = jouable), conditions hostiles
-  incluses. La fraîcheur ressentie ne se mesure pas en simulation ; c'est le mur le plus important, et il est devant.
+  test dehors**, critère pré-enregistré (latence ≤ 500 ms = jouable), conditions hostiles incluses. **Premier fait
+  dur (28 juin) :** un **instrument de mesure** (un agent que des volontaires lancent) a relevé, sur de **vrais liens
+  distants** (plusieurs pays, dont CGNAT), une présence **vivante** — fraîcheur **p95 ~200–335 ms** (< 500 ms),
+  **perte réelle ~0**, verdict « vivant ». L'infrastructure n'est donc **plus vide** : le substrat transporte de la
+  présence distante réelle, vivante, sur le vrai Internet. **Ce qui reste (et garde le doute ouvert) :** ça mesure
+  le **substrat**, pas le **ressenti** — des humains qui **bougent et jouent ensemble** et le **sentent** vivant (et
+  le rôle de la voix, D35). Le doute s'allège ; il ne se ferme pas.
 - **D28 — La persistance d'état joueur sans serveur.** 🔴 *Une progression qui survit aux sessions, sans magasin
   central : où vit l'état, et qui empêche de le forger ?* **Réponse :** pour un premier essai, **éphémère/local**
   suffit (entre amis). La vraie réponse — « **ta clé signe ton état, les pairs corroborent** » — s'appuie sur

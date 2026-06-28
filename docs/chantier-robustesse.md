@@ -71,6 +71,21 @@ pour transporter n'importe quel paquet déjà signé (un objet partagé, par exe
 transport de l'avatar déjà prouvé. Vérifié en réel : à travers le NAT, deux joueurs partagent **un seul objet, avec
 un maître cohérent** des deux côtés.
 
+**Mesurer le lien plutôt que le supposer (28 juin).** Pour savoir si ces liens distants sont *vraiment* vivants, on a
+écrit un **instrument de mesure** : un agent autonome que des volontaires lancent, qui relève la fraîcheur, la perte,
+la gigue et le ré-ordonnancement des liens qu'il perçoit, et renvoie les chiffres. Deux leçons en sont sorties :
+
+- **Une fausse alerte instructive.** Les premiers relevés criaient « 89 % de perte » sur le chemin relais. Enquête :
+  ce n'était pas le réseau, mais **notre propre économie de bande passante mal mesurée** (l'instrument comparait le
+  filet basse-fréquence reçu au plein débit émis). L'instrument sait désormais **séparer « pas envoyé exprès » de
+  « envoyé puis perdu »**. Récit complet : [les coulisses](coulisses.md).
+- **Le verdict, une fois l'instrument honnête.** Sur de vrais liens distants (plusieurs pays, certains en CGNAT), la
+  présence est **vivante** : fraîcheur **p95 ~200–335 ms** (< 500 ms), **perte réelle ~0**. Deux durcissements tirés
+  du réel sont restés : une **tolérance au silence** côté rendez-vous portée de **5 s à 20 s** (un lien CGNAT se
+  ré-enregistre sans cesse — à 5 s on l'évinçait à tort), et une **redondance d'émission** *optionnelle* (un état
+  envoyé en double via le relais), gardée sous le coude pour les cas avérés — `0,89³≈0,68` répare surtout un faux
+  problème, donc on ne l'allume pas « au cas où ».
+
 ## 4. Au-delà (différé, assumé)
 
 - **La voix spatiale de proximité** : un chat vocal pair-à-pair, spatialisé, qui profite du chiffrement et de
@@ -83,6 +98,8 @@ un maître cohérent** des deux côtés.
 - Le relais est, à ce stade, **centralisé** (le point de rendez-vous relaie) : c'est un repli assumé, à
   **décentraliser** ensuite (ce qui rouvre la question de l'incitation à relayer, D4).
 - Il est prouvé **à deux joueurs**, pas à l'échelle.
+- La mesure dehors porte sur le **substrat** (la présence transportée, vivante) — **pas encore sur le ressenti**
+  d'humains qui bougent et jouent ensemble (D27 « la forteresse vide » s'allège, sans se fermer).
 - La généralisation de l'autorité (registre, quorum, horloge) est en grande partie **planifiée**, pas encore bâtie.
 
 ---

@@ -65,5 +65,19 @@ test déterministe le prouve : un flux bridé **sans aucune perte** affiche bien
    réparait un faux problème. On ne construit une mécanique complexe que **lorsqu'une mesure l'exige** — jamais
    « au cas où ».
 
-*Statut honnête : le mécanisme est prouvé par le code et un test ; la confirmation finale « il ne reste aucune
-vraie perte sur le lien réel » se fait en re-mesurant dehors, avec l'instrument corrigé. À suivre dans ce carnet.*
+### La suite — vérifié dehors (28 juin 2026)
+Le carnet disait « à suivre » : voici la suite. On a **re-mesuré dehors**, avec l'instrument corrigé, sur de **vrais
+liens distants** (des volontaires sur plusieurs pays, certains derrière le NAT le plus dur, le CGNAT). Le verdict
+neutre du journal serveur : présence **vivante**, fraîcheur **p95 ~200–335 ms** (sous notre seuil de 500 ms),
+**perte réelle ~0**, verdict « vivant ». Autrement dit : une fois l'instrument honnête, **le lien CGNAT allait bien**
+— c'était bien notre mesure qui mentait, pas le réseau.
+
+Deux durcissements tirés de l'enquête sont restés, parce qu'ils servent **un vrai cas, pas un faux** : une
+**tolérance au silence** côté rendez-vous portée de **5 s à 20 s** (un lien CGNAT se ré-enregistre sans cesse — à
+5 s on l'évinçait à tort), et une **redondance d'émission** *optionnelle* (envoyer un état en double via le relais),
+gardée **sous le coude** pour les cas avérés — pas allumée « au cas où ».
+
+*Statut honnête : le mécanisme est prouvé par le code, un test déterministe **et** une mesure dehors. Ce qui reste
+ouvert n'est plus la perte, mais la **pertinence** (donner le plein débit à qui compte, même loin) — le chantier
+suivant. Et ça mesure le **substrat** (la présence transportée), pas encore le **ressenti** d'humains qui jouent
+ensemble (D27, « la forteresse vide », s'allège sans se fermer).*

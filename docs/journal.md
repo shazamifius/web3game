@@ -84,6 +84,32 @@ Dix « trous » ont été fermés ou bornés, dont les plus structurants :
   voisinage plafonné à 32, **objet partagé jamais volé**. *Ce qui vaut pour une grande échelle : la charge par nœud
   ne dépend pas du nombre total — la vraie échelle se fait en ajoutant des machines, pas en surchargeant une seule.*
 
+## Chapitre 7 — Dehors : l'instrument de mesure et les premiers nœuds distants réels
+Jusqu'ici, toutes les preuves venaient de la **simulation** ou de **deux machines**. Or le doute fondateur du projet
+— la « forteresse vide » — ne se lève pas comme ça : il demande de **vrais gens, sur de vrais réseaux, à de vraies
+distances**.
+
+On a donc bâti un **instrument de mesure** : un petit **agent autonome** (sans aucune dépendance, comme le cœur)
+qu'un volontaire lance chez lui. Il rejoint le réseau, mesure la **vivacité des liens distants** qu'il perçoit —
+fraîcheur, perte, gigue, ré-ordonnancement — et **renvoie les chiffres**. L'instrument est lui-même tenu d'être
+**honnête** : visible, lancé en connaissance de cause, et au repos basse consommation quand il ne mesure pas.
+
+**Une fausse piste, d'abord — et la plus instructive.** Les premiers relevés annonçaient **89 % de perte** sur le
+chemin relais. Panique légitime… puis enquête : ce n'était **pas** une panne réseau, mais **notre propre économie de
+bande passante, mal mesurée** (l'instrument comparait le « filet » basse-fréquence, envoyé exprès aux pairs
+lointains, au plein débit réservé au voisinage proche). On a appris à l'instrument à **distinguer « pas envoyé
+exprès » de « envoyé puis perdu »**. L'histoire complète vit dans [les coulisses](coulisses.md).
+
+**Le résultat, une fois l'instrument honnête.** Des volontaires répartis sur **plusieurs pays**, sur de **vrais
+réseaux domestiques** (dont certains derrière le NAT le plus dur, le CGNAT), ont été mesurés **vivants** : fraîcheur
+**p95 ~200–335 ms** — sous le seuil de **500 ms** qu'on s'est fixé pour « vivant » —, **perte réelle ~0**, verdict
+« vivant ».
+
+**Ce que ça prouve, et ce que ça ne prouve pas.** C'est un **fait dur** : le **substrat** transporte de la présence
+**distante et réelle**, vivante, sur le vrai Internet — l'infrastructure n'est plus *vide*. Mais ça ne prouve **pas
+encore** le **ressenti** : des humains qui **bougent et jouent ensemble** dans le même monde, et le **sentent**
+vivant. Ce test-là — le plus important — reste devant. Le doute s'allège ; il ne se ferme pas.
+
 ## La suite
 À partir de là, le travail se poursuit dans les chantiers dédiés : confronter le tout au [réseau réel](chantier-reseau.md),
 [la foule dense](chantier-foule.md), et [la robustesse](chantier-robustesse.md).
