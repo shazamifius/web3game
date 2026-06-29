@@ -181,13 +181,21 @@ fn lerp_pos(a: &Snap, b: &Snap, tc: f64) -> Vec3 {
     a.pos + (b.pos - a.pos) * s
 }
 
-/// Extrapolation d'ORDRE 2 : on prolonge par la vitesse ET l'accélération `p̂ = p + v·Δ + ½·a·Δ²`. `accel` est
+/// Au-delà de cet horizon (s), on cesse de FAIRE CONFIANCE à l'accélération estimée : le terme quadratique
+/// `½·a·Δ²` est non borné, donc sur un TROU LONG (rafale de pertes) il s'emballe. On plafonne l'horizon du SEUL
+/// terme d'accélération (la vitesse, elle, prolonge sans limite comme l'ordre 1) → la prédiction reste bornée.
+/// 0,15 s ≈ 3 paquets à 20 Hz : assez pour suivre un virage, trop court pour qu'une parabole parte en vrille.
+const EXTRAP_HORIZON_S: f32 = 0.15;
+
+/// Extrapolation d'ORDRE 2 : on prolonge par la vitesse ET l'accélération `p̂ = p + v·Δ + ½·a·Δ_q²`. `accel` est
 /// estimée par différence finie des deux dernières vitesses reçues (AUCUN changement du format wire — on garde
-/// `(pos, vel)`). Hypothèse : suit les virages là où l'ordre 1 (droite) part en tangente. (Reproduit EXACTEMENT
-/// une accélération constante ; sur une vraie courbe, le terme quadratique peut dépasser → c'est ce qu'on MESURE.)
+/// `(pos, vel)`). Suit les virages là où l'ordre 1 (droite) part en tangente. **Garde-fou** : l'horizon du terme
+/// quadratique `Δ_q` est plafonné (`EXTRAP_HORIZON_S`) pour qu'un trou long ne fasse pas exploser la parabole ;
+/// dans le régime normal (`Δ ≤ horizon`) c'est sans effet, donc les chiffres mesurés sont inchangés.
 fn extrapol2(a: &Snap, accel: Vec3, tc: f64) -> Vec3 {
     let d = (tc - a.t) as f32;
-    a.pos + a.vel * d + accel * (0.5 * d * d)
+    let dq = d.min(EXTRAP_HORIZON_S); // l'accélération n'est fiable que sur un court horizon
+    a.pos + a.vel * d + accel * (0.5 * dq * dq)
 }
 
 /// Ordre de PRÉDICTION du récepteur (le levier que le banc balaie pour le `CONTRAT_SIDECAR`) :
@@ -740,6 +748,18 @@ mod tests {
         let (f1, f2) = (f_de(Ordre::Un), f_de(Ordre::Deux));
         assert!(f1 > 1e-3, "garde-fou : l'ordre 1 doit garder une erreur sur une parabole, obtenu {f1}");
         assert!(f2 < f1 * 0.2, "l'ordre 2 doit suivre l'accélération bien mieux que l'ordre 1 : {f1} -> {f2}");
+    }
+
+    /// GARDE-FOU clamp : sur un TROU LONG (extrapolation très loin), le terme d'accélération est PLAFONNÉ
+    /// (`½·a·horizon²`) pour ne pas s'emballer, tandis que le terme de vitesse reste linéaire (comme l'ordre 1).
+    #[test]
+    fn extrapol2_borne_le_terme_quadratique_sur_trou_long() {
+        let a = Snap { t: 0.0, pos: Vec3::ZERO, vel: Vec3::new(1.0, 0.0, 0.0) };
+        let accel = Vec3::new(0.0, 0.0, 100.0); // grosse accélération estimée
+        let p = extrapol2(&a, accel, 2.0); // 2 s dans le futur : bien au-delà de l'horizon
+        let borne = 0.5 * 100.0 * EXTRAP_HORIZON_S * EXTRAP_HORIZON_S;
+        assert!((p.z - borne).abs() < 1e-3, "terme accel plafonné à {borne}, obtenu {}", p.z);
+        assert!((p.x - 2.0).abs() < 1e-3, "le terme de vitesse reste linéaire (non plafonné) : {}", p.x);
     }
 
     /// Le ressort LISSE les saccades : à bas délai sur un lien lossy, activer la réconciliation réduit le jerk.
