@@ -54,6 +54,11 @@ fn main() {
         ),
         Some("stats") => net::run_stats(),
         Some("phase1") => net::run_phase1(),
+        Some("netem-bench") => net::run_netem_bench(
+            args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(4000),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2000.0),
+        ),
         Some("natcheck") => net::run_natcheck(),
         Some("losscheck") => net::run_losscheck(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
@@ -102,7 +107,7 @@ fn main() {
                 eprintln!("Mode inconnu : « {m} ».");
             }
             eprintln!(
-                "Usage : jeu <rendezvous|sidecar|bot|agent|stats|phase1|natcheck|losscheck|serve-config|sim|crowd|coopsim|coopsim-bus|\
+                "Usage : jeu <rendezvous|sidecar|bot|agent|stats|phase1|netem-bench|natcheck|losscheck|serve-config|sim|crowd|coopsim|coopsim-bus|\
                  relay-test|relay-loss|stars|stars-race|attack|net-demo|nat-test> [args…]\n\
                  (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
             );
