@@ -8,3 +8,5 @@ REPRISE-PRIVEE.md
 /prive/
 # Assets 3D (mesh/glb) : ils n'ont rien à faire dans le dépôt du cœur réseau — gardés en local.
 /asset/
+# Courbes CSV exportées par le banc `jeu vivant` (artefacts locaux de visualisation, régénérables).
+vivant_courbes_*.csv

@@ -170,15 +170,36 @@ fn extrapol(a: &Snap, tc: f64) -> Vec3 {
     a.pos + a.vel * ((tc - a.t) as f32)
 }
 
+/// Réconciliation amortie (ressort « critically damped », façon SmoothDamp) : la position affichée POURSUIT la
+/// cible **sans à-coup ni dépassement**, en ~`smooth_time` secondes. Lisse le saut d'une correction (paquet en
+/// retard) → moins de saccades, au prix d'un léger lag de suivi. `smooth_time = 0` ⇒ suit instantanément (= avant).
+/// `vel` est l'état de vitesse de suivi, persistant entre frames.
+fn smooth_damp(courant: Vec3, cible: Vec3, vel: &mut Vec3, smooth_time: f32, dt: f32) -> Vec3 {
+    if smooth_time <= 0.0 {
+        *vel = Vec3::ZERO;
+        return cible;
+    }
+    let omega = 2.0 / smooth_time;
+    let x = omega * dt;
+    let exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x); // approximation stable de e^(−x)
+    let change = courant - cible;
+    let temp = (*vel + change * omega) * dt;
+    *vel = (*vel - temp * omega) * exp;
+    cible + (change + temp) * exp
+}
+
 /// Reconstruit la courbe affichée `p̂(t)` à la cadence `f_rx`, avec un délai d'interpolation `d_interp` :
 /// on vise l'instant `t − d_interp`, on interpole (Hermite) entre les deux snapshots encadrants DÉJÀ arrivés
 /// (causalité stricte), ou on extrapole par la vitesse si le futur manque. Déterministe.
-fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64) -> Vec<(f64, Vec3)> {
+fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64, smooth_time: f64) -> Vec<(f64, Vec3)> {
     let dt = 1.0 / f_rx;
     let n_frames = (duree * f_rx) as usize;
     let mut store: Vec<Snap> = Vec::new(); // trié par t (croissant)
     let mut next = 0usize;
     let mut out = Vec::with_capacity(n_frames);
+    let mut p_disp = Vec3::ZERO; // position affichée (suivie par le ressort)
+    let mut vel_suivi = Vec3::ZERO; // état du ressort
+    let mut amorce = false;
 
     for i in 0..n_frames {
         let t = i as f64 * dt;
@@ -194,7 +215,8 @@ fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64) -> Vec<(f6
         }
 
         let tc = t - d_interp;
-        let pos = if store.is_empty() {
+        // La CIBLE brute (interpolation/extrapolation), avant lissage.
+        let cible = if store.is_empty() {
             Vec3::ZERO
         } else {
             let k = store.partition_point(|s| s.t <= tc); // 1er snapshot avec t > tc
@@ -205,6 +227,18 @@ fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64) -> Vec<(f6
             } else {
                 extrapol(&store[k - 1], tc) // futur pas encore arrivé : extrapolation
             }
+        };
+        // Réconciliation amortie : la position affichée poursuit la cible (lisse les sauts de correction).
+        let pos = if smooth_time <= 0.0 || store.is_empty() {
+            p_disp = cible;
+            cible
+        } else {
+            if !amorce {
+                p_disp = cible; // démarrer SUR la cible (pas de rampe depuis ZERO)
+                amorce = true;
+            }
+            p_disp = smooth_damp(p_disp, cible, &mut vel_suivi, smooth_time as f32, dt as f32);
+            p_disp
         };
         out.push((t, pos));
     }
@@ -278,6 +312,18 @@ fn n_sauts(percu: &[(f64, Vec3)], warmup: f64, seuil_m: f32) -> usize {
 // LE BANC
 // ----------------------------------------------------------------------------
 
+/// Exporte les deux courbes (vérité + perçu, à chaque frame) en CSV — pour les VISUALISER (tableur/grapheur).
+fn ecrire_csv(chemin: &str, percu: &[(f64, Vec3)], traj: Traj) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(chemin)?;
+    writeln!(f, "t,vrai_x,vrai_y,vrai_z,percu_x,percu_y,percu_z")?;
+    for &(t, p) in percu {
+        let v = echantillon_verite(traj, t).0;
+        writeln!(f, "{t:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}", v.x, v.y, v.z, p.x, p.y, p.z)?;
+    }
+    Ok(())
+}
+
 /// Affiche le balayage : pour chaque profil de lien, et chaque délai d'interpolation, les 3 métriques.
 /// `jeu vivant [calme|agitee]`.
 pub fn run_vivant(traj_name: &str) {
@@ -308,6 +354,17 @@ pub fn run_vivant(traj_name: &str) {
     // Seuils de verdict, CALIBRÉS sur ces premiers runs (cf. PLAN_TEST_VIVANT §9, à affiner) :
     let (f_ok, j_ok) = (0.02_f64, j_ref * 2.0); // F ≤ 2 cm ; jerk ≤ 2× le naturel ; + 0 saut ; d_eff ≤ 500 ms
     println!("    Jerk NATUREL de cette trajectoire = {j_ref:.0} m/s³ (référence : « vivant » ⇒ J ≲ {j_ok:.0}).\n");
+    let verdict_de = |f: f64, j: f64, sauts: usize, d_eff: f64| -> &'static str {
+        if sauts > 0 || j > j_ok {
+            "✗ saccadé"
+        } else if f > f_ok {
+            "✗ flou"
+        } else if d_eff > 0.5 + 1e-6 {
+            "✗ en retard"
+        } else {
+            "✓ vivant"
+        }
+    };
 
     let profils = [
         Profil { nom: "parfait", latence_s: 0.0, gigue_s: 0.0, perte: 0.0 },
@@ -332,19 +389,11 @@ pub fn run_vivant(traj_name: &str) {
             "d_interp", "d_eff", "F (cm)", "J (m/s³)", "sauts", "verdict"
         );
         for &d in &grille_d {
-            let percu = reconstruire(&recus, duree, f_rx, d);
+            let percu = reconstruire(&recus, duree, f_rx, d, 0.0);
             let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.7);
             let j = jerk_rms(&percu, f_rx, warmup);
             let sauts = n_sauts(&percu, warmup, seuil_saut);
-            let verdict = if sauts > 0 || j > j_ok {
-                "✗ saccadé"
-            } else if f > f_ok {
-                "✗ flou"
-            } else if d_eff > 0.5 + 1e-6 {
-                "✗ en retard"
-            } else {
-                "✓ vivant"
-            };
+            let verdict = verdict_de(f, j, sauts, d_eff);
             println!(
                 "   {:>7.0}ms | {:>6.0}ms | {:>10.2} | {:>10.1} | {:>5} | {}",
                 d * 1000.0, d_eff * 1000.0, f * 100.0, j, sauts, verdict
@@ -352,8 +401,42 @@ pub fn run_vivant(traj_name: &str) {
         }
         println!();
     }
-    println!("Lecture : pour chaque lien, le BON d_interp est le plus PETIT qui garde F et J bas (0 saut).");
-    println!("→ c'est le compromis fraîcheur ↔ fidélité, tracé par la mesure (cf. prive/PLAN_TEST_VIVANT.md).");
+    // ====== Effet du RESSORT de réconciliation sur le cas DUR (4G congestionné) ======
+    let dur = Profil { nom: "4G congestionné", latence_s: 0.030, gigue_s: 0.030, perte: 0.08 };
+    let mut rng = Rng::new(seed ^ (dur.nom.len() as u64).wrapping_mul(0x9E3779B97F4A7C15));
+    let recus_dur = canal(&paquets, &dur, &mut rng);
+    println!("── 🌿 RESSORT de réconciliation sur le cas dur ({}) : reste-t-on vivant à plus BAS délai ?", dur.nom);
+    println!(
+        "   {:>9} | {:>9} | {:>8} | {:>10} | {:>10} | {}",
+        "d_interp", "ressort", "d_eff", "F (cm)", "J (m/s³)", "verdict"
+    );
+    for &d in &[0.05, 0.10, 0.15] {
+        for &st in &[0.0, 0.03, 0.06, 0.10] {
+            let percu = reconstruire(&recus_dur, duree, f_rx, d, st);
+            let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.9);
+            let j = jerk_rms(&percu, f_rx, warmup);
+            let sauts = n_sauts(&percu, warmup, seuil_saut);
+            println!(
+                "   {:>7.0}ms | {:>7.0}ms | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+                d * 1000.0, st * 1000.0, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+            );
+        }
+    }
+    println!();
+
+    // ====== Export CSV des deux courbes (cas dur, d_interp = 100 ms) pour les VISUALISER ======
+    let f1 = "vivant_courbes_sans_ressort.csv";
+    let f2 = "vivant_courbes_avec_ressort.csv";
+    let ok1 = ecrire_csv(f1, &reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0), traj).is_ok();
+    let ok2 = ecrire_csv(f2, &reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06), traj).is_ok();
+    if ok1 && ok2 {
+        println!("Courbes exportées (4G congestionné, d_interp = 100 ms) → {f1} (brut) · {f2} (ressort 60 ms).");
+        println!("Colonnes : t, vrai_x..z, percu_x..z — à superposer dans un tableur/grapheur.\n");
+    }
+
+    println!("Lecture : le BON d_interp est le plus PETIT qui reste « ✓ vivant ». Le ressort lisse les saccades");
+    println!("(J baisse) à bas délai, au prix d'un peu de retard (d_eff monte) — le compromis, tracé par la mesure.");
+    println!("(cf. prive/PLAN_TEST_VIVANT.md)");
 }
 
 #[cfg(test)]
@@ -376,7 +459,7 @@ mod tests {
             })
             .collect();
         for d in [0.0, 0.1, 0.2] {
-            let percu = reconstruire(&recus, duree, f_rx, d);
+            let percu = reconstruire(&recus, duree, f_rx, d, 0.0);
             let (f, _d_eff) = fidelite(&percu, pos_vraie, 1.0, 0.5);
             assert!(f < 1e-3, "ligne droite, canal parfait, d={d}: F doit être ~0, obtenu {f}");
             assert_eq!(n_sauts(&percu, 1.0, 0.5), 0, "aucun saut attendu sur une droite");
@@ -398,7 +481,7 @@ mod tests {
             let mut rng = Rng::new(0xC0FFEE);
             let p = Profil { nom: "x", latence_s: 0.019, gigue_s: 0.008, perte };
             let recus = canal(&paquets, &p, &mut rng);
-            let percu = reconstruire(&recus, duree, f_rx, 0.10);
+            let percu = reconstruire(&recus, duree, f_rx, 0.10, 0.0);
             (fidelite(&percu, pos_vraie, 2.0, 0.7).0, jerk_rms(&percu, f_rx, 2.0))
         };
         let (f0, j0) = mesure(0.0);
@@ -418,8 +501,39 @@ mod tests {
         let mut rng = Rng::new(1);
         let p = Profil { nom: "x", latence_s: 0.020, gigue_s: 0.0, perte: 0.0 };
         let recus = canal(&paquets, &p, &mut rng);
-        let d_eff = |d: f64| fidelite(&reconstruire(&recus, duree, f_rx, d), pos_vraie, 2.0, 0.7).1;
+        let d_eff = |d: f64| fidelite(&reconstruire(&recus, duree, f_rx, d, 0.0), pos_vraie, 2.0, 0.7).1;
         let (a, b) = (d_eff(0.05), d_eff(0.20));
         assert!(b > a + 0.10, "d_eff doit croître avec d_interp : {a} -> {b}");
+    }
+
+    /// Le ressort converge vers la cible **sans dépasser** (critically damped) ; `smooth_time = 0` suit
+    /// instantanément. Garde-fou de l'instrument de lissage.
+    #[test]
+    fn ressort_converge_sans_depasser() {
+        let mut v = Vec3::ZERO;
+        assert_eq!(smooth_damp(Vec3::ZERO, Vec3::X, &mut v, 0.0, 0.016), Vec3::X);
+        let cible = Vec3::new(10.0, 0.0, 0.0);
+        let (mut p, mut vel, mut prev) = (Vec3::ZERO, Vec3::ZERO, -1.0_f32);
+        for _ in 0..600 {
+            p = smooth_damp(p, cible, &mut vel, 0.1, 1.0 / 60.0);
+            assert!(p.x <= 10.0 + 1e-3, "pas de dépassement : {}", p.x);
+            assert!(p.x >= prev - 1e-4, "approche monotone");
+            prev = p.x;
+        }
+        assert!((p.x - 10.0).abs() < 1e-2, "converge vers la cible, obtenu {}", p.x);
+    }
+
+    /// Le ressort LISSE les saccades : à bas délai sur un lien lossy, activer la réconciliation réduit le jerk.
+    #[test]
+    fn le_ressort_lisse_les_saccades() {
+        let traj = Traj::Agitee;
+        let (duree, f_tx, f_rx) = (20.0, 20.0, 60.0);
+        let paquets = emettre(traj, duree, f_tx);
+        let p = Profil { nom: "x", latence_s: 0.030, gigue_s: 0.030, perte: 0.08 };
+        let mut rng = Rng::new(0xABCDEF);
+        let recus = canal(&paquets, &p, &mut rng);
+        let jerk = |st: f64| jerk_rms(&reconstruire(&recus, duree, f_rx, 0.05, st), f_rx, 2.0);
+        let (sans, avec) = (jerk(0.0), jerk(0.06));
+        assert!(avec < sans, "le ressort doit réduire le jerk : {sans} -> {avec}");
     }
 }
