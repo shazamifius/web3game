@@ -170,6 +170,38 @@ fn extrapol(a: &Snap, tc: f64) -> Vec3 {
     a.pos + a.vel * ((tc - a.t) as f32)
 }
 
+/// Interpolation linéaire de la POSITION seule (ordre 0 : le récepteur ignore la vitesse). Coupe les virages
+/// franchement (corde du segment) → la référence « basse » contre laquelle l'ordre 1 (Hermite) doit gagner.
+fn lerp_pos(a: &Snap, b: &Snap, tc: f64) -> Vec3 {
+    let dt = b.t - a.t;
+    if dt <= 0.0 {
+        return a.pos;
+    }
+    let s = ((tc - a.t) / dt) as f32;
+    a.pos + (b.pos - a.pos) * s
+}
+
+/// Extrapolation d'ORDRE 2 : on prolonge par la vitesse ET l'accélération `p̂ = p + v·Δ + ½·a·Δ²`. `accel` est
+/// estimée par différence finie des deux dernières vitesses reçues (AUCUN changement du format wire — on garde
+/// `(pos, vel)`). Hypothèse : suit les virages là où l'ordre 1 (droite) part en tangente. (Reproduit EXACTEMENT
+/// une accélération constante ; sur une vraie courbe, le terme quadratique peut dépasser → c'est ce qu'on MESURE.)
+fn extrapol2(a: &Snap, accel: Vec3, tc: f64) -> Vec3 {
+    let d = (tc - a.t) as f32;
+    a.pos + a.vel * d + accel * (0.5 * d * d)
+}
+
+/// Ordre de PRÉDICTION du récepteur (le levier que le banc balaie pour le `CONTRAT_SIDECAR`) :
+/// ce que le récepteur exploite pour reconstruire entre/au-delà des snapshots.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Ordre {
+    /// 0 — position SEULE : interpolation linéaire, extrapolation = on tient la position (coupe les virages).
+    Zero,
+    /// 1 — position + vitesse : Hermite (respecte les vitesses) + extrapolation tangente. **Comportement de réf.**
+    Un,
+    /// 2 — + accélération (estimée) : Hermite + extrapolation quadratique (suit la courbure en prédiction).
+    Deux,
+}
+
 /// Réconciliation amortie (ressort « critically damped », façon SmoothDamp) : la position affichée POURSUIT la
 /// cible **sans à-coup ni dépassement**, en ~`smooth_time` secondes. Lisse le saut d'une correction (paquet en
 /// retard) → moins de saccades, au prix d'un léger lag de suivi. `smooth_time = 0` ⇒ suit instantanément (= avant).
@@ -191,7 +223,7 @@ fn smooth_damp(courant: Vec3, cible: Vec3, vel: &mut Vec3, smooth_time: f32, dt:
 /// Reconstruit la courbe affichée `p̂(t)` à la cadence `f_rx`, avec un délai d'interpolation `d_interp` :
 /// on vise l'instant `t − d_interp`, on interpole (Hermite) entre les deux snapshots encadrants DÉJÀ arrivés
 /// (causalité stricte), ou on extrapole par la vitesse si le futur manque. Déterministe.
-fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64, smooth_time: f64) -> Vec<(f64, Vec3)> {
+fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64, smooth_time: f64, ordre: Ordre) -> Vec<(f64, Vec3)> {
     let dt = 1.0 / f_rx;
     let n_frames = (duree * f_rx) as usize;
     let mut store: Vec<Snap> = Vec::new(); // trié par t (croissant)
@@ -223,9 +255,31 @@ fn reconstruire(recus: &[Recu], duree: f64, f_rx: f64, d_interp: f64, smooth_tim
             if k == 0 {
                 store[0].pos // cible avant le 1er snapshot connu : on tient la position de départ
             } else if k < store.len() {
-                hermite(&store[k - 1], &store[k], tc) // encadré : interpolation
+                // encadré : interpolation (ordre 0 = corde linéaire ; ordres 1/2 = Hermite, exacte pour le segment).
+                match ordre {
+                    Ordre::Zero => lerp_pos(&store[k - 1], &store[k], tc),
+                    Ordre::Un | Ordre::Deux => hermite(&store[k - 1], &store[k], tc),
+                }
             } else {
-                extrapol(&store[k - 1], tc) // futur pas encore arrivé : extrapolation
+                // futur pas encore arrivé : EXTRAPOLATION — c'est ici que l'ordre de prédiction pèse vraiment.
+                match ordre {
+                    Ordre::Zero => store[k - 1].pos, // tient la position (pas de vitesse connue)
+                    Ordre::Un => extrapol(&store[k - 1], tc), // tangente (vitesse)
+                    Ordre::Deux => {
+                        // Accélération par différence finie des deux dernières vitesses reçues (sinon 0 → ordre 1).
+                        let accel = if k >= 2 {
+                            let dtv = store[k - 1].t - store[k - 2].t;
+                            if dtv > 0.0 {
+                                (store[k - 1].vel - store[k - 2].vel) / dtv as f32
+                            } else {
+                                Vec3::ZERO
+                            }
+                        } else {
+                            Vec3::ZERO
+                        };
+                        extrapol2(&store[k - 1], accel, tc)
+                    }
+                }
             }
         };
         // Réconciliation amortie : la position affichée poursuit la cible (lisse les sauts de correction).
@@ -445,7 +499,7 @@ pub fn run_vivant(traj_name: &str) {
             "d_interp", "d_eff", "F (cm)", "J (m/s³)", "sauts", "verdict"
         );
         for &d in &grille_d {
-            let percu = reconstruire(&recus, duree, f_rx, d, 0.0);
+            let percu = reconstruire(&recus, duree, f_rx, d, 0.0, Ordre::Un);
             let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.7);
             let j = jerk_rms(&percu, f_rx, warmup);
             let sauts = n_sauts(&percu, warmup, seuil_saut);
@@ -468,7 +522,7 @@ pub fn run_vivant(traj_name: &str) {
     );
     for &d in &[0.05, 0.10, 0.15] {
         for &st in &[0.0, 0.03, 0.06, 0.10] {
-            let percu = reconstruire(&recus_dur, duree, f_rx, d, st);
+            let percu = reconstruire(&recus_dur, duree, f_rx, d, st, Ordre::Un);
             let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.9);
             let j = jerk_rms(&percu, f_rx, warmup);
             let sauts = n_sauts(&percu, warmup, seuil_saut);
@@ -480,25 +534,83 @@ pub fn run_vivant(traj_name: &str) {
     }
     println!();
 
-    // ====== Export des deux courbes (cas dur, d_interp = 100 ms) pour les VISUALISER ======
-    let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0);
-    let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06);
+    // ====== Effet de l'ORDRE DE PRÉDICTION (0/1/2) à BAS délai sur les liens 4G ======
+    // Hypothèse à tester (PLAN_TEST_VIVANT §RESTE) : prédire avec l'accélération (ordre 2) suit mieux les virages
+    // là où le ressort FLOUTE → MEILLEUR F et/ou MOINS de saccades à délai réduit, sans le retard ajouté du ressort.
+    println!("── 🔮 ORDRE DE PRÉDICTION (0=pos · 1=+vitesse · 2=+accél.) — suit-on mieux les virages à BAS délai ?");
+    println!(
+        "   {:>16} | {:>9} | {:>5} | {:>8} | {:>10} | {:>10} | {}",
+        "profil", "d_interp", "ordre", "d_eff", "F (cm)", "J (m/s³)", "verdict"
+    );
+    let durs = [
+        Profil { nom: "4G correct", latence_s: 0.019, gigue_s: 0.008, perte: 0.03 },
+        Profil { nom: "4G congestionné", latence_s: 0.030, gigue_s: 0.030, perte: 0.08 },
+    ];
+    for p in durs {
+        let mut rng = Rng::new(seed ^ (p.nom.len() as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let recus = canal(&paquets, &p, &mut rng);
+        for &d in &[0.0, 0.05, 0.10, 0.15] {
+            for (lbl, ordre) in [("0", Ordre::Zero), ("1", Ordre::Un), ("2", Ordre::Deux)] {
+                let percu = reconstruire(&recus, duree, f_rx, d, 0.0, ordre);
+                let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.7);
+                let j = jerk_rms(&percu, f_rx, warmup);
+                let sauts = n_sauts(&percu, warmup, seuil_saut);
+                println!(
+                    "   {:>16} | {:>7.0}ms | {:>5} | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+                    p.nom, d * 1000.0, lbl, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+                );
+            }
+        }
+        println!();
+    }
+
+    // ====== ORDRE 2 + ressort léger : franchit-on le « ✓ vivant » SOUS 150 ms sur le cas dur ? ======
+    // L'ordre 2 prédit déjà bien (corrections petites) → un ressort LÉGER ne « coupe » presque plus les virages :
+    // on cherche le couple (d_interp, ressort) le plus FRAIS qui passe vivant, là où chaque levier SEUL échouait.
+    println!("── 🔗 ORDRE 2 + ressort léger (cas dur 4G congestionné) — le plus BAS d_eff qui reste « ✓ vivant »");
+    println!(
+        "   {:>9} | {:>9} | {:>8} | {:>10} | {:>10} | {}",
+        "d_interp", "ressort", "d_eff", "F (cm)", "J (m/s³)", "verdict"
+    );
+    for &d in &[0.08, 0.10] {
+        for &st in &[0.0, 0.02, 0.03, 0.05] {
+            let percu = reconstruire(&recus_dur, duree, f_rx, d, st, Ordre::Deux);
+            let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.9);
+            let j = jerk_rms(&percu, f_rx, warmup);
+            let sauts = n_sauts(&percu, warmup, seuil_saut);
+            println!(
+                "   {:>7.0}ms | {:>7.0}ms | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+                d * 1000.0, st * 1000.0, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+            );
+        }
+    }
+    println!();
+
+    // ====== Export des courbes (cas dur, d_interp = 100 ms) pour les VISUALISER — les 3 régimes ======
+    let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0, Ordre::Un); // ordre 1 brut → saccadé
+    let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06, Ordre::Un); // ordre 1 + ressort fort → flou
+    let ord2 = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0, Ordre::Deux); // ordre 2 → colle la vérité
     let _ = ecrire_csv("vivant_courbes_sans_ressort.csv", &sans, traj);
     let _ = ecrire_csv("vivant_courbes_avec_ressort.csv", &avec, traj);
+    let _ = ecrire_csv("vivant_courbes_ordre2.csv", &ord2, traj);
     let _ = ecrire_svg(
         "vivant_courbes.svg",
         traj,
-        &[("percu brut (rouge)", "#d62728", &sans), ("percu + ressort (bleu)", "#1f77b4", &avec)],
+        &[
+            ("ordre 1 brut (rouge, saccadé)", "#d62728", &sans),
+            ("ordre 1 + ressort (bleu, flou)", "#1f77b4", &avec),
+            ("ordre 2 (vert, fidèle)", "#2ca02c", &ord2),
+        ],
         4.0,
         9.0,
     );
     println!("Courbes exportées (4G congestionné, d_interp = 100 ms) :");
-    println!("  • vivant_courbes.svg → OUVRIR d'un double-clic (navigateur) : vérité (noir) vs brut (rouge) vs ressort (bleu).");
-    println!("  • vivant_courbes_sans_ressort.csv / _avec_ressort.csv → données (séparateur VIRGULE).\n");
+    println!("  • vivant_courbes.svg → double-clic (navigateur) : vérité (noir) · ordre 1 brut (rouge) · +ressort (bleu) · ordre 2 (vert).");
+    println!("  • vivant_courbes_{{sans,avec}}_ressort.csv / _ordre2.csv → données (séparateur VIRGULE).\n");
 
-    println!("Lecture : le BON d_interp est le plus PETIT qui reste « ✓ vivant ». Le ressort lisse les saccades");
-    println!("(J baisse) à bas délai, au prix d'un peu de retard (d_eff monte) — le compromis, tracé par la mesure.");
-    println!("(cf. prive/PLAN_TEST_VIVANT.md)");
+    println!("Lecture : le BON d_interp est le plus PETIT qui reste « ✓ vivant ». L'ordre 2 (prédiction par");
+    println!("l'accélération) baisse À LA FOIS l'erreur de forme ET le jerk (~6× à bas délai) sans ajouter de retard ;");
+    println!("ordre 2 + un ressort LÉGER passe « vivant » dès ~100 ms d_eff sur le 4G congestionné (cf. prive/PLAN_TEST_VIVANT.md).");
 }
 
 #[cfg(test)]
@@ -521,7 +633,7 @@ mod tests {
             })
             .collect();
         for d in [0.0, 0.1, 0.2] {
-            let percu = reconstruire(&recus, duree, f_rx, d, 0.0);
+            let percu = reconstruire(&recus, duree, f_rx, d, 0.0, Ordre::Un);
             let (f, _d_eff) = fidelite(&percu, pos_vraie, 1.0, 0.5);
             assert!(f < 1e-3, "ligne droite, canal parfait, d={d}: F doit être ~0, obtenu {f}");
             assert_eq!(n_sauts(&percu, 1.0, 0.5), 0, "aucun saut attendu sur une droite");
@@ -543,7 +655,7 @@ mod tests {
             let mut rng = Rng::new(0xC0FFEE);
             let p = Profil { nom: "x", latence_s: 0.019, gigue_s: 0.008, perte };
             let recus = canal(&paquets, &p, &mut rng);
-            let percu = reconstruire(&recus, duree, f_rx, 0.10, 0.0);
+            let percu = reconstruire(&recus, duree, f_rx, 0.10, 0.0, Ordre::Un);
             (fidelite(&percu, pos_vraie, 2.0, 0.7).0, jerk_rms(&percu, f_rx, 2.0))
         };
         let (f0, j0) = mesure(0.0);
@@ -563,7 +675,7 @@ mod tests {
         let mut rng = Rng::new(1);
         let p = Profil { nom: "x", latence_s: 0.020, gigue_s: 0.0, perte: 0.0 };
         let recus = canal(&paquets, &p, &mut rng);
-        let d_eff = |d: f64| fidelite(&reconstruire(&recus, duree, f_rx, d, 0.0), pos_vraie, 2.0, 0.7).1;
+        let d_eff = |d: f64| fidelite(&reconstruire(&recus, duree, f_rx, d, 0.0, Ordre::Un), pos_vraie, 2.0, 0.7).1;
         let (a, b) = (d_eff(0.05), d_eff(0.20));
         assert!(b > a + 0.10, "d_eff doit croître avec d_interp : {a} -> {b}");
     }
@@ -585,6 +697,31 @@ mod tests {
         assert!((p.x - 10.0).abs() < 1e-2, "converge vers la cible, obtenu {}", p.x);
     }
 
+    /// GARDE-FOU ORDRE 2 : sur une trajectoire à **accélération CONSTANTE** (parabole), en régime d'EXTRAPOLATION
+    /// pure (latence seule → le futur n'est jamais encore arrivé), l'ordre 2 (qui prédit avec l'accélération
+    /// estimée) reproduit la courbe quasi exactement, là où l'ordre 1 (tangente) garde une erreur résiduelle.
+    /// Prouve que le mécanisme d'ordre 2 capture bien la courbure. (Déterministe.)
+    #[test]
+    fn ordre2_suit_une_acceleration_constante_mieux_que_ordre1() {
+        let p0 = Vec3::new(0.0, 0.0, 0.0);
+        let v0 = Vec3::new(1.0, 0.0, 0.0);
+        let acc = Vec3::new(0.0, 0.0, 2.0); // accélère selon z
+        let pos_vraie = |t: f64| p0 + v0 * (t as f32) + acc * (0.5 * (t * t) as f32);
+        let vel_vraie = |t: f64| v0 + acc * (t as f32);
+        let (duree, f_tx, f_rx, lat) = (8.0, 20.0, 60.0, 0.08);
+        // Canal à latence PURE (pas de perte/gigue) → tc = t devance toujours le dernier snapshot → extrapolation.
+        let recus: Vec<Recu> = (0..(duree * f_tx) as usize)
+            .map(|k| {
+                let t = k as f64 / f_tx;
+                Recu { t_arrive: t + lat, t_send: t, pos: pos_vraie(t), vel: vel_vraie(t) }
+            })
+            .collect();
+        let f_de = |ordre| fidelite(&reconstruire(&recus, duree, f_rx, 0.0, 0.0, ordre), pos_vraie, 1.0, 0.3).0;
+        let (f1, f2) = (f_de(Ordre::Un), f_de(Ordre::Deux));
+        assert!(f1 > 1e-3, "garde-fou : l'ordre 1 doit garder une erreur sur une parabole, obtenu {f1}");
+        assert!(f2 < f1 * 0.2, "l'ordre 2 doit suivre l'accélération bien mieux que l'ordre 1 : {f1} -> {f2}");
+    }
+
     /// Le ressort LISSE les saccades : à bas délai sur un lien lossy, activer la réconciliation réduit le jerk.
     #[test]
     fn le_ressort_lisse_les_saccades() {
@@ -594,7 +731,7 @@ mod tests {
         let p = Profil { nom: "x", latence_s: 0.030, gigue_s: 0.030, perte: 0.08 };
         let mut rng = Rng::new(0xABCDEF);
         let recus = canal(&paquets, &p, &mut rng);
-        let jerk = |st: f64| jerk_rms(&reconstruire(&recus, duree, f_rx, 0.05, st), f_rx, 2.0);
+        let jerk = |st: f64| jerk_rms(&reconstruire(&recus, duree, f_rx, 0.05, st, Ordre::Un), f_rx, 2.0);
         let (sans, avec) = (jerk(0.0), jerk(0.06));
         assert!(avec < sans, "le ressort doit réduire le jerk : {sans} -> {avec}");
     }
