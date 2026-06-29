@@ -21,7 +21,7 @@
 //! fonctions PURES (zéro réseau) → couvertes par des tests déterministes. Seul `probe_nat` /
 //! `run_natcheck` touchent le réseau (un aller-retour au démarrage, hors boucle chaude).
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 
 /// Le « magic cookie » STUN (RFC 5389) : constante fixe en tête de chaque message (octets 4..8).
@@ -169,6 +169,49 @@ pub(crate) fn classify_nat(a: Option<SocketAddr>, b: Option<SocketAddr>) -> NatT
     }
 }
 
+/// Le résultat COMPLET de la sonde de lien : type de NAT + latence/gigue vers les serveurs STUN.
+/// Le RTT/jitter sont mesurés « gratuitement » sur les mêmes aller-retours STUN (aucun serveur en
+/// plus) : c'est la latence INTERNET générale de la machine, un bon indicateur de qualité de lien
+/// (et la gigue trahit un lien mobile/saturé). La perte/le débit soutenable viendront d'une sonde
+/// d'écho dédiée (étape suivante). `None` quand aucune réponse STUN exploitable.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LinkProbe {
+    pub nat: Option<NatType>,
+    pub rtt_ms: Option<u32>,
+    pub jitter_ms: Option<u32>,
+    pub public_addr: Option<SocketAddr>,
+}
+
+/// La MÉDIANE d'une série de RTT (ms). PUR (testable). Trie une copie, prend l'élément central
+/// (moyenne entière des deux centraux si la taille est paire). `None` si vide.
+fn median_ms(samples: &[u32]) -> Option<u32> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut v = samples.to_vec();
+    v.sort_unstable();
+    let n = v.len();
+    Some(if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        ((v[n / 2 - 1] as u64 + v[n / 2] as u64) / 2) as u32
+    })
+}
+
+/// La GIGUE (jitter) au sens RFC 3550 : la moyenne des écarts ABSOLUS entre RTT successifs. PUR
+/// (testable). C'est la variation du délai d'un paquet à l'autre — l'indicateur d'un lien instable
+/// (mobile, congestionné). `None` s'il y a moins de 2 échantillons (pas de variation mesurable).
+fn jitter_ms(samples: &[u32]) -> Option<u32> {
+    if samples.len() < 2 {
+        return None;
+    }
+    let mut total = 0u64;
+    for w in samples.windows(2) {
+        total += (w[0] as i64 - w[1] as i64).unsigned_abs();
+    }
+    Some((total / (samples.len() as u64 - 1)) as u32)
+}
+
 /// Un identifiant de transaction « assez unique » pour apparier requête/réponse. Pas besoin de
 /// crypto-aléa ici (c'est juste un tag d'appariement) : horloge nanoseconde + adresse pile (ASLR).
 fn random_txid() -> [u8; 12] {
@@ -183,20 +226,24 @@ fn random_txid() -> [u8; 12] {
     t
 }
 
-/// Interroge UN serveur STUN et renvoie l'adresse publique réfléchie. Best-effort : 3 tentatives
-/// (UDP peut perdre), on ignore les paquets venus d'ailleurs. `None` = pas de réponse exploitable.
-fn stun_query(socket: &UdpSocket, server: SocketAddr) -> Option<SocketAddr> {
-    let txid = random_txid();
-    let req = encode_binding_request(txid);
+/// Interroge UN serveur STUN et renvoie (adresse publique réfléchie, RTT en ms de l'aller-retour
+/// réussi). Best-effort : jusqu'à 3 tentatives (UDP peut perdre), on ignore les paquets venus
+/// d'ailleurs. `None` = pas de réponse exploitable. Le chrono est remis à chaque tentative → on
+/// mesure le RTT du SEUL aller-retour qui a abouti (pas le cumul des timeouts).
+fn stun_query(socket: &UdpSocket, server: SocketAddr) -> Option<(SocketAddr, u32)> {
     let mut buf = [0u8; 512];
     for _ in 0..3 {
-        if socket.send_to(&req, server).is_err() {
+        let txid = random_txid();
+        let request = encode_binding_request(txid);
+        let t0 = std::time::Instant::now();
+        if socket.send_to(&request, server).is_err() {
             return None;
         }
         match socket.recv_from(&mut buf) {
             Ok((n, from)) if from.ip() == server.ip() => {
                 if let Some(addr) = decode_mapped_address(&buf[..n], txid) {
-                    return Some(addr);
+                    let rtt = t0.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                    return Some((addr, rtt));
                 }
             }
             Ok(_) => continue,  // paquet d'un autre expéditeur → on retente
@@ -206,42 +253,87 @@ fn stun_query(socket: &UdpSocket, server: SocketAddr) -> Option<SocketAddr> {
     None
 }
 
-/// LA SONDE NAT : interroge des serveurs STUN jusqu'à 2 réponses d'IP distinctes, puis classe.
-/// Renvoie le verdict + les observations (serveur → adresse réfléchie) pour l'affichage/diagnostic.
-/// Touche le réseau (au démarrage), borné par un timeout court → ne bloque jamais durablement.
-pub(crate) fn probe_nat() -> (NatType, Vec<(IpAddr, SocketAddr)>) {
+/// LA SONDE DE LIEN : interroge des serveurs STUN jusqu'à 2 réponses d'IP distinctes (pour classer
+/// le NAT), puis fait une courte RAFALE vers le premier serveur répondant pour mesurer RTT médian
+/// et gigue. Touche le réseau (au démarrage), borné par des timeouts courts → ne bloque jamais
+/// durablement. Renvoie aussi les observations brutes (serveur → réflexive) pour le diagnostic.
+pub(crate) fn probe_link() -> (LinkProbe, Vec<(SocketAddr, SocketAddr)>) {
     let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
-        return (NatType::Unknown, Vec::new());
+        return (LinkProbe::default(), Vec::new());
     };
     let _ = socket.set_read_timeout(Some(Duration::from_millis(700)));
-    let mut obs: Vec<(IpAddr, SocketAddr)> = Vec::new();
+
+    // 1) Deux observations depuis deux serveurs d'IP DISTINCTE → classification du NAT.
+    let mut obs: Vec<(SocketAddr, SocketAddr)> = Vec::new(); // (serveur, réflexive)
+    let mut rtts: Vec<u32> = Vec::new();
     for host in STUN_SERVERS {
-        let Ok(addrs) = host.to_socket_addrs() else {
-            continue;
-        };
-        let Some(server) = addrs.into_iter().find(|a| a.is_ipv4()) else {
-            continue;
-        };
-        if obs.iter().any(|(ip, _)| *ip == server.ip()) {
+        let Ok(addrs) = host.to_socket_addrs() else { continue };
+        let Some(server) = addrs.into_iter().find(|a| a.is_ipv4()) else { continue };
+        if obs.iter().any(|(s, _)| s.ip() == server.ip()) {
             continue; // déjà une observation depuis cette IP → on en veut une AUTRE
         }
-        if let Some(reflexive) = stun_query(&socket, server) {
-            obs.push((server.ip(), reflexive));
+        if let Some((reflexive, rtt)) = stun_query(&socket, server) {
+            obs.push((server, reflexive));
+            rtts.push(rtt);
             if obs.len() >= 2 {
                 break;
             }
         }
     }
-    let a = obs.first().map(|(_, r)| *r);
-    let b = obs.get(1).map(|(_, r)| *r);
-    (classify_nat(a, b), obs)
+
+    let nat = if obs.len() >= 2 {
+        Some(classify_nat(Some(obs[0].1), Some(obs[1].1)))
+    } else if obs.len() == 1 {
+        Some(NatType::Unknown) // une seule observation → on ne peut pas trancher cône/symétrique
+    } else {
+        None
+    };
+
+    // 2) Rafale vers le premier serveur répondant → RTT successifs pour la gigue.
+    let mut burst: Vec<u32> = Vec::new();
+    if let Some((server, _)) = obs.first() {
+        for _ in 0..6 {
+            if let Some((_, rtt)) = stun_query(&socket, *server) {
+                burst.push(rtt);
+            }
+        }
+    }
+
+    let mut all_rtts = rtts.clone();
+    all_rtts.extend_from_slice(&burst);
+    let probe = LinkProbe {
+        nat,
+        rtt_ms: median_ms(&all_rtts),
+        jitter_ms: jitter_ms(&burst),
+        public_addr: obs.first().map(|(_, r)| *r),
+    };
+    (probe, obs)
 }
 
-/// `jeu natcheck` : sonde le NAT de CETTE machine et imprime un verdict clair (perçable ou non).
-/// Outil de diagnostic à la main, jumeau de `jeu phase1` : zéro popup, pour comprendre son lien.
+/// Le fragment JSON de SONDE à coller dans un battement de cœur (toujours préfixé par `,`), ex.
+/// `,"nat":"sym","rtt":120,"jitter":35`. Champs absents si indisponibles (rétro-compatible : un
+/// vieux lecteur ignore ce qu'il ne connaît pas, le serveur recopie tout verbatim). Fait l'aller-
+/// retour réseau → à appeler UNE fois (en arrière-plan), pas dans une boucle chaude.
+pub(crate) fn link_diag() -> String {
+    let (p, _) = probe_link();
+    let mut d = String::new();
+    if let Some(nat) = p.nat {
+        d.push_str(&format!(",\"nat\":\"{}\"", nat_str(nat)));
+    }
+    if let Some(rtt) = p.rtt_ms {
+        d.push_str(&format!(",\"rtt\":{rtt}"));
+    }
+    if let Some(jitter) = p.jitter_ms {
+        d.push_str(&format!(",\"jitter\":{jitter}"));
+    }
+    d
+}
+
+/// `jeu natcheck` : sonde le lien de CETTE machine et imprime un verdict clair (perçable ou non,
+/// latence, gigue). Outil de diagnostic à la main, jumeau de `jeu phase1` : zéro popup.
 pub fn run_natcheck() {
-    println!("[natcheck] Sonde STUN du type de NAT (cône perçable vs symétrique/CGNAT)…");
-    let (nat, obs) = probe_nat();
+    println!("[natcheck] Sonde du lien (NAT via STUN + latence/gigue)…");
+    let (p, obs) = probe_link();
     if obs.is_empty() {
         println!("[natcheck] Aucune réponse STUN — UDP bloqué, hors-ligne, ou serveurs injoignables.");
     } else {
@@ -249,12 +341,18 @@ pub fn run_natcheck() {
             println!("[natcheck]   serveur {} ({server}) → adresse publique vue : {reflexive}", i + 1);
         }
     }
-    let verdict = match nat {
-        NatType::Cone => "CÔNE → perçable par hole-punching (connexion directe possible)",
-        NatType::Symmetric => "SYMÉTRIQUE/CGNAT → perçage direct impossible → RELAIS obligatoire",
-        NatType::Unknown => "INDÉTERMINÉ → besoin d'au moins 2 réponses STUN d'IP distinctes",
+    let verdict = match p.nat {
+        Some(NatType::Cone) => "CÔNE → perçable par hole-punching (connexion directe possible)",
+        Some(NatType::Symmetric) => "SYMÉTRIQUE/CGNAT → perçage direct impossible → RELAIS obligatoire",
+        _ => "INDÉTERMINÉ → besoin d'au moins 2 réponses STUN d'IP distinctes",
     };
-    println!("[natcheck] Verdict : nat={} — {verdict}", nat_str(nat));
+    let nat_label = p.nat.map(nat_str).unwrap_or("?");
+    println!("[natcheck] Verdict : nat={nat_label} — {verdict}");
+    match (p.rtt_ms, p.jitter_ms) {
+        (Some(r), Some(j)) => println!("[natcheck] Latence vers STUN : rtt médian {r} ms, gigue {j} ms."),
+        (Some(r), None) => println!("[natcheck] Latence vers STUN : rtt médian {r} ms (gigue indisponible)."),
+        _ => println!("[natcheck] Latence : indisponible (pas assez de réponses)."),
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +431,26 @@ mod tests {
         assert_eq!(decode_mapped_address(&cookie_casse, txid), None);
         // Trop court → None.
         assert_eq!(decode_mapped_address(&bon[..10], txid), None);
+    }
+
+    /// Médiane : impair → l'élément central ; pair → moyenne entière des deux centraux ; vide → None.
+    #[test]
+    fn mediane_des_rtt() {
+        assert_eq!(median_ms(&[]), None);
+        assert_eq!(median_ms(&[42]), Some(42));
+        assert_eq!(median_ms(&[30, 10, 20]), Some(20)); // trié : 10,20,30 → 20
+        assert_eq!(median_ms(&[10, 20, 30, 40]), Some(25)); // (20+40)/2 ... trié 10,20,30,40 → (20+30)/2=25
+    }
+
+    /// Gigue = moyenne des écarts absolus entre RTT successifs ; < 2 échantillons → None.
+    #[test]
+    fn gigue_ecarts_successifs() {
+        assert_eq!(jitter_ms(&[]), None);
+        assert_eq!(jitter_ms(&[50]), None);
+        // |12-10| + |11-12| + |50-11| = 2+1+39 = 42 ; /3 = 14
+        assert_eq!(jitter_ms(&[10, 12, 11, 50]), Some(14));
+        // lien stable : écarts nuls → gigue 0
+        assert_eq!(jitter_ms(&[20, 20, 20]), Some(0));
     }
 
     /// La classification : même adresse publique vue par 2 serveurs = cône ; port différent =

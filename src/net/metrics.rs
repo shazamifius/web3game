@@ -24,6 +24,7 @@
 
 use super::bot::Bot;
 use super::crypto::PeerId;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 /// Un événement d'ARRIVÉE d'état distant, vu par un observateur : QUAND on l'a reçu
@@ -202,11 +203,13 @@ pub fn run_agent(mode: Option<&str>, secs: u64) {
         Some("recv") => {
             ensure_agent_env();
             ensure_rendezvous_from_file();
+            spawn_link_probe();
             run_agent_recv(secs)
         }
         Some("loop") => {
             ensure_agent_env();
             ensure_rendezvous_from_file();
+            spawn_link_probe();
             run_agent_loop(secs)
         }
         _ => run_agent_demo(),
@@ -431,6 +434,19 @@ fn heartbeat_json(ts: u64, host: &str, ver: &str, ev: &str, diag: &str) -> Strin
     format!("{{\"ts\":{ts},\"host\":\"{host}\",\"ver\":\"{ver}\",\"ev\":\"{ev}\"{diag}}}")
 }
 
+/// CACHE de la SONDE DE LIEN (fragment JSON `,"nat":"…","rtt":N,"jitter":N`), calculé UNE fois en
+/// arrière-plan au démarrage de l'agent. `OnceLock` = std pur, thread-safe, zéro dépendance.
+static LINK_DIAG: OnceLock<String> = OnceLock::new();
+
+/// Lance la SONDE DE LIEN dans un THREAD (non-bloquant) : l'agent démarre et bat tout de suite ;
+/// dès que la sonde STUN aboutit (~1-2 s), tout battement suivant porte `nat`/`rtt`/`jitter`.
+/// Cohérent avec l'agent « respectueux » — on ne fige jamais le démarrage sur un aller-retour réseau.
+fn spawn_link_probe() {
+    std::thread::spawn(|| {
+        let _ = LINK_DIAG.set(super::linkprobe::link_diag());
+    });
+}
+
 /// Envoie un battement de cœur au collecteur (POST /heartbeat). Best-effort : un échec est silencieux
 /// (serveur muet → on n'insiste pas, l'agent ne se bloque jamais). C'est l'observabilité « qui est en
 /// ligne, quand » SANS lancer de simulation — juste savoir quels PC sont dispo et à quelles heures.
@@ -447,7 +463,11 @@ fn send_heartbeat_diag(host_addr: &str, port: u16, ev: &str, diag: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let body = heartbeat_json(ts, &host_label(), &agent_version(), ev, diag);
+    // On PRÉFIXE les champs de sonde de lien mis en cache (nat/rtt/jitter) à tout battement → le
+    // statut connaît la nature du lien de chaque machine dès que la sonde a abouti. Vide tant que
+    // la sonde tourne encore, ou hors agent (jeu stats n'appelle pas ça) → comportement inchangé.
+    let probe = LINK_DIAG.get().map(String::as_str).unwrap_or("");
+    let body = heartbeat_json(ts, &host_label(), &agent_version(), ev, &format!("{probe}{diag}"));
     let _ = http_post(host_addr, port, "/heartbeat", &body);
 }
 
@@ -1397,6 +1417,11 @@ struct HeartbeatRecord {
     _ver: String,
     ev: String,
     ip: String,
+    /// SONDE DE LIEN (Phase 2) — vide si battement d'avant la MAJ : type de NAT (`cone`/`sym`/`?`),
+    /// latence médiane vers STUN (ms) et gigue (ms). Source = l'agent lui-même (`linkprobe`).
+    nat: String,
+    rtt: Option<u32>,
+    jitter: Option<u32>,
 }
 
 fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
@@ -1409,6 +1434,9 @@ fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
     let mut _ver = String::new();
     let mut ev = String::new();
     let mut ip = String::new();
+    let mut nat = String::new();
+    let mut rtt = None;
+    let mut jitter = None;
 
     for part in line[1..line.len() - 1].split(',') {
         if let Some((k, v)) = part.split_once(':') {
@@ -1420,12 +1448,15 @@ fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
                 "ver" => _ver = v.to_string(),
                 "ev" => ev = v.to_string(),
                 "ip" => ip = v.to_string(),
+                "nat" => nat = v.to_string(),
+                "rtt" => rtt = v.parse().ok(),
+                "jitter" => jitter = v.parse().ok(),
                 _ => {}
             }
         }
     }
     if ts > 0 && !host.is_empty() {
-        Some(HeartbeatRecord { ts, host, _ver, ev, ip })
+        Some(HeartbeatRecord { ts, host, _ver, ev, ip, nat, rtt, jitter })
     } else {
         None
     }
@@ -1449,6 +1480,24 @@ fn connection_kind(ip: &str) -> &'static str {
     } else {
         "publique"
     }
+}
+
+/// Résumé COMPACT du lien d'une machine pour le statut : le type déduit de l'IP (vue serveur,
+/// infalsifiable) ENRICHI de la sonde STUN rapportée par l'agent — perçabilité (`nat:cone/sym`),
+/// latence et gigue. Les champs sonde sont OMIS pour un battement d'avant la MAJ (rétro-compat) →
+/// on n'invente rien. PUR (testable). Ex. : « publique • nat:sym • 180ms ±40ms ».
+fn link_summary(rec: &HeartbeatRecord) -> String {
+    let mut s = connection_kind(&rec.ip).to_string();
+    if !rec.nat.is_empty() && rec.nat != "?" {
+        s.push_str(&format!(" • nat:{}", rec.nat));
+    }
+    if let Some(rtt) = rec.rtt {
+        match rec.jitter {
+            Some(j) => s.push_str(&format!(" • {rtt}ms ±{j}ms")),
+            None => s.push_str(&format!(" • {rtt}ms")),
+        }
+    }
+    s
 }
 
 /// AFFICHE LES STATISTIQUES DE PRÉSENCE (machines actives + dispo moyenne par heure).
@@ -1487,13 +1536,13 @@ pub fn run_stats() {
     }
 
     let active_threshold = 120;
-    let mut active_hosts: Vec<(&String, u64, &str, &str)> = Vec::new();
-    for (host, rec) in &latest_by_host {
+    let mut active_hosts: Vec<(u64, &HeartbeatRecord)> = Vec::new();
+    for rec in latest_by_host.values() {
         if now >= rec.ts && (now - rec.ts) <= active_threshold && rec.ev != "leaving" {
-            active_hosts.push((host, now - rec.ts, rec.ev.as_str(), rec.ip.as_str()));
+            active_hosts.push((now - rec.ts, rec));
         }
     }
-    active_hosts.sort_by_key(|h| h.1);
+    active_hosts.sort_by_key(|h| h.0);
 
     println!("\n==================================================================");
     println!("  💻 STATUT ACTUEL DU RÉSEAU");
@@ -1502,11 +1551,11 @@ pub fn run_stats() {
         println!("  Aucune machine active actuellement (dernier battement > 2 min).");
     } else {
         println!("  {} machine(s) connectée(s) et prête(s) pour une simulation :", active_hosts.len());
-        for (host, age, ev, ip) in &active_hosts {
-            let ipshow = if ip.is_empty() { "ip inconnue (avant MAJ serveur)" } else { ip };
+        for (age, rec) in &active_hosts {
+            let ipshow = if rec.ip.is_empty() { "ip inconnue (avant MAJ serveur)" } else { rec.ip.as_str() };
             println!(
                 "   • {:<20} (actif il y a {:>3}s, mode: {:<7}) — {} [{}]",
-                host, age, ev, ipshow, connection_kind(ip)
+                rec.host, age, rec.ev, ipshow, link_summary(rec)
             );
         }
     }
@@ -1748,6 +1797,31 @@ mod tests {
         // Ligne ENRICHIE par le serveur (IP injectée en 1er champ) → on la lit.
         let avec_ip = "{\"ip\":\"88.167.242.251\",\"ts\":1782577843,\"host\":\"DESKTOP-GB48HC7\",\"ver\":\"3840d37\",\"ev\":\"alive\"}";
         assert_eq!(parse_heartbeat(avec_ip).unwrap().ip, "88.167.242.251");
+        // Ligne avec SONDE DE LIEN (Phase 2) → nat/rtt/jitter extraits ; une ligne sans → champs absents.
+        let avec_sonde = "{\"ip\":\"37.165.36.147\",\"ts\":1782577900,\"host\":\"DESKTOP-GB48HC7\",\"ver\":\"abc1234\",\"ev\":\"alive\",\"nat\":\"sym\",\"rtt\":180,\"jitter\":40}";
+        let s = parse_heartbeat(avec_sonde).unwrap();
+        assert_eq!(s.nat, "sym");
+        assert_eq!(s.rtt, Some(180));
+        assert_eq!(s.jitter, Some(40));
+        assert_eq!(r.nat, ""); // l'ancienne ligne n'a pas de sonde → vide, pas de crash
+        assert_eq!(r.rtt, None);
+    }
+
+    /// AFFICHAGE — le résumé de lien combine le type déduit de l'IP et la sonde STUN si présente,
+    /// et OMET proprement les champs sonde d'un battement d'avant la MAJ (rétro-compat).
+    #[test]
+    fn link_summary_combine_type_et_sonde() {
+        let rec = HeartbeatRecord {
+            ts: 1, host: "DESKTOP".into(), _ver: "x".into(), ev: "alive".into(),
+            ip: "37.165.36.147".into(), nat: "sym".into(), rtt: Some(180), jitter: Some(40),
+        };
+        assert_eq!(link_summary(&rec), "publique • nat:sym • 180ms ±40ms");
+        // Battement d'avant la MAJ : pas de sonde → seul le type déduit de l'IP.
+        let vieux = HeartbeatRecord {
+            ts: 1, host: "nixos".into(), _ver: "x".into(), ev: "idle".into(),
+            ip: "192.168.1.3".into(), nat: String::new(), rtt: None, jitter: None,
+        };
+        assert_eq!(link_summary(&vieux), "LAN");
     }
 
     /// Type de connexion déduit de l'IP (heuristique locale, sans dépendance) : l'espace CGNAT
