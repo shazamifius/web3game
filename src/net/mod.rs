@@ -14,6 +14,8 @@
 //!   - `transport`  : la prise réseau UDP générique (`Socket`)
 //!   - `probe`      : sonde système (temps CPU du thread, RAM crête) pour chiffrer le
 //!                    coût RÉEL d'un nœud (chap. 7.4, via /proc — Linux)
+//!   - `linkprobe`  : sonde de LIEN — type de NAT via STUN (cône perçable vs symétrique/
+//!                    CGNAT) ; Phase 2 du plan réseau, base de la redondance adaptative
 //!   - `rendezvous` : le serveur d'annuaire qui présente les joueurs entre eux
 //!   - `skin`       : la couleur de skin aléatoire d'une session
 //!   - `demo`       : le mode texte `net-demo` (observer les paquets sans la 3D)
@@ -38,6 +40,7 @@ mod crypto;
 mod demo;
 mod gossip;
 mod link;
+mod linkprobe;
 mod lossbench;
 mod message;
 mod metrics;
@@ -58,6 +61,7 @@ pub use attack::run_attack;
 pub use bot::run_bot;
 pub use coopsim::{run_coopsim, run_coopsim_bus};
 pub use demo::run_demo;
+pub use linkprobe::run_natcheck;
 pub use lossbench::run_phase1;
 pub use metrics::{run_agent, run_serve_config, run_stats};
 pub use natdemo::run_nat_test;

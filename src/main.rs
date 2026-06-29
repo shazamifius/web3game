@@ -19,6 +19,7 @@
 //!   coopsim-bus <N> [s]   banc bus mémoire (temps-sim découplé du mural)
 //!   relay-test [s]        banc déterministe du relais NAT (deux sens)
 //!   relay-loss [s][%][k]  banc relais LOSSY : perte injectée + redondance k, mesure p50/p95
+//!   natcheck              sonde le TYPE de NAT de cette machine (cône perçable vs symétrique/CGNAT)
 //!   stars <seed> [secs]   champ d'étoiles déterministe (preuve : 2 runs = sortie identique)
 //!   stars-race <s> <n> [t] preuve de convergence du ramassage (2 ordres = même décompte)
 //!   attack <type>         le programme attaquant (forge|replay|flood|teleport|…)
@@ -52,6 +53,7 @@ fn main() {
         ),
         Some("stats") => net::run_stats(),
         Some("phase1") => net::run_phase1(),
+        Some("natcheck") => net::run_natcheck(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
         Some("sim") => {
             let n_bots = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
@@ -98,7 +100,7 @@ fn main() {
                 eprintln!("Mode inconnu : « {m} ».");
             }
             eprintln!(
-                "Usage : jeu <rendezvous|sidecar|bot|agent|stats|phase1|serve-config|sim|crowd|coopsim|coopsim-bus|\
+                "Usage : jeu <rendezvous|sidecar|bot|agent|stats|phase1|natcheck|serve-config|sim|crowd|coopsim|coopsim-bus|\
                  relay-test|relay-loss|stars|stars-race|attack|net-demo|nat-test> [args…]\n\
                  (La présentation 3D vit désormais dans Unreal, branchée au mode `sidecar`.)"
             );
