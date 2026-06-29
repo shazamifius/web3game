@@ -99,7 +99,8 @@
 - **D17 — NAT symétrique → relais obligatoire.** 🟡 *Certaines connexions (mobile) ne se percent pas en direct.*
   **Réponse :** le **relais via le point de rendez-vous est prouvé en réel** (deux réseaux distincts, dans les deux
   sens). Reste ouvert : un relais **décentralisé** (n'importe quel bon nœud relaie) + un **déclenchement automatique**
-  (« perçage abandonné → relais »). C'est le **plancher** d'un onboarding fiable (cf. D34).
+  (« perçage abandonné → relais »). C'est le **plancher** d'un onboarding fiable (cf. D34). ⚠️ *Et le relais n'est
+  **pas gratuit** : sa qualité dépend du type de lien — une redondance naïve peut même **empirer** un lien saturé (cf. D36).*
 - **D18 — Le seuil anti-triche de vitesse est grossier.** 🟡 *Un tricheur subtil reste juste sous le seuil.*
   **Réponse :** deux couches — (1) un **socle non négociable** qui protège le réseau pour tous (signatures,
   anti-Sybil, anti-forge), toujours actif ; (2) des règles de jeu **réglables par le créateur** du monde (curseur
@@ -179,6 +180,18 @@
   elle, et c'est la pièce la plus différée.* **Réponse :** « qui j'entends » = « qui est dans mon ensemble de
   pertinence » → la voix de proximité **est** l'aire d'intérêt (D29) appliquée à l'audio, à bâtir **par-dessus** ce
   chantier (la capture/spatialisation côté moteur, elle, peut être préparée en parallèle).
+- **D36 — La diversité des connexions est un mur qu'on n'a pas cartographié.** 🔴 *On n'a validé le transport que sur
+  une poignée de liens ; or chaque type de connexion casse **différemment**, et le vrai risque est celui qu'on n'a pas
+  encore croisé.* **Constat dur (29 juin) :** sur un **vrai lien mobile dégradé**, ajouter de la **redondance d'émission**
+  (envoyer chaque état en double sur le relais) n'a **pas** réduit la perte — elle l'a **empirée**. La leçon : quand la
+  perte vient de la **congestion** (débit saturé), dupliquer **aggrave** ; la redondance n'aide que la perte **aléatoire**
+  (un lien qui a encore de la marge). **Réponse / pistes :** (1) **caractériser chaque lien** à l'arrivée — latence,
+  gigue, **nature** de la perte (aléatoire vs congestion), type de NAT, débit soutenable ; (2) **redondance ADAPTATIVE** —
+  ne dédoubler que si la perte est aléatoire *et* qu'il reste de la marge, **jamais** sur un lien saturé ; (3) **dresser
+  la carte des régimes** qui posent problème — mobile congestionné, **satellite (Starlink : CGNAT + pics de latence + IP
+  qui changent ; géostationnaire : > 500 ms par nature)**, wifi public (perte aléatoire), réseaux qui **bloquent l'UDP**
+  (entreprise/hôtel), double-NAT, bascule entre antennes en mouvement. *Honnêteté de méthode : c'est le hasard d'un lien
+  de test médiocre qui nous l'a montré — sans lui, on ne l'aurait pas vu. D'où ce doute, ouvert exprès.*
 
 ---
 
