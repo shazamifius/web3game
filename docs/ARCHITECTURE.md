@@ -11,29 +11,44 @@ qu'un gros).
 
 ```
 src/
-├── main.rs              point d'entrée, aiguillage des modes headless (rendezvous/sidecar/bot/sim/…)
+├── main.rs              point d'entrée, aiguillage des modes headless (rendezvous/sidecar/bot/agent/sim/…)
 ├── math.rs              Vec3 maison (sans moteur 3D) — la brique maths du cœur
 └── net/                 LE RÉSEAU, fait main (engine-agnostique, aucun moteur 3D)
     ├── mod.rs           assemble le module et expose l'API publique
-    ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé)
+    ├── wire.rs          le TYPE d'un paquet (1er octet) + la version de protocole + le port du rendez-vous
+    ├── message.rs       le format d'un paquet (PlayerState, encode/decode + signé, lots d'états)
     ├── control.rs       les messages d'annuaire (HELLO / WELCOME)
-    ├── crypto.rs        Ed25519 + PeerId (identité = clé) + preuve de travail — boîte noire (5/6.1/6.2)
+    ├── crypto.rs        Ed25519 + PeerId (identité = clé) + preuve de travail — la seule « boîte noire »
+    ├── rendezvous.rs    le POINT DE RENDEZ-VOUS : présente les joueurs puis s'efface (+ relais des NAT durs)
+    ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
+    ├── punch.rs         hole punching : frontière wire (encode/decode/abandon du perçage)
+    ├── linkprobe.rs     la SONDE DE LIEN : type de NAT (STUN), latence, gigue, nature de la perte (Phase 2)
+    ├── gossip.rs        découverte décentralisée : « cartes de visite » entre pairs, sans annuaire (D22)
+    ├── cell.rs          RÉSUMÉ de cellule : percevoir une foule lointaine sans N flux (D22)
+    ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
     ├── anticheat.rs     le « Shield local » : règles de plausibilité physique (chap. 6.3+)
     ├── accuse.rs        accusations signées + quorum : réputation partagée (chap. 6.7)
-    ├── aoi.rs           Area of Interest (water-filling : qui reçoit quel débit)
-    ├── punch.rs         hole punching : frontière wire (encode/decode/abandon du perçage)
-    ├── orb.rs           l'orbe partagée : logique PURE d'autorité (ORBE+OWN, encode/decode signé, apply_incoming)
-    ├── transport.rs     la prise UDP brute (Socket) — la « connexion »
+    ├── orb.rs           l'orbe partagée : logique PURE d'autorité (ORBE+OWN, encode/decode signé, migration)
+    ├── stars.rs         le champ d'étoiles partagé (monde de démonstration)
     ├── skin.rs          la couleur de skin aléatoire (portée dans le paquet d'état)
-    ├── demo.rs          le mode texte net-demo (observer les paquets)
-    ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5 & 6
-    ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) + brique `Bot` réutilisable (6.0/6.8)
-    ├── sim.rs           la SIMULATION MASSIVE (cargo run -- sim N M T) : N nœuds + M attaquants (chap. 6.8)
-    ├── coopsim.rs       bancs de foule en thread coopératif / bus mémoire (coopsim, coopsim-bus)
-    ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
+    ├── link.rs          NetLink : l'état réseau d'un nœud (table de pairs, réputation, cellules…)
+    ├── bot.rs           le CLIENT HEADLESS (cargo run -- bot …) + brique `Bot` réutilisable
     ├── sidecar.rs       LE PONT vers Unreal (cargo run -- sidecar) : socket locale vers le client moteur
-    └── link.rs          NetLink : l'état réseau d'un nœud (table de pairs, réputation, cellules…)
+    ├── metrics.rs       l'AGENT DE MESURE distribué (cargo run -- agent/stats) : mesure les liens dehors et remonte les chiffres
+    ├── probe.rs         sonde système (CPU/RAM du nœud, via /proc) — chiffrer le coût réel d'un nœud
+    ├── sim.rs           la SIMULATION MASSIVE (cargo run -- sim N M T) : N nœuds + M attaquants
+    ├── coopsim.rs       bancs de foule en thread coopératif / bus mémoire (coopsim, coopsim-bus)
+    ├── lossbench.rs     banc DÉTERMINISTE de la redondance sous perte connue (cargo run -- phase1)
+    ├── netembench.rs    banc RÉEL de la redondance sur lien dégradé (cargo run -- netem-bench)
+    ├── attack.rs        le PROGRAMME ATTAQUANT (cargo run -- attack …) — chap. 5 & 6
+    ├── natdemo.rs       le mode texte nat-test (hole punching sans 3D, pour netns)
+    └── demo.rs          le mode texte net-demo (observer les paquets)
 ```
+
+> Deux **composants exécutables** méritent un mot, car ils sont au cœur des preuves « dehors » : le **rendez-vous**
+> (`rendezvous.rs`) — l'annuaire minimal qui présente les joueurs, puis relaie pour les NAT trop fermés — et l'**agent
+> de mesure** (`metrics.rs`) — un instrument autonome qu'un volontaire lance chez lui, qui rejoint le réseau, **sonde
+> son lien** (`linkprobe.rs`) et **remonte des chiffres honnêtes** sur la vivacité des liens distants.
 
 > Le **rattrapage de latence** (interpolation, prédiction, ressort amorti) qui vivait dans
 > `net/netcode/` côté client Bevy a été **retiré** : c'est désormais Unreal qui interpole

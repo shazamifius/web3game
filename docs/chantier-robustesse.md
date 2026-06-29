@@ -46,17 +46,18 @@ C'est une **dette identifiée d'avance** (pas une surprise du jour de l'échelle
 
 ## 3. Le relais pour les NAT difficiles (D17) — et un bug révélé par le réel
 
-**Le problème.** Le hole-punching échoue sur certaines connexions (typiquement le mobile, NAT « symétrique »). Ces
-joueurs-là ne peuvent pas se connecter en direct → il leur faut un **relais** (un tiers qui recopie les paquets).
-*Cadrage honnête : c'est un **repli** pour la minorité non-perçable, pas le chemin normal.*
+**Le problème.** Le hole-punching échoue sur les NAT les plus fermés (dits « symétriques »). Ces joueurs-là ne
+peuvent pas se connecter en direct → il leur faut un **relais** (un tiers qui recopie les paquets). *Cadrage honnête :
+c'est un **repli** pour la minorité non-perçable, pas le chemin normal — et notre [sonde de lien](chantier-reseau.md)
+a depuis montré que ce cas est plus rare qu'on ne le croyait (un mobile grand public qu'on pensait symétrique s'est
+révélé perçable).*
 
 **La sécurité est gratuite, par construction.** Un état de jeu reste **signé de bout en bout** : le relais ne peut
 que **porter** les octets, **jamais les falsifier**. Il n'y a donc rien de neuf à prouver côté confiance — juste à
 border l'amplification (un relais en entrée = un seul en sortie, débit plafonné, destinataire forcément inscrit).
 
-**Prouvé en réel.** Deux humains, deux vrais réseaux (l'un en mobile à NAT symétrique, l'autre à la maison), qui
-**ne peuvent pas se percer**, **se voient bouger via le relais**. Le juge est neutre : le journal du serveur montre
-le trafic relayé **dans les deux sens**. *C'est la première fois que le code fait entrer deux humains réels dans le
+**Prouvé en réel.** Deux humains, deux vrais réseaux qui **ne se perçaient pas** en direct, **se voient bouger via le
+relais**. Le juge est neutre : le journal du serveur montre le trafic relayé **dans les deux sens**. *C'est la première fois que le code fait entrer deux humains réels dans le
 même espace via Internet — un premier élément de réponse à la « forteresse vide » (D27).*
 
 **Le bug que seul le réel pouvait montrer.** Au premier essai, l'expérience était **asymétrique** : A voyait B,
@@ -82,9 +83,10 @@ la gigue et le ré-ordonnancement des liens qu'il perçoit, et renvoie les chiff
 - **Le verdict, une fois l'instrument honnête.** Sur de vrais liens distants (plusieurs pays, certains en CGNAT), la
   présence est **vivante** : fraîcheur **p95 ~200–335 ms** (< 500 ms), **perte réelle ~0**. Deux durcissements tirés
   du réel sont restés : une **tolérance au silence** côté rendez-vous portée de **5 s à 20 s** (un lien CGNAT se
-  ré-enregistre sans cesse — à 5 s on l'évinçait à tort), et une **redondance d'émission** *optionnelle* (un état
-  envoyé en double via le relais), gardée sous le coude pour les cas avérés — `0,89³≈0,68` répare surtout un faux
-  problème, donc on ne l'allume pas « au cas où ».
+  ré-enregistre sans cesse — à 5 s on l'évinçait à tort), et une **redondance d'émission** qui a, depuis, mûri en
+  **redondance ADAPTATIVE** : un nœud ne dédouble que s'il a **mesuré** une perte *aléatoire* avec de la marge (gain
+  prouvé sur banc : `30 % → 9 %` à deux copies), et **jamais** sur un lien qui *sature* (où dupliquer aggrave). Le
+  détail de cette enquête : [le chantier réseau](chantier-reseau.md) et le doute **D36**.
 
 ## 4. Au-delà (différé, assumé)
 

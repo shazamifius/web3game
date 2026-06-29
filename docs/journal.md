@@ -110,6 +110,29 @@ réseaux domestiques** (dont certains derrière le NAT le plus dur, le CGNAT), o
 encore** le **ressenti** : des humains qui **bougent et jouent ensemble** dans le même monde, et le **sentent**
 vivant. Ce test-là — le plus important — reste devant. Le doute s'allège ; il ne se ferme pas.
 
+## Chapitre 8 — Le réseau apprend à connaître ses liens
+Le chapitre 7 avait posé l'instrument dehors et levé une fausse alerte. Restait une vraie question, soulevée par un
+lien de test médiocre : **la redondance d'émission** (envoyer un état en double pour résister à la perte) a, sur ce
+lien-là, *empiré* les choses au lieu d'aider. Pourquoi ?
+
+La réponse a demandé d'apprendre au réseau à **se connaître lui-même**. On a écrit une **sonde de lien** (sans aucune
+dépendance, comme le reste) qui, sur chaque nœud, mesure : le **type de NAT** (perçable ou non, en interrogeant deux
+serveurs publics depuis une seule socket), la **latence**, la **gigue**, et surtout la **nature de la perte** — une
+courte rafale à débit croissant révèle si le lien *sature* (congestion) ou s'il perd *au hasard*. Première surprise,
+et leçon de méthode : un téléphone mobile grand public qu'on croyait « bloqué » (NAT symétrique) s'est révélé
+**perçable**. La mesure a, une fois de plus, corrigé l'intuition.
+
+Surtout, la sonde explique la redondance ratée : ce lien mobile ne perdait pas *au hasard*, il **saturait**. Or
+dupliquer un état sur un lien saturé, c'est doubler le trafic d'un tuyau déjà plein → on aggrave. La redondance
+n'aide que la perte *aléatoire*. D'où la réponse : une **redondance ADAPTATIVE** — chaque nœud lit sa propre sonde et
+ne dédouble que s'il voit une perte aléatoire avec de la marge, **jamais** sur un lien qui sature. On l'a vu se
+produire en vrai (un lien congestionné a renoncé seul à dupliquer) ; et on a prouvé l'autre moitié sur un banc à
+perte **aléatoire** contrôlée (perte réseau injectée par le noyau) : **30 % → 9 %** à deux copies, **2,8 %** à trois
+— la perte divisée comme la théorie le prédit, sur de vrais paquets.
+
+Le récit complet de cette double correction vit dans [les coulisses](coulisses.md) (enquête n°3) ; le détail
+technique, dans le [chantier réseau](chantier-reseau.md).
+
 ## La suite
 À partir de là, le travail se poursuit dans les chantiers dédiés : confronter le tout au [réseau réel](chantier-reseau.md),
 [la foule dense](chantier-foule.md), et [la robustesse](chantier-robustesse.md).
