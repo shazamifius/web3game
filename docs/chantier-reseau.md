@@ -37,6 +37,34 @@ d'incrément / Sybil neutralisés.
 **NAT réel.** Le hole-punching est prouvé entre vraies « box » (montées en namespaces réseau) : **maillage complet**
 pour les NAT « cône », échec attendu pour le NAT symétrique → repli sur relais (cf. D17).
 
+**Caractériser chaque lien — et une troisième hypothèse réfutée (D36).** On ne peut pas bien aider un lien qu'on ne
+connaît pas. Chaque nœud **sonde** donc le sien, sans dépendance externe : **type de NAT** (interroger deux serveurs
+STUN publics depuis une seule socket — même port public vu des deux côtés = *cône perçable*, port différent =
+*symétrique* ; implémentation STUN faite main), **latence** et **gigue**, et surtout la **nature de la perte** (une
+courte rafale à débit croissant : si la perte monte avec le débit, c'est de la **congestion** ; si elle reste plate,
+c'est de l'**aléatoire**). *Hypothèse de départ : « un lien mobile 4G/5G, c'est du NAT symétrique, donc à relayer. »*
+**La sonde l'a réfutée :** un téléphone grand public testé s'est révélé **cône — perçable en direct**. Ce qui varie
+selon la couverture, c'est la **qualité** (latence, gigue), pas le type de NAT.
+
+**La redondance n'est pas gratuite — d'où l'adaptatif.** Sur un relais à perte, on peut envoyer chaque état en
+plusieurs exemplaires (concrètement : un seul paquet portant les **K derniers états**, donc sans surcoût de débit en
+nombre de paquets). La théorie dit qu'avec une perte **aléatoire indépendante** `p`, la perte résiduelle tombe en
+`pᴷ`. Mais ce n'est vrai **que** pour de l'aléatoire : sur un lien **saturé** (congestion), des copies plus grosses
+ne font qu'aggraver la saturation. On l'a vérifié de deux façons :
+
+- un **banc déterministe** (`phase1`, graine fixe) qui modèle les trois régimes : aléatoire → la redondance divise
+  (~`pᴷ`) ; rafale → le gain s'effondre (les copies consécutives tombent dans la même rafale) ; congestion sévère →
+  redondance **inutile** (0 gain pour 2–3× les octets) ;
+- un **banc réel** (`netem-bench`) qui fait passer le **vrai** mécanisme à travers une **vraie** perte injectée par
+  le noyau (`tc netem`), dans un espace réseau jetable (donc sans toucher la machine). Résultat sur perte
+  **aléatoire** : `30 % → 9,0 %` à 2 copies (prédit 9,5), `2,8 %` à 3 (prédit 2,9) ; `50 % → 25,2 %` puis `12,8 %` —
+  la mesure **colle** à `pᴷ`. Sur perte **corrélée** (rafale), le gain se dégrade, exactement comme prévu.
+
+**Conclusion : redondance ADAPTATIVE.** Un nœud ne duplique que s'il a mesuré une perte **aléatoire** avec de la
+marge ; jamais sur un lien qui sature. Cette décision, prise par le nœud à partir de sa propre sonde, a déjà été
+observée en conditions réelles (un lien mobile congestionné a, de lui-même, **renoncé** à dupliquer). *Ce qui reste
+ouvert : la grande variété des connexions du monde réel — c'est le doute **D36**, qu'on commence seulement à cartographier.*
+
 ## 2. Durcir la confiance (Sybil, éclipse, accusations)
 
 **Le problème.** Sans autorité centrale : comment empêcher un attaquant de fabriquer de fausses identités (Sybil),

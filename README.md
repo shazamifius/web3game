@@ -42,14 +42,19 @@ foule (~55 000, une salle de concert). *C'est une **direction de recherche**, pa
 
 Le cœur est du code, en **Rust**, **fait main, sans boîte noire** (la seule dépendance externe est la bibliothèque
 de cryptographie). Ce qui suit a été écrit puis vérifié — en distinguant honnêtement ce qui est prouvé de ce qui ne
-l'est pas encore (cf. *En toute transparence*). **134 tests automatiques, 0 warning** ; chaque chiffre est
+l'est pas encore (cf. *En toute transparence*). **163 tests automatiques, 0 warning** ; chaque chiffre est
 **reproductible** (détail mesuré + commandes : [revue chiffrée](docs/etat-du-projet.md)) :
 
 - **Identité = ta clé.** Chaque message est signé : impossible de se faire passer pour un autre, aucun annuaire
   central ne décide qui tu es. Identité **persistante** entre sessions (comme un vrai compte, mais à toi).
 - **Traversée NAT réelle, jusqu'au cas le plus dur.** Deux humains derrière leurs box se connectent en direct ;
-  et quand c'est impossible (NAT symétrique mobile 4G/5G), un **relais** prend le relais — **prouvé entre deux
-  vrais réseaux sur Internet**, pas en laboratoire.
+  et quand le NAT est trop fermé pour être percé (dit *symétrique*), un **relais** prend le relais — **prouvé entre
+  deux vrais réseaux sur Internet**, pas en laboratoire.
+- **Un réseau qui mesure ses propres liens.** Chaque nœud **sonde** son lien (type de NAT, latence, gigue, et la
+  **nature** de sa perte — aléatoire ou congestion) et **adapte sa stratégie** : dupliquer les données protège un
+  lien à perte aléatoire, mais aggrave un lien déjà saturé, donc on ne le fait que lorsque c'est utile. Cette sonde
+  a déjà **corrigé l'une de nos hypothèses** — un téléphone 4G/5G grand public s'est révélé *perçable* là où on le
+  croyait bloqué (la mesure prime sur l'intuition).
 - **Résistance aux attaques, testée pour de vrai.** Des simulations d'attaques (Sybil, éclipse, *framing*,
   inondation de gossip) sont jouées contre le réseau : l'essaim tient, les tricheurs sont mis en sourdine.
 - **Perception de foule à coût borné.** Chacun ne dialogue à plein débit qu'avec un **petit voisinage** (~32) et

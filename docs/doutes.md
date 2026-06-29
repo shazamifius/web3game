@@ -180,18 +180,22 @@
   elle, et c'est la pièce la plus différée.* **Réponse :** « qui j'entends » = « qui est dans mon ensemble de
   pertinence » → la voix de proximité **est** l'aire d'intérêt (D29) appliquée à l'audio, à bâtir **par-dessus** ce
   chantier (la capture/spatialisation côté moteur, elle, peut être préparée en parallèle).
-- **D36 — La diversité des connexions est un mur qu'on n'a pas cartographié.** 🔴 *On n'a validé le transport que sur
+- **D36 — La diversité des connexions est un mur qu'on n'a pas (encore) cartographié.** 🟠 *On n'a validé le transport que sur
   une poignée de liens ; or chaque type de connexion casse **différemment**, et le vrai risque est celui qu'on n'a pas
   encore croisé.* **Constat dur (29 juin) :** sur un **vrai lien mobile dégradé**, ajouter de la **redondance d'émission**
   (envoyer chaque état en double sur le relais) n'a **pas** réduit la perte — elle l'a **empirée**. La leçon : quand la
   perte vient de la **congestion** (débit saturé), dupliquer **aggrave** ; la redondance n'aide que la perte **aléatoire**
-  (un lien qui a encore de la marge). **Réponse / pistes :** (1) **caractériser chaque lien** à l'arrivée — latence,
-  gigue, **nature** de la perte (aléatoire vs congestion), type de NAT, débit soutenable ; (2) **redondance ADAPTATIVE** —
-  ne dédoubler que si la perte est aléatoire *et* qu'il reste de la marge, **jamais** sur un lien saturé ; (3) **dresser
-  la carte des régimes** qui posent problème — mobile congestionné, **satellite (Starlink : CGNAT + pics de latence + IP
-  qui changent ; géostationnaire : > 500 ms par nature)**, wifi public (perte aléatoire), réseaux qui **bloquent l'UDP**
-  (entreprise/hôtel), double-NAT, bascule entre antennes en mouvement. *Honnêteté de méthode : c'est le hasard d'un lien
-  de test médiocre qui nous l'a montré — sans lui, on ne l'aurait pas vu. D'où ce doute, ouvert exprès.*
+  (un lien qui a encore de la marge). **Ce qu'on a fait depuis — et prouvé :** **(1) ✅ caractériser chaque lien** — une
+  **sonde** mesure désormais, par nœud, le type de NAT (cône perçable vs symétrique, via STUN fait main), la latence, la
+  gigue et la **nature de la perte** (aléatoire vs congestion). Elle a déjà **réfuté une hypothèse** : un mobile 4G/5G
+  grand public qu'on croyait *symétrique* est en fait **perçable**. **(2) ✅ redondance ADAPTATIVE** — un nœud ne dédouble
+  que si sa sonde voit une perte *aléatoire* avec de la marge, **jamais** sur un lien saturé ; observé en réel (un lien
+  congestionné a renoncé **seul** à dupliquer), et le **gain** sur perte aléatoire est prouvé sur banc réel (`tc netem` :
+  30 % → 9 % à 2 copies, ≈ `pᴷ` ; en rafale, le gain s'effondre — conforme à la théorie). **Ce qui reste grand ouvert :
+  (3) la carte des régimes** réels — **satellite** (Starlink : CGNAT + pics de latence + IP qui changent ; géostationnaire :
+  > 500 ms par nature), **wifi public**, réseaux qui **bloquent l'UDP** (entreprise/hôtel), **double-NAT**, **bascule entre
+  antennes** en mouvement. On a désormais l'**outil** pour les diagnostiquer ; on n'a simplement pas encore **croisé** ces
+  liens. *Honnêteté de méthode : c'est le hasard d'un lien de test médiocre qui a ouvert ce doute — sans lui, on ne l'aurait pas vu.*
 
 ---
 

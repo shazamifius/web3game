@@ -26,7 +26,9 @@
 | Taille d'un **paquet d'état signé** | **182 octets** (118 utiles + 64 de sceau Ed25519) | format, cf. [ARCHITECTURE.md](ARCHITECTURE.md) |
 | **Traversée NAT symétrique** via relais | établie **dans les deux sens** (réseaux réels) | `cargo run -- relay-test 6` *(banc déterministe)* |
 | **Fraîcheur** sur liens **distants réels** (plusieurs pays, dont CGNAT) | **p95 ~200–335 ms** (< seuil 500 ms « vivant »), **perte réelle ~0** | instrument de mesure (agent) + journal du rendez-vous |
-| **Tests** automatiques | **134**, 0 warning | `cargo test` |
+| **Sonde de lien** (type de NAT, RTT, gigue) | tourne dans l'agent, remontée en continu | `cargo run -- natcheck` |
+| **Gain de la redondance** sur perte *aléatoire* (banc réel) | perte 30 % → **9 %** (2 copies) / **2,8 %** (3 copies), ≈ `pᴷ` | `./tools/netem-bench.sh 30` |
+| **Tests** automatiques | **163**, 0 warning | `cargo test` |
 | Plafond du **banc** de simulation | **~1 500 nœuds** (1 thread OS / nœud, 12 cœurs) | limite matérielle (voir §4) |
 
 > **Ce que ces chiffres NE prouvent PAS** (honnêteté de méthode) : ils sont pris en **simulation / localhost** — le
@@ -53,8 +55,15 @@ L'échelle se fait donc en **ajoutant des machines**, jamais en chargeant une se
 
 - **Identité = une clé.** Chaque message signé (Ed25519) ; l'identité est la clé publique, portée dans le paquet —
   elle s'auto-prouve, sans annuaire de confiance, et **persiste** entre sessions. *(tests unitaires + rechargement.)*
-- **Traversée NAT réelle, jusqu'au cas difficile.** Hole-punching direct ; et sur NAT symétrique mobile, un
-  **relais** prend le relais — établi **dans les deux sens entre deux réseaux distincts sur Internet** (pas en labo).
+- **Traversée NAT réelle, jusqu'au cas difficile.** Hole-punching direct ; et quand le NAT est trop fermé pour être
+  percé (*symétrique*), un **relais** prend le relais — établi **dans les deux sens entre deux réseaux distincts sur
+  Internet** (pas en labo).
+- **Le réseau caractérise ses liens et adapte sa redondance.** Chaque nœud **sonde** son lien : type de NAT (cône
+  perçable vs symétrique, via STUN, fait main), latence, gigue, et **nature de la perte** (aléatoire vs congestion,
+  via une rafale à débit croissant). Il en déduit s'il a intérêt à dupliquer ses envois : sur un banc à perte
+  *aléatoire* contrôlée, la redondance **divise** bien la perte (**30 % → 9 % à 2 copies, 2,8 % à 3, ≈ `pᴷ`**) ; sur
+  un lien *saturé* (congestion), elle l'**aggraverait** — alors on ne l'active pas. *(`natcheck`, `losscheck`,
+  `phase1`, `tools/netem-bench.sh`.)*
 - **Résistance aux attaques.** De vrais programmes adverses (Sybil, éclipse, *framing*, inondation de gossip) sont
   joués contre le réseau : l'essaim tient, les états volés sont rejetés, les tricheurs mis en sourdine.
   *(`cargo run -- attack sybil-frame` · `attack gossip-flood`.)*

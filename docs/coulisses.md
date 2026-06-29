@@ -116,3 +116,54 @@ apparaît en pleine lumière : **pourquoi un pair hors-focus devient-il complèt
 vivant à basse fidélité via le filet ? C'est une question d'**inclusivité de l'aire d'intérêt** (le faible, le
 lointain, doivent rester *perçus*) — le prochain chantier de fond, côté cœur. *Comme la n°1 : la meilleure avancée
 n'est pas le code écrit, c'est la question rendue visible. À suivre.*
+
+---
+
+## Enquête n°3 — « le 4G n'était pas le mur qu'on croyait, et la redondance n'est pas gratuite » (29 juin 2026)
+
+### Le symptôme
+Pour un lien trop fermé pour se connecter en direct, on passe par un **relais**, et un relais **perd des paquets**.
+Idée de bon sens pour compenser : envoyer chaque position **en double**. La théorie est même rassurante — si la perte
+est aléatoire de probabilité `p`, deux copies ne se perdent toutes les deux qu'avec une probabilité `p²`, trois avec
+`p³`, etc. Sauf qu'à l'essai sur un **vrai lien mobile**, la redondance n'a **pas** aidé : elle a **empiré** la perte.
+Le calcul disait « mieux », la réalité disait « pire ». Il manquait quelque chose.
+
+### Les deux croyances de départ
+On portait, sans les avoir vérifiées, deux hypothèses confortables : **(1)** « un lien mobile 4G/5G, c'est du NAT
+*symétrique* — le cas dur, à relayer d'office » ; **(2)** « dupliquer aide toujours, c'est juste une question de
+combien de copies ». Deux croyances raisonnables… et toutes les deux fausses, comme la mesure allait le montrer.
+
+### Le twist (la mesure a, deux fois, corrigé le récit)
+On a construit une **sonde de lien** qui tourne dans l'instrument, sans aucune dépendance externe. Elle fait deux
+choses. D'abord, elle détermine le **type de NAT** en interrogeant deux serveurs publics depuis une seule socket
+(même adresse publique vue des deux côtés = NAT *perçable* ; adresse différente = *symétrique*). Verdict : le
+téléphone grand public testé était **perçable en direct** — pas symétrique du tout. **Croyance n°1 : réfutée.**
+
+Ensuite, la sonde **caractérise la perte** : elle envoie une courte rafale à **débit croissant** et regarde comment
+le lien réagit. Sur la fibre, tout reste plat (~28 ms, ~0 perte) : lien *sain*. Sur le lien mobile, la latence
+**gonfle avec le débit** — de ~60 ms à plus de **100 ms** — puis la perte apparaît au débit le plus haut. Ce n'est
+pas du bruit aléatoire : c'est de la **congestion** (le lien sature, ses tampons débordent). Et là tout s'éclaire :
+quand la perte vient de la saturation, **deux copies = deux fois plus de trafic = encore plus de saturation**. La
+formule en `pᴷ` suppose des pertes *indépendantes* ; sur un lien congestionné, elles ne le sont pas. **Croyance
+n°2 : réfutée.**
+
+### La correction — mesurer, puis n'aider que là où ça aide
+La réponse n'est pas « plus de copies » ni « jamais de copies », mais **adaptatif** : chaque nœud lit sa propre
+sonde et **ne duplique que s'il a mesuré une perte aléatoire avec de la marge**. On l'a vu se produire en conditions
+réelles — un lien mobile congestionné a, **de lui-même**, choisi de **ne pas** dupliquer (ne pas aggraver ce qui
+sature). Restait à prouver l'autre moitié : que sur une *vraie* perte **aléatoire**, dupliquer aide bien. Comme aucun
+de nos liens de test n'avait ce profil, on a injecté une perte aléatoire connue avec l'outil du noyau (`tc netem`),
+dans un espace réseau jetable (sans toucher la machine), et fait passer le **vrai** mécanisme à travers. Résultat :
+perte **30 % → 9 %** avec deux copies, **2,8 %** avec trois — exactement la courbe `pᴷ`. Et sur une perte *corrélée*
+(en rafale), le gain s'effondre, comme prévu. La boucle est bouclée : on sait **quand** la redondance paie, et on ne
+l'allume que là.
+
+### Ce que ça nous a appris
+1. **La mesure prime sur l'intuition — encore.** Deux croyances de bon sens (« 4G = symétrique », « dupliquer aide
+   toujours »), deux fois corrigées par un instrument qu'on a pris la peine de construire. C'est devenu la signature
+   de ce projet.
+2. **Un réseau qui se connaît lui-même.** Avant d'agir sur un lien, on le **mesure** : type de NAT, latence, gigue,
+   nature de la perte. Une stratégie aveugle aide au hasard ; une stratégie qui mesure d'abord aide **juste**.
+3. **La redondance est un outil ciblé, pas une baguette magique.** Elle sauve un lien à perte aléatoire et nuit à un
+   lien saturé : la même action, deux effets opposés selon le terrain. D'où l'importance de **diagnostiquer avant de
+   soigner** — et le doute **D36** (la vraie diversité des connexions) reste grand ouvert.

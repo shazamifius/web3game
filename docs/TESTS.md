@@ -47,6 +47,19 @@ nix-shell --run "cargo run -- relay-test 6"     # banc déterministe du relais N
 nix-shell --run "cargo run -- crowd 200"        # foule dense (couverture de perception)
 ```
 
+**Caractériser un lien, et prouver la redondance** (les bancs réseau, sans Unreal) :
+
+```fish
+nix-shell --run "cargo run -- natcheck"     # sonde de lien : type de NAT (STUN), latence, gigue
+nix-shell --run "cargo run -- losscheck"    # nature de la perte : aléatoire vs congestion (rafale à débit croissant)
+nix-shell --run "cargo run -- phase1"       # banc DÉTERMINISTE : redondance K vs perte (modèle à graine fixe)
+./tools/netem-bench.sh 30                    # banc RÉEL : redondance face à une vraie perte de 30 % (tc netem)
+```
+
+> `netem-bench.sh` est notable : il injecte une **vraie** perte réseau (`tc netem`) **sans aucun sudo** et **sans
+> toucher la machine**, grâce à un **espace réseau jetable** (`unshare -rn`). Il affiche, pour K = 1…4 copies, la
+> perte résiduelle mesurée — à comparer à la prédiction `pᴷ`.
+
 **Voir le réseau seul, en texte** (sans la 3D, pour observer les paquets) :
 
 ```fish
