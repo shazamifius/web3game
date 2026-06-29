@@ -52,6 +52,7 @@ mod orb;
 mod probe;
 mod punch;
 mod rendezvous;
+mod session_window;
 mod sidecar;
 mod sim;
 mod skin;
