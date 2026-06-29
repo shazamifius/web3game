@@ -21,8 +21,11 @@
 //! fonctions PURES (zéro réseau) → couvertes par des tests déterministes. Seul `probe_nat` /
 //! `run_natcheck` touchent le réseau (un aller-retour au démarrage, hors boucle chaude).
 
+use super::link::rendezvous_addr;
+use super::wire::{KIND_ECHO, PROTO_VERSION};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Le « magic cookie » STUN (RFC 5389) : constante fixe en tête de chaque message (octets 4..8).
 /// Sert AUSSI de masque XOR pour l'adresse réfléchie (attribut XOR-MAPPED-ADDRESS).
@@ -355,6 +358,158 @@ pub fn run_natcheck() {
     }
 }
 
+// ───────────────────────── Sonde de PERTE / CONGESTION (Phase 2b) ─────────────────────────
+
+/// Taille (octets) d'un paquet d'écho de sonde. Fixe → on fait varier le DÉBIT par le nombre de
+/// paquets/s, pas par la taille (plus simple à raisonner). Bornée < `MAX_ECHO_SIZE` côté serveur.
+const LOSS_PACKET_SIZE: usize = 200;
+/// Les PALIERS de débit (paquets/s) testés, croissants. À 200 o/paquet : ~0,32 / 0,8 / 1,6 / 3,2 Mbit/s.
+/// On ne cherche PAS à saturer un gros lien (intrusif) — on cherche la PENTE : la perte/le RTT
+/// montent-ils quand on pousse le débit ? Volume aller total ≈ 444 Ko (respect d'un lien mobile compté).
+const LOSS_RATES_PPS: &[u32] = &[200, 500, 1000, 2000];
+/// Durée (s) de chaque palier — assez pour un échantillon stable, assez court pour rester léger.
+const LOSS_STEP_SECS: f32 = 0.6;
+
+/// Fabrique un paquet d'écho de sonde de taille `LOSS_PACKET_SIZE` portant `seq` (pour apparier la
+/// réponse). PUR (testable). Le rendez-vous le renvoie tel quel → on retrouve `seq` au retour.
+fn encode_echo(seq: u64) -> Vec<u8> {
+    let mut p = vec![0u8; LOSS_PACKET_SIZE];
+    p[0] = KIND_ECHO;
+    p[1] = PROTO_VERSION;
+    p[2..10].copy_from_slice(&seq.to_be_bytes());
+    p
+}
+
+/// Lit le `seq` d'un paquet d'écho renvoyé. PUR (testable). `None` si ce n'est pas un écho valide.
+fn decode_echo_seq(buf: &[u8]) -> Option<u64> {
+    if buf.len() < 10 || buf[0] != KIND_ECHO || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    let mut s = [0u8; 8];
+    s.copy_from_slice(&buf[2..10]);
+    Some(u64::from_be_bytes(s))
+}
+
+/// Une mesure par palier : débit EFFECTIF (Mbit/s), perte (%), RTT médian (ms).
+type LossPoint = (f64, f64, u32);
+
+/// CLASSE la tendance perte/RTT vs débit. PUR (testable). Compare le palier bas au palier haut :
+///  • la perte OU le RTT grimpent nettement avec le débit → **congestion** (le lien sature) ;
+///  • perte présente mais ~PLATE selon le débit → **aléatoire** (bruit, pas saturation) ;
+///  • perte faible + RTT stable → **sain** (le lien a de la marge sur la plage testée).
+fn classify_loss_trend(points: &[LossPoint]) -> &'static str {
+    if points.len() < 2 {
+        return "indéterminé (pas assez de paliers)";
+    }
+    let (_, loss_lo, rtt_lo) = points[0];
+    let (_, loss_hi, rtt_hi) = points[points.len() - 1];
+    let rtt_grimpe = rtt_hi as f64 >= (rtt_lo as f64) * 2.0 + 30.0; // bufferbloat net
+    let perte_grimpe = loss_hi >= loss_lo + 10.0; // la perte monte avec le débit
+    let perte_haute_plate = loss_lo > 5.0 && (loss_hi - loss_lo).abs() < 10.0;
+    if perte_grimpe || rtt_grimpe {
+        "CONGESTION (perte/latence montent avec le débit → le lien sature)"
+    } else if perte_haute_plate {
+        "ALÉATOIRE (perte présente mais ~constante selon le débit → bruit, pas saturation)"
+    } else {
+        "SAIN (perte faible + latence stable → le lien a de la marge sur la plage testée)"
+    }
+}
+
+/// Draine les échos déjà arrivés (non-bloquant) : pour chaque réponse appariée à un envoi en attente,
+/// compte une réception et enregistre son RTT. Mutualisé entre la phase d'envoi et la grâce finale.
+fn drain_echos(
+    socket: &UdpSocket,
+    rdv: SocketAddr,
+    pending: &mut HashMap<u64, Instant>,
+    recv: &mut u64,
+    rtts: &mut Vec<u32>,
+) {
+    let mut buf = [0u8; 512];
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((n, from)) if from == rdv => {
+                if let Some(seq) = decode_echo_seq(&buf[..n]) {
+                    if let Some(t) = pending.remove(&seq) {
+                        *recv += 1;
+                        rtts.push(t.elapsed().as_millis().min(u32::MAX as u128) as u32);
+                    }
+                }
+            }
+            Ok(_) => continue,                                                  // pas du rendez-vous
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,      // plus rien pour l'instant
+            Err(_) => break,
+        }
+    }
+}
+
+/// `jeu losscheck` : mesure la PERTE et le RTT par palier de débit croissant, vers le rendez-vous
+/// (qui fait écho 1:1). Dit si le lien est SAIN, ALÉATOIRE ou en CONGESTION — le chaînon manquant
+/// pour la redondance ADAPTATIVE (Phase 3 : ne dédoubler que sur perte aléatoire, jamais si ça sature).
+pub fn run_losscheck() {
+    let rdv = rendezvous_addr();
+    let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
+        println!("[losscheck] Impossible d'ouvrir une prise UDP.");
+        return;
+    };
+    let _ = socket.set_nonblocking(true);
+    println!("[losscheck] Sonde de congestion vers le rendez-vous {rdv} (écho 1:1, paliers de débit)…");
+    println!("[losscheck] {:>9} | {:>7} | {:>9} | {:>9}", "débit", "perte", "rtt méd.", "paquets");
+
+    let mut seq: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    let mut points: Vec<LossPoint> = Vec::new();
+
+    for &pps in LOSS_RATES_PPS {
+        let interval = Duration::from_secs_f64(1.0 / pps as f64);
+        let step = Duration::from_secs_f32(LOSS_STEP_SECS);
+        let mut pending: HashMap<u64, Instant> = HashMap::new();
+        let (mut sent, mut recv) = (0u64, 0u64);
+        let mut rtts: Vec<u32> = Vec::new();
+
+        let start = Instant::now();
+        let mut next_send = start;
+        while start.elapsed() < step {
+            let now = Instant::now();
+            // Envoi cadencé. Si on a pris du retard de plus d'un intervalle, on se resynchronise sur
+            // « maintenant » (pas de rafale de rattrapage) → on mesure le débit RÉELLEMENT atteint.
+            while next_send <= now {
+                let pkt = encode_echo(seq);
+                if socket.send_to(&pkt, rdv).is_ok() {
+                    sent += 1;
+                    total_bytes += pkt.len() as u64;
+                    pending.insert(seq, now);
+                }
+                seq += 1;
+                next_send += interval;
+                if next_send + interval < now {
+                    next_send = now; // anti-dérive : on ne rattrape pas un gros retard en rafale
+                }
+            }
+            drain_echos(&socket, rdv, &mut pending, &mut recv, &mut rtts);
+            std::thread::sleep(Duration::from_micros(200)); // évite le spin CPU à 100 %
+        }
+        // Fenêtre de grâce : laisser revenir les échos retardataires avant de compter la perte.
+        let grace_end = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < grace_end {
+            drain_echos(&socket, rdv, &mut pending, &mut recv, &mut rtts);
+            std::thread::sleep(Duration::from_micros(200));
+        }
+
+        let loss_pct = if sent > 0 { 100.0 * (sent - recv) as f64 / sent as f64 } else { 0.0 };
+        let eff_pps = sent as f64 / LOSS_STEP_SECS as f64;
+        let mbps = eff_pps * LOSS_PACKET_SIZE as f64 * 8.0 / 1.0e6;
+        let rtt_med = median_ms(&rtts).unwrap_or(0);
+        println!(
+            "[losscheck] {:>6.2} Mb | {:>5.1} % | {:>6} ms | {:>4}/{:<4}",
+            mbps, loss_pct, rtt_med, recv, sent
+        );
+        points.push((mbps, loss_pct, rtt_med));
+    }
+
+    println!("[losscheck] Volume envoyé : {:.0} Ko (+ autant en retour). Verdict : {}",
+        total_bytes as f64 / 1024.0, classify_loss_trend(&points));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,5 +622,29 @@ mod tests {
         assert_eq!(nat_str(NatType::Cone), "cone");
         assert_eq!(nat_str(NatType::Symmetric), "sym");
         assert_eq!(nat_str(NatType::Unknown), "?");
+    }
+
+    /// Le paquet d'écho : bonne taille, bon type, et le `seq` survit à l'aller-retour ; rejet des malformés.
+    #[test]
+    fn echo_seq_aller_retour() {
+        let p = encode_echo(0xDEAD_BEEF_01);
+        assert_eq!(p.len(), LOSS_PACKET_SIZE);
+        assert_eq!(p[0], KIND_ECHO);
+        assert_eq!(decode_echo_seq(&p), Some(0xDEAD_BEEF_01));
+        assert_eq!(decode_echo_seq(&p[..5]), None); // trop court
+        let mut faux = p.clone();
+        faux[0] = 99;
+        assert_eq!(decode_echo_seq(&faux), None); // mauvais type
+    }
+
+    /// La classification de tendance : sain / congestion (par perte OU par RTT) / aléatoire / indéterminé.
+    #[test]
+    fn tendance_perte_congestion_alea_sain() {
+        assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.5, 22)]).starts_with("SAIN"));
+        assert!(classify_loss_trend(&[(0.3, 1.0, 20), (3.2, 30.0, 25)]).starts_with("CONGESTION"));
+        // congestion par bufferbloat (RTT qui grimpe) même sans perte
+        assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.0, 120)]).starts_with("CONGESTION"));
+        assert!(classify_loss_trend(&[(0.3, 12.0, 20), (3.2, 14.0, 22)]).starts_with("ALÉATOIRE"));
+        assert!(classify_loss_trend(&[(0.3, 0.0, 20)]).starts_with("indéterminé"));
     }
 }

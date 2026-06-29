@@ -26,6 +26,7 @@ pub(crate) const KIND_CELL_SUMMARY_V2: u8 = 10; // idem + TRAILER de preuves aut
 pub(crate) const KIND_RELAY_FWD: u8 = 11; // A → rendez-vous : « route cet état SCELLÉ vers B » (repli NAT, 12.3 / D17, gaté RENDEZVOUS_RELAY)
 pub(crate) const KIND_STATE_BUNDLE: u8 = 12; // pair → pair (RELAIS) : LOT des K derniers états signés (redondance temporelle budget-free, gaté RELAY_REDUNDANCY≥2)
 pub(crate) const KIND_RECV_BUDGET: u8 = 13; // receveur → ses émetteurs : « ne m'envoie pas plus vite que X Hz » (AoI BILATÉRALE, couche 2, gaté AOI_BILATERAL)
+pub(crate) const KIND_ECHO: u8 = 14; // sonde → rendez-vous → sonde : paquet RENVOYÉ tel quel (1:1, même taille) pour mesurer perte/RTT par débit (sonde de congestion, Phase 2b)
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {

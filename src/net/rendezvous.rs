@@ -14,7 +14,7 @@ use super::crypto::{PeerId, pow_bits};
 use super::message::decode_relay_fwd;
 use super::skin::random_hue;
 use super::transport::Socket;
-use super::wire::{kind, KIND_RELAY_FWD, RENDEZVOUS_PORT};
+use super::wire::{kind, KIND_ECHO, KIND_RELAY_FWD, RENDEZVOUS_PORT};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -63,6 +63,17 @@ fn rate_limit_hello(credit: f32) -> (bool, f32) {
 /// laisse pas transformer en réflecteur illimité). Valeurs jumelles de celles du relais pair (6.5).
 const RELAY_RATE: f32 = 30.0;
 const RELAY_CAP: f32 = 60.0;
+
+/// ÉCHO de SONDE (Phase 2b) : le rendez-vous RENVOIE un paquet `KIND_ECHO` tel quel à sa source, pour
+/// que l'agent mesure perte/RTT par débit (détection de congestion). DEUX garde-fous anti-réflexion :
+/// (1) réponse **1:1, même taille** (jamais d'amplification → un attaquant n'y gagne rien vs frapper
+/// la victime directement) — bornée à `MAX_ECHO_SIZE` (on ne sert pas de miroir à de gros paquets) ;
+/// (2) **seau de débit par source** (`ECHO_RATE`/`ECHO_BURST`) : large pour ne pas brider la sonde
+/// (qui monte par paliers), mais plafonné pour que le serveur ne s'emballe pas sous flood. Au-delà, on
+/// jette (la sonde reste sous le plafond → sa perte mesurée vient du LIEN, pas du serveur).
+const MAX_ECHO_SIZE: usize = 256;
+const ECHO_RATE: f32 = 5000.0;
+const ECHO_BURST: f32 = 5000.0;
 
 /// BANC UNIQUEMENT — perte injectée sur la recopie relais (`RELAY_DROP_PCT`, 0..100, défaut **0** =
 /// chemin intact). Modélise un lien lossy (4G/CGNAT : ~88 % mesuré) pour PROUVER en headless que la
@@ -168,6 +179,8 @@ pub fn run_rendezvous() {
     let mut hello_credit: HashMap<SocketAddr, f32> = HashMap::new();
     // 12.3 : budget de relais par source (séparé du HELLO car cadence de jeu ~20 Hz, pas 1 Hz).
     let mut relay_credit: HashMap<SocketAddr, f32> = HashMap::new();
+    // Phase 2b : seau de débit par source pour l'ÉCHO de sonde (séparé : la sonde monte en paliers).
+    let mut echo_credit: HashMap<SocketAddr, f32> = HashMap::new();
     // 12.3 (diagnostic) : paires (src→dest) déjà relayées au moins une fois → on logue la 1re recopie
     // de chaque sens (preuve OBSERVABLE du relais, neutre, sans dépendre des fenêtres 3D).
     let mut relayed_pairs: HashSet<(PeerId, PeerId)> = HashSet::new();
@@ -193,8 +206,30 @@ pub fn run_rendezvous() {
                 relay_credit.retain(|_, c| *c < RELAY_CAP);
             }
         }
+        // Phase 2b : même recharge/drainage pour le seau d'écho (toujours actif, pas derrière un drapeau).
+        for credit in echo_credit.values_mut() {
+            *credit = (*credit + dt * ECHO_RATE).min(ECHO_BURST);
+        }
+        if echo_credit.len() > MAX_CLIENTS {
+            echo_credit.retain(|_, c| *c < ECHO_BURST);
+        }
 
         for (from, bytes) in socket.poll() {
+            // Phase 2b — ÉCHO DE SONDE. On RENVOIE le paquet tel quel à sa source (1:1, même taille),
+            // pour que l'agent mesure perte/RTT par débit (congestion). Anti-réflexion : taille bornée
+            // (pas de miroir à gros paquets) + seau de débit par source. Pas besoin d'être un client
+            // inscrit (la sonde tourne avant/sans session), mais le 1:1 + le plafond suffisent à rendre
+            // l'écho inintéressant pour un attaquant (zéro amplification).
+            if kind(&bytes) == Some(KIND_ECHO) {
+                if bytes.len() <= MAX_ECHO_SIZE {
+                    let c = echo_credit.entry(from).or_insert(ECHO_BURST);
+                    if *c >= 1.0 {
+                        *c -= 1.0;
+                        let _ = socket.send_to(from, &bytes);
+                    }
+                }
+                continue; // un écho n'est jamais un HELLO ni un relais
+            }
             // 12.3 — REPLI RELAIS (derrière le drapeau). Une enveloppe KIND_RELAY_FWD est routée vers
             // son destinataire (un client connu), à débit borné, UNIQUEMENT si l'émetteur est lui aussi
             // un client inscrit (réflecteur 1:1 entre deux pairs connus, pas un service ouvert). 12.3-G :

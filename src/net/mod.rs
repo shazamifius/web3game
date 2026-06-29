@@ -61,7 +61,7 @@ pub use attack::run_attack;
 pub use bot::run_bot;
 pub use coopsim::{run_coopsim, run_coopsim_bus};
 pub use demo::run_demo;
-pub use linkprobe::run_natcheck;
+pub use linkprobe::{run_losscheck, run_natcheck};
 pub use lossbench::run_phase1;
 pub use metrics::{run_agent, run_serve_config, run_stats};
 pub use natdemo::run_nat_test;
