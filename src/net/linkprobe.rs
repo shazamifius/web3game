@@ -393,32 +393,80 @@ fn decode_echo_seq(buf: &[u8]) -> Option<u64> {
 /// Une mesure par palier : débit EFFECTIF (Mbit/s), perte (%), RTT médian (ms).
 type LossPoint = (f64, f64, u32);
 
-/// CLASSE la tendance perte/RTT vs débit. PUR (testable). Compare le palier bas au palier haut :
-///  • la perte OU le RTT grimpent nettement avec le débit → **congestion** (le lien sature) ;
-///  • perte présente mais ~PLATE selon le débit → **aléatoire** (bruit, pas saturation) ;
-///  • perte faible + RTT stable → **sain** (le lien a de la marge sur la plage testée).
-fn classify_loss_trend(points: &[LossPoint]) -> &'static str {
+/// Plafond de redondance adaptative : au-delà, le surcoût (K× le trafic) dépasse le gain `p^K`.
+const MAX_ADAPTIVE_K: usize = 4;
+/// Résiduel de perte VISÉ par la redondance adaptative sur un lien à perte aléatoire (5 %).
+const LOSS_TARGET_RESIDUAL: f64 = 0.05;
+
+/// La NATURE d'un lien déduite de la courbe perte/RTT vs débit. Base de la redondance ADAPTATIVE
+/// (Phase 3) : on ne dédouble QUE sur `Aleatoire`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkVerdict {
+    Sain,
+    Aleatoire,
+    Congestion,
+    Indetermine,
+}
+
+/// Phrase lisible d'un verdict (affichage `jeu losscheck` + rapport uploadé).
+pub(crate) fn verdict_str(v: LinkVerdict) -> &'static str {
+    match v {
+        LinkVerdict::Sain => "SAIN (perte faible + latence stable → le lien a de la marge sur la plage testée)",
+        LinkVerdict::Aleatoire => "ALÉATOIRE (perte présente mais ~constante selon le débit → bruit, pas saturation)",
+        LinkVerdict::Congestion => "CONGESTION (perte/latence montent avec le débit → le lien sature)",
+        LinkVerdict::Indetermine => "indéterminé (pas assez de paliers)",
+    }
+}
+
+/// CLASSE la nature du lien à partir de la courbe. PUR (testable). On compare la BASE (palier le plus
+/// bas) au PIC sur TOUS les paliers — pas au dernier : le bufferbloat culmine souvent AVANT le débit
+/// max (au max, le buffer déborde → le RTT retombe, la perte explose). Regarder le pic, c'est ce qui
+/// m'avait manqué sur le 4G+ (108 ms au palier 3). Bufferbloat OU perte qui apparaît → congestion ;
+/// perte présente mais plate → aléatoire ; sinon → sain.
+fn classify_loss_trend(points: &[LossPoint]) -> LinkVerdict {
     if points.len() < 2 {
-        return "indéterminé (pas assez de paliers)";
+        return LinkVerdict::Indetermine;
     }
     let (_, loss_base, rtt_base) = points[0];
-    // On compare la BASE (palier le plus bas) au PIC sur TOUS les paliers — pas au dernier : le
-    // bufferbloat culmine souvent AVANT le débit max (au max, le buffer déborde → le RTT retombe et
-    // la perte explose). Regarder le pic, c'est ce qui m'avait manqué sur le 4G+ (108 ms au palier 3).
     let rtt_max = points.iter().map(|(_, _, r)| *r).max().unwrap_or(rtt_base);
     let loss_max = points.iter().map(|(_, l, _)| *l).fold(loss_base, f64::max);
-    // Bufferbloat : le RTT GRIMPE nettement avec le débit (pic ≥ 1,5× la base ET +30 ms absolus).
     let rtt_grimpe = rtt_max as f64 >= rtt_base as f64 * 1.5 && (rtt_max as i64 - rtt_base as i64) >= 30;
-    // La perte APPARAÎT avec le débit (≥ +5 points entre la base et le pic).
     let perte_grimpe = loss_max - loss_base >= 5.0;
-    // Perte présente MAIS ~constante quel que soit le débit → bruit, pas saturation.
     let perte_haute_plate = loss_base > 5.0 && (loss_max - loss_base) < 5.0;
     if perte_grimpe || rtt_grimpe {
-        "CONGESTION (perte/latence montent avec le débit → le lien sature)"
+        LinkVerdict::Congestion
     } else if perte_haute_plate {
-        "ALÉATOIRE (perte présente mais ~constante selon le débit → bruit, pas saturation)"
+        LinkVerdict::Aleatoire
     } else {
-        "SAIN (perte faible + latence stable → le lien a de la marge sur la plage testée)"
+        LinkVerdict::Sain
+    }
+}
+
+/// Le K de redondance pour viser un résiduel `target` sur une perte aléatoire `p` (pertes
+/// INDÉPENDANTES → résiduel `p^K`). PUR. K = ⌈ln(target)/ln(p)⌉, borné [1, MAX_ADAPTIVE_K].
+/// `p ≤ 0` ou déjà sous la cible → 1 (inutile de dédoubler) ; `p ≥ 1` → plafond.
+fn redundancy_for_target(p: f64, target: f64) -> usize {
+    if p <= 0.0 || p <= target {
+        return 1;
+    }
+    if p >= 1.0 {
+        return MAX_ADAPTIVE_K;
+    }
+    let k = (target.ln() / p.ln()).ceil() as i64;
+    k.clamp(1, MAX_ADAPTIVE_K as i64) as usize
+}
+
+/// LA DÉCISION ADAPTATIVE (Phase 3, cœur PUR testable) : combien de copies relais selon la NATURE du
+/// lien. On ne dédouble QUE sur perte ALÉATOIRE avec marge (`p^K` bat le bruit indépendant) ;
+/// SAIN → inutile (1) ; CONGESTION → SURTOUT pas (dupliquer aggrave la saturation — la leçon prouvée
+/// des sessions 200/201 et de la session 203) → 1. Indéterminé → prudent (1).
+pub(crate) fn adaptive_redundancy(points: &[LossPoint]) -> usize {
+    match classify_loss_trend(points) {
+        LinkVerdict::Aleatoire => {
+            let p = points.first().map(|(_, l, _)| *l).unwrap_or(0.0) / 100.0;
+            redundancy_for_target(p, LOSS_TARGET_RESIDUAL)
+        }
+        _ => 1,
     }
 }
 
@@ -453,11 +501,11 @@ fn drain_echos(
 /// affichage. Renvoie (points par palier, verdict, octets envoyés). Lit `serveur.txt` (comme les
 /// autres modes) → cible le vrai serveur, pas `127.0.0.1`. Partagé par `jeu losscheck` (affichage à
 /// la main) et le pilotage par CAMPAGNE (`losscheck=1` → l'agent sonde et UPLOADE le rapport).
-pub(crate) fn probe_loss() -> (Vec<LossPoint>, &'static str, u64) {
+pub(crate) fn probe_loss() -> (Vec<LossPoint>, LinkVerdict, u64) {
     super::metrics::ensure_rendezvous_from_file();
     let rdv = rendezvous_addr();
     let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
-        return (Vec::new(), "indéterminé (pas de prise UDP)", 0);
+        return (Vec::new(), LinkVerdict::Indetermine, 0);
     };
     let _ = socket.set_nonblocking(true);
 
@@ -515,7 +563,7 @@ pub(crate) fn probe_loss() -> (Vec<LossPoint>, &'static str, u64) {
 /// Rapport JSON (fait-main) d'un losscheck, pour l'UPLOAD (le serveur y injecte l'IP → attribuable
 /// par machine). Forme : `{"kind":"losscheck","session":N,"verdict":"…","paliers":[[mbps,perte,rtt],…]}`.
 /// Le verdict ne contient ni guillemets ni antislash → sûr tel quel dans une valeur JSON.
-pub(crate) fn loss_report_json(session: u64, points: &[LossPoint], verdict: &str) -> String {
+pub(crate) fn loss_report_json(session: u64, points: &[LossPoint], verdict: &str, k: Option<usize>) -> String {
     let mut paliers = String::new();
     for (i, (mbps, loss, rtt)) in points.iter().enumerate() {
         if i > 0 {
@@ -523,7 +571,13 @@ pub(crate) fn loss_report_json(session: u64, points: &[LossPoint], verdict: &str
         }
         paliers.push_str(&format!("[{mbps:.2},{loss:.1},{rtt}]"));
     }
-    format!("{{\"kind\":\"losscheck\",\"session\":{session},\"verdict\":\"{verdict}\",\"paliers\":[{paliers}]}}")
+    // `k` présent SEULEMENT en mode adaptatif (Phase 3) : le K de redondance que l'agent a CHOISI →
+    // rend la décision observable à distance (preuve : 4G+ congestionné → k=1, on n'aggrave pas).
+    let k_field = match k {
+        Some(kk) => format!(",\"k\":{kk}"),
+        None => String::new(),
+    };
+    format!("{{\"kind\":\"losscheck\",\"session\":{session},\"verdict\":\"{verdict}\",\"paliers\":[{paliers}]{k_field}}}")
 }
 
 /// `jeu losscheck` : sonde la PERTE/CONGESTION du lien (perte + RTT par palier de débit croissant)
@@ -536,8 +590,8 @@ pub fn run_losscheck() {
     for (mbps, loss, rtt) in &points {
         println!("[losscheck] {mbps:>6.2} Mb | {loss:>5.1} % | {rtt:>6} ms");
     }
-    println!("[losscheck] Volume envoyé : {:.0} Ko (+ autant en retour). Verdict : {verdict}",
-        total_bytes as f64 / 1024.0);
+    println!("[losscheck] Volume envoyé : {:.0} Ko (+ autant en retour). Verdict : {}",
+        total_bytes as f64 / 1024.0, verdict_str(verdict));
 }
 
 #[cfg(test)]
@@ -670,12 +724,12 @@ mod tests {
     /// La classification de tendance : sain / congestion (par perte OU par RTT) / aléatoire / indéterminé.
     #[test]
     fn tendance_perte_congestion_alea_sain() {
-        assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.5, 22)]).starts_with("SAIN"));
-        assert!(classify_loss_trend(&[(0.3, 1.0, 20), (3.2, 30.0, 25)]).starts_with("CONGESTION"));
+        assert_eq!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.5, 22)]), LinkVerdict::Sain);
+        assert_eq!(classify_loss_trend(&[(0.3, 1.0, 20), (3.2, 30.0, 25)]), LinkVerdict::Congestion);
         // congestion par bufferbloat (RTT qui grimpe) même sans perte
-        assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.0, 120)]).starts_with("CONGESTION"));
-        assert!(classify_loss_trend(&[(0.3, 12.0, 20), (3.2, 14.0, 22)]).starts_with("ALÉATOIRE"));
-        assert!(classify_loss_trend(&[(0.3, 0.0, 20)]).starts_with("indéterminé"));
+        assert_eq!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.0, 120)]), LinkVerdict::Congestion);
+        assert_eq!(classify_loss_trend(&[(0.3, 12.0, 20), (3.2, 14.0, 22)]), LinkVerdict::Aleatoire);
+        assert_eq!(classify_loss_trend(&[(0.3, 0.0, 20)]), LinkVerdict::Indetermine);
     }
 
     /// Régression issue du RÉEL (session 203, écho prod) : le pic de bufferbloat est au palier
@@ -684,22 +738,51 @@ mod tests {
     fn tendance_donnees_reelles_session_203() {
         // 4G+ : RTT 62→85→108 (pic au palier 3) puis 86 + 7,5 % de perte au max → CONGESTION.
         let g4 = [(0.32, 0.0, 62u32), (0.80, 0.0, 85), (1.60, 0.0, 108), (3.20, 7.5, 86)];
-        assert!(classify_loss_trend(&g4).starts_with("CONGESTION"));
+        assert_eq!(classify_loss_trend(&g4), LinkVerdict::Congestion);
         // Fibre : RTT plat ~28 ms, perte quasi nulle → SAIN.
         let fibre = [(0.32, 0.0, 28u32), (0.80, 0.0, 28), (1.60, 0.0, 28), (3.17, 1.5, 31)];
-        assert!(classify_loss_trend(&fibre).starts_with("SAIN"));
+        assert_eq!(classify_loss_trend(&fibre), LinkVerdict::Sain);
+    }
+
+    /// Phase 3 — le K pour un résiduel cible : pertes indépendantes `p^K`, borné, et 1 si inutile.
+    #[test]
+    fn redondance_pour_cible() {
+        assert_eq!(redundancy_for_target(0.0, 0.05), 1); // pas de perte → inutile
+        assert_eq!(redundancy_for_target(0.03, 0.05), 1); // déjà sous la cible → inutile
+        assert_eq!(redundancy_for_target(0.10, 0.05), 2); // 0.1^2 = 1 % ≤ 5 %
+        assert_eq!(redundancy_for_target(0.30, 0.05), 3); // 0.3^3 = 2,7 % ≤ 5 %
+        assert_eq!(redundancy_for_target(0.90, 0.05), MAX_ADAPTIVE_K); // très lossy → plafond
+    }
+
+    /// Phase 3 — LA DÉCISION ADAPTATIVE : on ne dédouble QUE sur perte aléatoire ; jamais sur
+    /// congestion (la leçon du 4G+) ni sur un lien sain.
+    #[test]
+    fn decision_adaptative() {
+        // 4G+ réel (congestion) → K=1 : NE PAS aggraver. C'est le cas qui nous avait mordus (200/201).
+        let g4 = [(0.32, 0.0, 62u32), (0.80, 0.0, 85), (1.60, 0.0, 108), (3.20, 7.5, 86)];
+        assert_eq!(adaptive_redundancy(&g4), 1);
+        // Fibre saine → K=1 : inutile.
+        let fibre = [(0.32, 0.0, 28u32), (0.80, 0.0, 28), (1.60, 0.0, 28), (3.17, 1.5, 31)];
+        assert_eq!(adaptive_redundancy(&fibre), 1);
+        // Lien à perte ALÉATOIRE ~10 % (plate) → K=2 (dédoubler aide le bruit indépendant).
+        let alea = [(0.32, 10.0, 20u32), (0.80, 11.0, 20), (1.60, 10.0, 21), (3.20, 12.0, 22)];
+        assert_eq!(adaptive_redundancy(&alea), 2);
     }
 
     /// Le rapport JSON d'un losscheck est bien formé et porte session, verdict et paliers.
     #[test]
     fn rapport_losscheck_json() {
         let pts = vec![(0.32, 0.0, 20u32), (3.2, 12.5, 45u32)];
-        let j = loss_report_json(7, &pts, "SAIN (marge)");
+        let j = loss_report_json(7, &pts, "SAIN (marge)", None);
         assert!(j.starts_with('{') && j.ends_with('}'));
         assert!(j.contains("\"kind\":\"losscheck\""));
         assert!(j.contains("\"session\":7"));
         assert!(j.contains("\"verdict\":\"SAIN (marge)\""));
         assert!(j.contains("[0.32,0.0,20]"));
         assert!(j.contains("[3.20,12.5,45]"));
+        assert!(!j.contains("\"k\":")); // pas de k hors adaptatif
+        // En adaptatif, le K choisi figure dans le rapport (décision observable).
+        let ja = loss_report_json(7, &pts, "CONGESTION", Some(1));
+        assert!(ja.contains("\"k\":1"));
     }
 }

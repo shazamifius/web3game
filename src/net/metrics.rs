@@ -511,10 +511,14 @@ struct Campaign {
     /// perte/congestion de SON lien (rafale écho à débit croissant) et UPLOADE le rapport (attribué
     /// par IP). Défaut `false`. Permet de mesurer le vrai 4G d'un pair par simple flip serveur.
     losscheck: bool,
+    /// Phase 3 — REDONDANCE ADAPTATIVE (`adaptive=1`) : l'agent sonde son lien (comme `losscheck`) et
+    /// CHOISIT lui-même son K de redondance relais — dédouble seulement sur perte ALÉATOIRE avec marge,
+    /// jamais si le lien sature. Remplace le `redundancy` fixe de la campagne. Défaut `false`.
+    adaptive: bool,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false, redundancy: 1, losscheck: false }
+        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false, redundancy: 1, losscheck: false, adaptive: false }
     }
 }
 
@@ -555,6 +559,9 @@ fn parse_campaign(body: &str) -> Campaign {
                 }
                 "losscheck" => {
                     c.losscheck = matches!(v, "1" | "true"); // phase 2b : sonde de congestion + upload
+                }
+                "adaptive" => {
+                    c.adaptive = matches!(v, "1" | "true"); // phase 3 : K de redondance choisi par la sonde
                 }
                 _ => {}
             }
@@ -1084,33 +1091,49 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
             return SessionEnd::Normal;
         }
     };
-    if start.aoi {
-        bot.enable_aoi_bilateral(); // couche 2 ON le temps de cette session (flip serveur)
-    }
-    if start.redundancy > 1 {
-        bot.set_relay_redundancy(start.redundancy); // levier B : redondance relais ON (flip serveur)
-    }
-    println!(
-        "[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s){}{})…",
-        start.session, start.window, start.bots,
-        if start.aoi { ", AoI bilatérale ON" } else { "" },
-        if start.redundancy > 1 { format!(", redondance relais ×{}", start.redundancy) } else { String::new() }
-    );
     session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
 
-    // Phase 2b — SONDE DE CONGESTION pilotée par campagne (`losscheck=1`). Au début de la session
-    // (consentement déjà acquis), on mesure la perte/RTT par palier de débit de NOTRE lien, et on
-    // UPLOADE le rapport (le serveur y injecte l'IP → attribuable par machine). C'est ce qui mesure
-    // le vrai 4G d'un pair sans manip de sa part. Volume borné (~440 Ko), une fois par session.
-    if start.losscheck {
-        println!("[agent] losscheck : sonde de congestion du lien avant la mesure P2P…");
+    // Phase 2b/3 — SONDE DE CONGESTION (si `losscheck=1` OU `adaptive=1`). Au début de la session
+    // (consentement déjà acquis), on mesure la perte/RTT par palier de débit de NOTRE lien et on
+    // UPLOADE le rapport (le serveur y injecte l'IP → attribuable par machine). Si `adaptive`, on en
+    // DÉDUIT le K de redondance : on ne dédouble QUE sur perte aléatoire, jamais si le lien sature.
+    let mut k_effectif = start.redundancy;
+    if start.losscheck || start.adaptive {
+        println!("[agent] sonde de congestion du lien avant la mesure P2P…");
         let (points, verdict, bytes) = super::linkprobe::probe_loss();
-        let report = super::linkprobe::loss_report_json(start.session, &points, verdict);
+        let vstr = super::linkprobe::verdict_str(verdict);
+        // En mode adaptatif, on calcule le K AVANT le rapport pour qu'il y figure (décision observable).
+        let k_report = if start.adaptive {
+            k_effectif = super::linkprobe::adaptive_redundancy(&points);
+            Some(k_effectif)
+        } else {
+            None
+        };
+        let report = super::linkprobe::loss_report_json(start.session, &points, vstr, k_report);
         let _ = http_post(cfg_host, CONFIG_PORT, "/upload", &report);
-        session_log_write(&format!("losscheck → {verdict} ({:.0} Ko envoyés)", bytes as f64 / 1024.0));
-        println!("[agent] losscheck terminé : {verdict}");
+        session_log_write(&format!("losscheck → {vstr} ({:.0} Ko)", bytes as f64 / 1024.0));
+        if start.adaptive {
+            println!("[agent] redondance ADAPTATIVE : {vstr} → K={k_effectif}");
+        } else {
+            println!("[agent] losscheck terminé : {vstr}");
+        }
     }
+
+    // Application des leviers (K = adaptatif si demandé, sinon celui de la campagne) au bot de mesure.
+    if start.aoi {
+        bot.enable_aoi_bilateral(); // couche 2 ON le temps de cette session (flip serveur)
+    }
+    if k_effectif > 1 {
+        bot.set_relay_redundancy(k_effectif); // levier B / Phase 3 : redondance relais ON
+    }
+    println!(
+        "[agent] session {} — mesure VISIBLE en cours (fenêtre {}s, {} bot(s){}{}{})…",
+        start.session, start.window, start.bots,
+        if start.aoi { ", AoI bilatérale ON" } else { "" },
+        if k_effectif > 1 { format!(", redondance relais ×{k_effectif}") } else { String::new() },
+        if start.adaptive { " [adaptatif]" } else { "" }
+    );
 
     let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut worker_handles = Vec::new();
@@ -1124,8 +1147,8 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
                     if start.aoi {
                         b.enable_aoi_bilateral(); // les bots de foule aussi → vraie réception bornée
                     }
-                    if start.redundancy > 1 {
-                        b.set_relay_redundancy(start.redundancy); // foule aussi → vraie charge relais redondante
+                    if k_effectif > 1 {
+                        b.set_relay_redundancy(k_effectif); // foule aussi → vraie charge relais (K adaptatif ou campagne)
                     }
                     let boot = Instant::now();
                     let mut last = Instant::now();
@@ -1725,6 +1748,9 @@ mod tests {
         assert!(!parse_campaign("").losscheck);
         assert!(!parse_campaign("losscheck=0").losscheck);
         assert!(parse_campaign("losscheck=1").losscheck);
+        // Phase 3 — le flip `adaptive` : absent → OFF, `1`/`true` → ON (K de redondance choisi par la sonde).
+        assert!(!parse_campaign("").adaptive);
+        assert!(parse_campaign("adaptive=1").adaptive);
         assert!(parse_campaign("aoi=true").aoi);
         // LEVIER B — le flip `redundancy` : absent → 1 (byte-pour-byte), borné à [1,8], illisible → 1.
         assert_eq!(parse_campaign("").redundancy, 1); // défaut = inchangé
