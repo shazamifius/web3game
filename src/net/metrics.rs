@@ -1331,6 +1331,9 @@ pub fn run_serve_config(dir: &str, port: u16) {
             Err(_) => continue,
         };
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        // L'IP PUBLIQUE vue côté serveur (le pair ne peut ni l'ignorer ni la falsifier) → géo
+        // approximative + type de connexion dans le statut. PRIVÉ : on ne l'expose jamais en public.
+        let peer_ip = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
         let mut scratch = [0u8; 4096]; // plus grand : peut contenir le corps d'un POST d'upload
         let n = stream.read(&mut scratch).unwrap_or(0);
         let req = String::from_utf8_lossy(&scratch[..n]);
@@ -1344,12 +1347,24 @@ pub fn run_serve_config(dir: &str, port: u16) {
                 let payload = req[p + 4..].trim();
                 if !payload.is_empty() {
                     use std::io::Write as _;
+                    // Pour la PRÉSENCE seulement : on injecte l'IP publique (1er champ) → le statut
+                    // peut géolocaliser/typer la connexion. L'upload de mesures reste inchangé.
+                    let enriched;
+                    let to_write: &str = if file == "presence.ndjson"
+                        && !peer_ip.is_empty()
+                        && payload.starts_with('{')
+                    {
+                        enriched = format!("{{\"ip\":\"{peer_ip}\",{}", &payload[1..]);
+                        &enriched
+                    } else {
+                        payload
+                    };
                     if let Ok(mut f) = std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
                         .open(format!("{dir}/{file}"))
                     {
-                        let _ = writeln!(f, "{payload}");
+                        let _ = writeln!(f, "{to_write}");
                     }
                 }
             }
@@ -1382,6 +1397,7 @@ struct HeartbeatRecord {
     host: String,
     _ver: String,
     ev: String,
+    ip: String,
 }
 
 fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
@@ -1393,6 +1409,7 @@ fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
     let mut host = String::new();
     let mut _ver = String::new();
     let mut ev = String::new();
+    let mut ip = String::new();
 
     for part in line[1..line.len() - 1].split(',') {
         if let Some((k, v)) = part.split_once(':') {
@@ -1403,14 +1420,35 @@ fn parse_heartbeat(line: &str) -> Option<HeartbeatRecord> {
                 "host" => host = v.to_string(),
                 "ver" => _ver = v.to_string(),
                 "ev" => ev = v.to_string(),
+                "ip" => ip = v.to_string(),
                 _ => {}
             }
         }
     }
     if ts > 0 && !host.is_empty() {
-        Some(HeartbeatRecord { ts, host, _ver, ev })
+        Some(HeartbeatRecord { ts, host, _ver, ev, ip })
     } else {
         None
+    }
+}
+
+/// Type de connexion DÉDUIT de l'IP publique vue côté serveur (heuristique LOCALE, sans dépendance) :
+///  • 100.64.0.0/10 (RFC 6598) = espace CGNAT opérateur → NON perçable (relais obligatoire) ;
+///  • 10/8, 172.16/12, 192.168/16 = LAN (même réseau que le serveur, ou agent local) ;
+///  • sinon = IP publique (perçabilité fine = test STUN de l'agent, à venir).
+/// La GÉO (pays/ville) et le « mobile/4G » fin viennent d'un lookup ASN hors-binaire (privé).
+fn connection_kind(ip: &str) -> &'static str {
+    let o: Vec<u8> = ip.split('.').filter_map(|p| p.parse().ok()).collect();
+    if o.len() != 4 {
+        return if ip.is_empty() { "?" } else { "IPv6/?" };
+    }
+    let (a, b) = (o[0], o[1]);
+    if a == 100 && (64..=127).contains(&b) {
+        "CGNAT(100.64/10)"
+    } else if a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168) || a == 127 {
+        "LAN"
+    } else {
+        "publique"
     }
 }
 
@@ -1450,10 +1488,10 @@ pub fn run_stats() {
     }
 
     let active_threshold = 120;
-    let mut active_hosts: Vec<(&String, u64, &str)> = Vec::new();
+    let mut active_hosts: Vec<(&String, u64, &str, &str)> = Vec::new();
     for (host, rec) in &latest_by_host {
         if now >= rec.ts && (now - rec.ts) <= active_threshold && rec.ev != "leaving" {
-            active_hosts.push((host, now - rec.ts, &rec.ev));
+            active_hosts.push((host, now - rec.ts, rec.ev.as_str(), rec.ip.as_str()));
         }
     }
     active_hosts.sort_by_key(|h| h.1);
@@ -1465,8 +1503,12 @@ pub fn run_stats() {
         println!("  Aucune machine active actuellement (dernier battement > 2 min).");
     } else {
         println!("  {} machine(s) connectée(s) et prête(s) pour une simulation :", active_hosts.len());
-        for (host, age, ev) in &active_hosts {
-            println!("   • {:<20} (actif il y a {:>3}s, mode: {})", host, age, ev);
+        for (host, age, ev, ip) in &active_hosts {
+            let ipshow = if ip.is_empty() { "ip inconnue (avant MAJ serveur)" } else { ip };
+            println!(
+                "   • {:<20} (actif il y a {:>3}s, mode: {:<7}) — {} [{}]",
+                host, age, ev, ipshow, connection_kind(ip)
+            );
         }
     }
 
@@ -1703,6 +1745,23 @@ mod tests {
         assert_eq!(r.ts, 1782577843);
         assert_eq!(r.host, "nixos");
         assert_eq!(r.ev, "alive");
+        assert_eq!(r.ip, ""); // ancienne ligne sans IP → champ vide, jamais de crash (rétro-compat)
+        // Ligne ENRICHIE par le serveur (IP injectée en 1er champ) → on la lit.
+        let avec_ip = "{\"ip\":\"88.167.242.251\",\"ts\":1782577843,\"host\":\"DESKTOP-GB48HC7\",\"ver\":\"3840d37\",\"ev\":\"alive\"}";
+        assert_eq!(parse_heartbeat(avec_ip).unwrap().ip, "88.167.242.251");
+    }
+
+    /// Type de connexion déduit de l'IP (heuristique locale, sans dépendance) : l'espace CGNAT
+    /// opérateur (RFC 6598) est reconnu, le LAN distingué, le reste = publique. IPv6/vide = neutre.
+    #[test]
+    fn connection_kind_classe_les_ip() {
+        assert_eq!(connection_kind("100.70.1.2"), "CGNAT(100.64/10)"); // dans 100.64/10
+        assert_eq!(connection_kind("100.200.1.2"), "publique"); // 100.200 HORS 100.64/10
+        assert_eq!(connection_kind("192.168.1.3"), "LAN");
+        assert_eq!(connection_kind("10.0.0.5"), "LAN");
+        assert_eq!(connection_kind("88.167.242.251"), "publique");
+        assert_eq!(connection_kind(""), "?");
+        assert_eq!(connection_kind("2a01:e0a::1"), "IPv6/?");
     }
 
     /// B1 (28 juin) — anti-brick sur lien bas débit : `http_get_bytes` REFUSE un corps tronqué
