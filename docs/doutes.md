@@ -144,7 +144,11 @@
   **perte réelle ~0**, verdict « vivant ». L'infrastructure n'est donc **plus vide** : le substrat transporte de la
   présence distante réelle, vivante, sur le vrai Internet. **Ce qui reste (et garde le doute ouvert) :** ça mesure
   le **substrat**, pas le **ressenti** — des humains qui **bougent et jouent ensemble** et le **sentent** vivant (et
-  le rôle de la voix, D35). Le doute s'allège ; il ne se ferme pas.
+  le rôle de la voix, D35). **Avancée (29 juin) :** un [banc de mesure objectif](chantier-vivant.md) transforme
+  « est-ce vivant ? » en chiffres (fidélité de forme, fraîcheur, fluidité) ; un levier — prédire le mouvement avec
+  l'**accélération** — y atteint le verdict « vivant » dès **~100 ms de retard effectif** sur le pire lien (4G
+  congestionné), battant l'ambition des 150 ms. Mais c'est un **modèle de référence**, pas l'expérience jouée. Le
+  doute s'allège ; il ne se ferme pas.
 - **D28 — La persistance d'état joueur sans serveur.** 🔴 *Une progression qui survit aux sessions, sans magasin
   central : où vit l'état, et qui empêche de le forger ?* **Réponse :** pour un premier essai, **éphémère/local**
   suffit (entre amis). La vraie réponse — « **ta clé signe ton état, les pairs corroborent** » — s'appuie sur

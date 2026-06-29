@@ -118,7 +118,7 @@ pouvez sauter, revenir, ou changer de chemin à tout instant. Tout part aussi du
 
 **⚙️ Vous voulez le code et les choix d'architecture**
 1. [L'architecture & l'organisation du code](docs/ARCHITECTURE.md)
-2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [robustesse](docs/chantier-robustesse.md)
+2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [« vivant »](docs/chantier-vivant.md) · [robustesse](docs/chantier-robustesse.md)
 3. [Comment lancer & tester](docs/TESTS.md) — rejouer les mesures vous-même
 
 **🔎 Vous voulez juger vite (ce qui est prouvé, ce qui ne l'est pas)**
