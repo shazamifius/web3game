@@ -41,6 +41,7 @@ mod demo;
 mod gossip;
 mod link;
 mod linkprobe;
+mod linkstats;
 mod liveness;
 mod lossbench;
 mod message;
