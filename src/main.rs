@@ -66,6 +66,7 @@ fn main() {
         Some("micro") => dsp::run_micro(args.get(2).map(String::as_str).unwrap_or("")),
         Some("son") => dsp::run_son(args.get(2).map(String::as_str).unwrap_or("")),
         Some("optim") => dsp::run_optim(args.get(2).map(String::as_str).unwrap_or("")),
+        Some("adaptatif") => dsp::run_adaptatif(args.get(2).map(String::as_str).unwrap_or("")),
         Some("natcheck") => net::run_natcheck(),
         Some("losscheck") => net::run_losscheck(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),

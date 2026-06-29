@@ -114,6 +114,32 @@ fn transporter(
     (recues, 100.0 * comblees as f64 / trames.len().max(1) as f64)
 }
 
+/// Chaîne COMPLÈTE réutilisable : mélange (voix+bruit) → débruitage → codec → transport → sortie audio.
+/// Renvoie (signal de sortie, débit kbit/s, % comblé par PLC). Sert `run_son` ET le contrôleur adaptatif.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chaine(
+    melange: &[f32],
+    sr: f64,
+    n: usize,
+    hop: usize,
+    q: f64,
+    alpha: f64,
+    beta: f64,
+    latence_s: f64,
+    gigue_s: f64,
+    perte: f64,
+    d_jit_s: f64,
+    seed: u64,
+) -> (Vec<f32>, f64, f64) {
+    let nettoye = debruiter(melange, n, hop, alpha, beta);
+    let (trames, bitrate) = encoder(&nettoye, sr, n, hop, q);
+    let p = Profil { nom: "", latence_s, gigue_s, perte };
+    let mut rng = Rng::new(seed);
+    let (recues, comble) = transporter(&trames, &p, d_jit_s, sr / hop as f64, n, &mut rng);
+    let sortie = istft(&recues, n, hop, melange.len());
+    (sortie, bitrate, comble)
+}
+
 /// SNR (dB) de `sortie` vs `reference`, sur l'intérieur (échantillons couverts par 2 trames pleines).
 fn snr_db(reference: &[f32], sortie: &[f32], n: usize) -> f64 {
     let (mut e_sig, mut e_bruit) = (0.0_f64, 0.0_f64);

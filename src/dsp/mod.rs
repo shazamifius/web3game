@@ -10,6 +10,7 @@
 //! Zéro dépendance externe : un FFT radix-2 fait main. La preuve qui ne ment pas = le **round-trip exact**
 //! (FFT→IFFT et analyse→synthèse reconstruisent le signal à l'epsilon flottant près).
 
+pub mod adaptive;
 pub mod chain;
 pub mod codec;
 pub mod denoise;
@@ -18,6 +19,7 @@ pub mod optim;
 pub mod psycho;
 pub mod stoi;
 
+pub use adaptive::run_adaptatif;
 pub use chain::run_son;
 pub use codec::run_codec;
 pub use denoise::run_micro;
