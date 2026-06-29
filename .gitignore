@@ -10,3 +10,5 @@ REPRISE-PRIVEE.md
 /asset/
 # Courbes exportées par le banc `jeu vivant` (CSV + SVG : artefacts locaux de visualisation, régénérables).
 vivant_courbes*
+# WAV écrits par `jeu separe wav` (audition des bruits isolés : artefacts locaux, régénérables).
+/voix_wav/

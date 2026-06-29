@@ -17,6 +17,7 @@ pub mod denoise;
 pub mod fft;
 pub mod optim;
 pub mod psycho;
+pub mod separate;
 pub mod stoi;
 
 pub use adaptive::run_adaptatif;
@@ -24,3 +25,4 @@ pub use chain::run_son;
 pub use codec::run_codec;
 pub use denoise::run_micro;
 pub use optim::run_optim;
+pub use separate::run_separe;
