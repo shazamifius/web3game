@@ -15,6 +15,7 @@ use super::codec::{dequantifier, entropie_bits, pas_perceptuel, quantifier};
 use super::denoise::{debruiter, mesurer};
 use super::fft::{hann, istft, stft, Cplx};
 use super::psycho::{bandes_par_bin, seuil_masquage};
+use super::stoi::stoi;
 
 /// Profil de lien réseau (one-way) — mêmes chiffres que la flotte (`liveness`/`voice_bench`).
 #[derive(Clone, Copy)]
@@ -162,7 +163,10 @@ pub fn run_son(_arg: &str) {
     );
     let etat_d3 = if bitrate < 43.0 { "✅" } else { "⚠" };
     println!("   débit voix livré = {:.1} kbit/s {} (1 locuteur ; × K bornés par VAD + AoI audio)\n", bitrate, etat_d3);
-    println!("   {:<20} {:>13} {:>13} {:>18}", "profil réseau", "bouche→or. ms", "PLC comblé %", "voix livrée (SNR dB)");
+    println!(
+        "   {:<20} {:>13} {:>13} {:>11} {:>14}",
+        "profil réseau", "bouche→or. ms", "PLC comblé %", "SNR dB", "INTELLIG. (STOI)"
+    );
     for p in profils() {
         let d_jit = (p.gigue_s / 0.005).ceil() * 0.005; // couvre la gigue uniforme → ~0 retard
         let mut rng = Rng::new(0x5012_6034_7048);
@@ -170,7 +174,8 @@ pub fn run_son(_arg: &str) {
         let sortie = istft(&recues, n, hop, melange.len());
         let mte = (p.latence_s + d_jit) * 1000.0 + frame_ms;
         let snr = snr_db(&voix, &sortie, n); // vs la voix PROPRE → dégradation totale cumulée
-        println!("   {:<20} {:>13.0} {:>13.1} {:>18.1}", p.nom, mte, comble, snr);
+        let intel = stoi(&voix, &sortie, sr, n, hop); // intelligibilité livrée (0..1)
+        println!("   {:<20} {:>13.0} {:>13.1} {:>11.1} {:>14.2}", p.nom, mte, comble, snr, intel);
     }
 
     // Rappel « bulle de bruit » : ce que les AUTRES entendent du ventilo, débruitage on/off (cf. jeu micro).
