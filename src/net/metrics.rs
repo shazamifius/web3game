@@ -507,10 +507,14 @@ struct Campaign {
     /// byte-pour-byte. Émet les K derniers états par envoi relais (`KIND_STATE_BUNDLE`) → bat la perte
     /// des vrais liens CGNAT lossy (`p^k`). Flip serveur, sans rebuild `RELAY_REDUNDANCY=K`.
     redundancy: usize,
+    /// Phase 2b — LOSSCHECK (`losscheck=1`) : au DÉBUT d'une session consentie, l'agent sonde la
+    /// perte/congestion de SON lien (rafale écho à débit croissant) et UPLOADE le rapport (attribué
+    /// par IP). Défaut `false`. Permet de mesurer le vrai 4G d'un pair par simple flip serveur.
+    losscheck: bool,
 }
 impl Default for Campaign {
     fn default() -> Self {
-        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false, redundancy: 1 }
+        Campaign { window: 30, mode: Mode::Idle, session: 0, bots: 1, aoi: false, redundancy: 1, losscheck: false }
     }
 }
 
@@ -548,6 +552,9 @@ fn parse_campaign(body: &str) -> Campaign {
                     if let Ok(n) = v.parse::<usize>() {
                         c.redundancy = n.clamp(1, 8); // levier B : K copies relais (borné anti-abus budget)
                     }
+                }
+                "losscheck" => {
+                    c.losscheck = matches!(v, "1" | "true"); // phase 2b : sonde de congestion + upload
                 }
                 _ => {}
             }
@@ -609,7 +616,7 @@ fn http_get(host: &str, port: u16, path: &str) -> Option<String> {
 /// Si `RENDEZVOUS_ADDR` n'est pas dans l'environnement, on le lit dans `serveur.txt` à côté de
 /// l'exe. INDISPENSABLE à l'auto-démarrage : le service/tâche n'a pas l'env du `.bat` → l'agent se
 /// configure SEUL depuis le fichier. (Appelé tôt, mono-thread → set_var sûr.)
-fn ensure_rendezvous_from_file() {
+pub(crate) fn ensure_rendezvous_from_file() {
     if std::env::var("RENDEZVOUS_ADDR").is_ok() {
         return;
     }
@@ -1091,6 +1098,19 @@ fn run_measure_session(cfg_host: &str, start: Campaign) -> SessionEnd {
     );
     session_window_open(start.session);
     send_heartbeat(cfg_host, CONFIG_PORT, "session");
+
+    // Phase 2b — SONDE DE CONGESTION pilotée par campagne (`losscheck=1`). Au début de la session
+    // (consentement déjà acquis), on mesure la perte/RTT par palier de débit de NOTRE lien, et on
+    // UPLOADE le rapport (le serveur y injecte l'IP → attribuable par machine). C'est ce qui mesure
+    // le vrai 4G d'un pair sans manip de sa part. Volume borné (~440 Ko), une fois par session.
+    if start.losscheck {
+        println!("[agent] losscheck : sonde de congestion du lien avant la mesure P2P…");
+        let (points, verdict, bytes) = super::linkprobe::probe_loss();
+        let report = super::linkprobe::loss_report_json(start.session, &points, verdict);
+        let _ = http_post(cfg_host, CONFIG_PORT, "/upload", &report);
+        session_log_write(&format!("losscheck → {verdict} ({:.0} Ko envoyés)", bytes as f64 / 1024.0));
+        println!("[agent] losscheck terminé : {verdict}");
+    }
 
     let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut worker_handles = Vec::new();
@@ -1701,6 +1721,10 @@ mod tests {
         assert!(!parse_campaign("").aoi);
         assert!(!parse_campaign("aoi=0").aoi);
         assert!(parse_campaign("aoi=1").aoi);
+        // Phase 2b — le flip `losscheck` : absent → OFF, `1`/`true` → ON (sonde de congestion + upload).
+        assert!(!parse_campaign("").losscheck);
+        assert!(!parse_campaign("losscheck=0").losscheck);
+        assert!(parse_campaign("losscheck=1").losscheck);
         assert!(parse_campaign("aoi=true").aoi);
         // LEVIER B — le flip `redundancy` : absent → 1 (byte-pour-byte), borné à [1,8], illisible → 1.
         assert_eq!(parse_campaign("").redundancy, 1); // défaut = inchangé

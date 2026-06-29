@@ -442,18 +442,17 @@ fn drain_echos(
     }
 }
 
-/// `jeu losscheck` : mesure la PERTE et le RTT par palier de débit croissant, vers le rendez-vous
-/// (qui fait écho 1:1). Dit si le lien est SAIN, ALÉATOIRE ou en CONGESTION — le chaînon manquant
-/// pour la redondance ADAPTATIVE (Phase 3 : ne dédoubler que sur perte aléatoire, jamais si ça sature).
-pub fn run_losscheck() {
+/// MESURE la perte/RTT par palier de débit croissant vers le rendez-vous (qui fait écho 1:1), SANS
+/// affichage. Renvoie (points par palier, verdict, octets envoyés). Lit `serveur.txt` (comme les
+/// autres modes) → cible le vrai serveur, pas `127.0.0.1`. Partagé par `jeu losscheck` (affichage à
+/// la main) et le pilotage par CAMPAGNE (`losscheck=1` → l'agent sonde et UPLOADE le rapport).
+pub(crate) fn probe_loss() -> (Vec<LossPoint>, &'static str, u64) {
+    super::metrics::ensure_rendezvous_from_file();
     let rdv = rendezvous_addr();
     let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
-        println!("[losscheck] Impossible d'ouvrir une prise UDP.");
-        return;
+        return (Vec::new(), "indéterminé (pas de prise UDP)", 0);
     };
     let _ = socket.set_nonblocking(true);
-    println!("[losscheck] Sonde de congestion vers le rendez-vous {rdv} (écho 1:1, paliers de débit)…");
-    println!("[losscheck] {:>9} | {:>7} | {:>9} | {:>9}", "débit", "perte", "rtt méd.", "paquets");
 
     let mut seq: u64 = 0;
     let mut total_bytes: u64 = 0;
@@ -499,15 +498,39 @@ pub fn run_losscheck() {
         let eff_pps = sent as f64 / LOSS_STEP_SECS as f64;
         let mbps = eff_pps * LOSS_PACKET_SIZE as f64 * 8.0 / 1.0e6;
         let rtt_med = median_ms(&rtts).unwrap_or(0);
-        println!(
-            "[losscheck] {:>6.2} Mb | {:>5.1} % | {:>6} ms | {:>4}/{:<4}",
-            mbps, loss_pct, rtt_med, recv, sent
-        );
         points.push((mbps, loss_pct, rtt_med));
     }
 
-    println!("[losscheck] Volume envoyé : {:.0} Ko (+ autant en retour). Verdict : {}",
-        total_bytes as f64 / 1024.0, classify_loss_trend(&points));
+    let verdict = classify_loss_trend(&points);
+    (points, verdict, total_bytes)
+}
+
+/// Rapport JSON (fait-main) d'un losscheck, pour l'UPLOAD (le serveur y injecte l'IP → attribuable
+/// par machine). Forme : `{"kind":"losscheck","session":N,"verdict":"…","paliers":[[mbps,perte,rtt],…]}`.
+/// Le verdict ne contient ni guillemets ni antislash → sûr tel quel dans une valeur JSON.
+pub(crate) fn loss_report_json(session: u64, points: &[LossPoint], verdict: &str) -> String {
+    let mut paliers = String::new();
+    for (i, (mbps, loss, rtt)) in points.iter().enumerate() {
+        if i > 0 {
+            paliers.push(',');
+        }
+        paliers.push_str(&format!("[{mbps:.2},{loss:.1},{rtt}]"));
+    }
+    format!("{{\"kind\":\"losscheck\",\"session\":{session},\"verdict\":\"{verdict}\",\"paliers\":[{paliers}]}}")
+}
+
+/// `jeu losscheck` : sonde la PERTE/CONGESTION du lien (perte + RTT par palier de débit croissant)
+/// et l'affiche. Dit si le lien est SAIN, ALÉATOIRE ou en CONGESTION — le chaînon manquant pour la
+/// redondance ADAPTATIVE (Phase 3 : ne dédoubler que sur perte aléatoire, jamais si le lien sature).
+pub fn run_losscheck() {
+    let (points, verdict, total_bytes) = probe_loss();
+    println!("[losscheck] Sonde de congestion vers {} (écho 1:1, paliers de débit)…", rendezvous_addr());
+    println!("[losscheck] {:>9} | {:>7} | {:>9}", "débit", "perte", "rtt méd.");
+    for (mbps, loss, rtt) in &points {
+        println!("[losscheck] {mbps:>6.2} Mb | {loss:>5.1} % | {rtt:>6} ms");
+    }
+    println!("[losscheck] Volume envoyé : {:.0} Ko (+ autant en retour). Verdict : {verdict}",
+        total_bytes as f64 / 1024.0);
 }
 
 #[cfg(test)]
@@ -646,5 +669,18 @@ mod tests {
         assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.0, 120)]).starts_with("CONGESTION"));
         assert!(classify_loss_trend(&[(0.3, 12.0, 20), (3.2, 14.0, 22)]).starts_with("ALÉATOIRE"));
         assert!(classify_loss_trend(&[(0.3, 0.0, 20)]).starts_with("indéterminé"));
+    }
+
+    /// Le rapport JSON d'un losscheck est bien formé et porte session, verdict et paliers.
+    #[test]
+    fn rapport_losscheck_json() {
+        let pts = vec![(0.32, 0.0, 20u32), (3.2, 12.5, 45u32)];
+        let j = loss_report_json(7, &pts, "SAIN (marge)");
+        assert!(j.starts_with('{') && j.ends_with('}'));
+        assert!(j.contains("\"kind\":\"losscheck\""));
+        assert!(j.contains("\"session\":7"));
+        assert!(j.contains("\"verdict\":\"SAIN (marge)\""));
+        assert!(j.contains("[0.32,0.0,20]"));
+        assert!(j.contains("[3.20,12.5,45]"));
     }
 }
