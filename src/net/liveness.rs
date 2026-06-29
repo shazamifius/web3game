@@ -614,6 +614,31 @@ pub fn run_vivant(traj_name: &str) {
     }
     println!();
 
+    // ====== LOINTAIN BRIDÉ À 2 Hz (cadence AoI réelle) — l'ordre 2 rachète-t-il la fraîcheur ? ======
+    // Données réelles (uploads agent) : les pairs LOINTAINS sont rafraîchis à ~2 Hz par l'AoI (cadence_step ~8-10),
+    // d'où un plancher de fraîcheur ~500 ms (gap entre maj), PAS de la perte. Le lien lui-même est bon (faible
+    // latence/gigue). Question : à 2 Hz, l'ordre 2 (extrapolation par l'accélération) tient-il « vivant » à plus
+    // BAS délai d'interpolation que l'ordre 1 ? (C'est le pont entre la re-lecture data-backed et le banc.)
+    let lointain = Profil { nom: "lointain bridé", latence_s: 0.010, gigue_s: 0.003, perte: 0.005 };
+    println!("── 🛰️ LOINTAIN bridé AoI à 2 Hz (lien bon : 10 ms ±3, 0,5 % perte) — ordre 1 vs 2 selon le délai");
+    println!("   {:>9} | {:>5} | {:>8} | {:>10} | {:>10} | {}", "d_interp", "ordre", "d_eff", "F (cm)", "J (m/s³)", "verdict");
+    let paq2 = emettre(traj, duree, 2.0); // émission à 2 Hz = la cadence AoI du lointain
+    let mut rng2 = Rng::new(seed ^ (lointain.nom.len() as u64).wrapping_mul(0x9E3779B97F4A7C15));
+    let recus2 = canal(&paq2, &lointain, &mut rng2);
+    for &d in &[0.10, 0.25, 0.50] {
+        for (lbl, ordre) in [("1", Ordre::Un), ("2", Ordre::Deux)] {
+            let percu = reconstruire(&recus2, duree, f_rx, d, 0.0, ordre);
+            let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 1.0);
+            let j = jerk_rms(&percu, f_rx, warmup);
+            let sauts = n_sauts(&percu, warmup, seuil_saut);
+            println!(
+                "   {:>7.0}ms | {:>5} | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+                d * 1000.0, lbl, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+            );
+        }
+    }
+    println!();
+
     // ====== Export des courbes (cas dur, d_interp = 100 ms) pour les VISUALISER — les 3 régimes ======
     let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0, Ordre::Un); // ordre 1 brut → saccadé
     let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06, Ordre::Un); // ordre 1 + ressort fort → flou
