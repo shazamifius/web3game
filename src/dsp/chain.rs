@@ -66,7 +66,7 @@ fn ventilo(sr: f64, n_ech: usize) -> Vec<f32> {
 }
 
 /// Encode un signal en trames (codec perceptuel) ; renvoie le spectre DÉCODÉ par trame + le débit (entropie).
-fn encoder(signal: &[f32], sr: f64, n: usize, hop: usize, q: f64) -> (Vec<Vec<Cplx>>, f64) {
+pub(crate) fn encoder(signal: &[f32], sr: f64, n: usize, hop: usize, q: f64) -> (Vec<Vec<Cplx>>, f64) {
     let win = hann(n);
     let bande_de = bandes_par_bin(n, sr);
     let spectres = stft(signal, n, hop, &win);

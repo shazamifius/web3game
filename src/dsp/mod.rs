@@ -14,9 +14,11 @@ pub mod chain;
 pub mod codec;
 pub mod denoise;
 pub mod fft;
+pub mod optim;
 pub mod psycho;
 pub mod stoi;
 
 pub use chain::run_son;
 pub use codec::run_codec;
 pub use denoise::run_micro;
+pub use optim::run_optim;
