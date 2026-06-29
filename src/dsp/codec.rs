@@ -18,12 +18,12 @@ use super::fft::{hann, istft, stft, Cplx};
 use super::psycho::{bandes_par_bin, seuil_masquage};
 
 /// Nombre de bins UNIQUES d'un signal réel de taille `n` (le reste = symétrie conjuguée).
-fn n_bins_uniques(n: usize) -> usize {
+pub(crate) fn n_bins_uniques(n: usize) -> usize {
     n / 2 + 1
 }
 
 /// Quantifie les bins uniques (re, im) avec un pas PAR BIN `pas` (len = n/2+1) → entiers signés (les symboles).
-fn quantifier(spectre: &[Cplx], n: usize, pas: &[f64]) -> Vec<i32> {
+pub(crate) fn quantifier(spectre: &[Cplx], n: usize, pas: &[f64]) -> Vec<i32> {
     let m = n_bins_uniques(n);
     let mut q = Vec::with_capacity(2 * m);
     for k in 0..m {
@@ -34,7 +34,7 @@ fn quantifier(spectre: &[Cplx], n: usize, pas: &[f64]) -> Vec<i32> {
 }
 
 /// Reconstruit le spectre complet (taille `n`) depuis les symboles quantifiés, par symétrie conjuguée.
-fn dequantifier(q: &[i32], n: usize, pas: &[f64]) -> Vec<Cplx> {
+pub(crate) fn dequantifier(q: &[i32], n: usize, pas: &[f64]) -> Vec<Cplx> {
     let m = n_bins_uniques(n);
     let mut s = vec![Cplx::new(0.0, 0.0); n];
     for k in 0..m {
@@ -47,7 +47,7 @@ fn dequantifier(q: &[i32], n: usize, pas: &[f64]) -> Vec<Cplx> {
 }
 
 /// Entropie de Shannon (bits/symbole) d'un flux d'entiers — le débit qu'un codeur entropique idéal atteindrait.
-fn entropie_bits(symboles: &[i32]) -> f64 {
+pub(crate) fn entropie_bits(symboles: &[i32]) -> f64 {
     use std::collections::HashMap;
     if symboles.is_empty() {
         return 0.0;
@@ -69,7 +69,7 @@ fn entropie_bits(symboles: &[i32]) -> f64 {
 
 /// Pas de quantification PERCEPTUEL par bin : par bande, `Δ` tel que le bruit ≈ `q²·masque` (le bouton `q` règle
 /// le NMR cible — `q=1` → bruit au niveau du masque ; `q<1` → sous le masque, plus de bits).
-fn pas_perceptuel(masque: &[f64], bande_de: &[usize], q: f64) -> Vec<f64> {
+pub(crate) fn pas_perceptuel(masque: &[f64], bande_de: &[usize], q: f64) -> Vec<f64> {
     let nb = masque.len();
     let mut compte = vec![0usize; nb];
     for &b in bande_de {

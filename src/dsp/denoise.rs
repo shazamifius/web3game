@@ -13,10 +13,33 @@
 //! reproductibles. La décomposition est rigoureuse : on applique le MÊME gain `G` (calculé sur le mélange) à la voix
 //! SEULE et au bruit SEUL → on sépare proprement « ce qu'on a enlevé du bruit » de « ce qu'on a abîmé de la voix ».
 
-use super::fft::{hann, stft, Cplx};
+use super::fft::{hann, istft, stft, Cplx};
 
 fn n_bins_uniques(n: usize) -> usize {
     n / 2 + 1
+}
+
+/// Débruite un signal et renvoie l'audio NETTOYÉ (pour chaîner avec le codec/transport). Estime le bruit sur le
+/// signal lui-même (stat. de minimum) → applique le gain de soustraction spectrale → ISTFT.
+pub(crate) fn debruiter(signal: &[f32], n: usize, hop: usize, alpha: f64, beta: f64) -> Vec<f32> {
+    let win = hann(n);
+    let m = n_bins_uniques(n);
+    let sp = stft(signal, n, hop, &win);
+    let profil = estimer_bruit(&sp, n, 0.10);
+    let mut frames_rec: Vec<Vec<Cplx>> = Vec::with_capacity(sp.len());
+    for fx in &sp {
+        let mut out = vec![Cplx::new(0.0, 0.0); n];
+        for k in 0..m {
+            let amp = (fx[k].re * fx[k].re + fx[k].im * fx[k].im).sqrt();
+            let g = gain(amp, profil[k], alpha, beta);
+            out[k] = Cplx::new(fx[k].re * g, fx[k].im * g);
+        }
+        for k in 1..n / 2 {
+            out[n - k] = Cplx::new(out[k].re, -out[k].im); // symétrie conjuguée
+        }
+        frames_rec.push(out);
+    }
+    istft(&frames_rec, n, hop, signal.len())
 }
 
 /// Estime l'amplitude du bruit par bin : le `p`-ième percentile de `|X[t,k]|` sur toutes les trames `t`.
