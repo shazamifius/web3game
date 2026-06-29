@@ -58,6 +58,7 @@ mod sim;
 mod skin;
 mod stars;
 mod transport;
+mod voice_bench;
 mod wire;
 
 // L'API publique du cœur, utilisée par `main` (aiguillage des modes headless).
@@ -75,3 +76,4 @@ pub use rendezvous::run_rendezvous;
 pub use sidecar::run_sidecar;
 pub use sim::{run_crowd, run_relay_loss, run_relay_test, run_sim};
 pub use stars::{run_stars, run_stars_race};
+pub use voice_bench::run_voix;

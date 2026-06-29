@@ -27,6 +27,7 @@
 //!   net-demo <a|b>        la démo réseau en texte (observer les paquets)
 //!   nat-test <nom>        le hole punching en texte (pour les namespaces réseau)
 
+mod dsp;
 mod math;
 mod net;
 
@@ -60,6 +61,7 @@ fn main() {
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2000.0),
         ),
         Some("vivant") => net::run_vivant(args.get(2).map(String::as_str).unwrap_or("agitee")),
+        Some("voix") => net::run_voix(args.get(2).map(String::as_str).unwrap_or("")),
         Some("natcheck") => net::run_natcheck(),
         Some("losscheck") => net::run_losscheck(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),
