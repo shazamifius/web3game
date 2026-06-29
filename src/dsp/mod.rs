@@ -12,5 +12,6 @@
 
 pub mod codec;
 pub mod fft;
+pub mod psycho;
 
 pub use codec::run_codec;

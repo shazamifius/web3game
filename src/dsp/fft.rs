@@ -17,10 +17,6 @@ impl Cplx {
     pub fn new(re: f64, im: f64) -> Self {
         Cplx { re, im }
     }
-    /// Module (amplitude spectrale) — ce que le débruitage et l'allocation de bits regardent.
-    pub fn module(&self) -> f64 {
-        (self.re * self.re + self.im * self.im).sqrt()
-    }
 }
 
 /// Transformée en place, radix-2. `n = buf.len()` DOIT être une puissance de 2. `inverse=false` → directe ;
@@ -169,11 +165,12 @@ mod tests {
             .map(|k| Cplx::new((2.0 * PI * bin as f64 * k as f64 / n as f64).cos(), 0.0))
             .collect();
         fft(&mut buf);
-        let pic = buf[bin].module();
+        let module = |c: &Cplx| (c.re * c.re + c.im * c.im).sqrt();
+        let pic = module(&buf[bin]);
         // Tous les autres bins (hors bin et son symétrique n-bin) doivent être négligeables.
         let fuite: f64 = (0..n)
             .filter(|&k| k != bin && k != n - bin)
-            .map(|k| buf[k].module())
+            .map(|k| module(&buf[k]))
             .fold(0.0, f64::max);
         assert!(pic > 1e3 * (fuite + 1e-12), "le pic ({}) doit dominer la fuite ({})", pic, fuite);
     }
