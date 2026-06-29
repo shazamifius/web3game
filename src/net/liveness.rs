@@ -586,6 +586,26 @@ pub fn run_vivant(traj_name: &str) {
     }
     println!();
 
+    // ====== Effet de la CADENCE d'émission f_tx (ordre 2, cas dur) — vaut-il le coût en octets reçus ? ======
+    // Plus de paquets = extrapolation plus COURTE + meilleure estimation d'accélération → plus fidèle. MAIS le coût
+    // est linéaire en octets REÇUS (le mur D3 du budget de réception). On cherche la f_tx la plus BASSE qui passe.
+    println!("── 📡 CADENCE f_tx (ordre 2, 4G congestionné, d_interp=100 ms) — la plus BASSE qui reste « ✓ vivant »");
+    println!("   {:>6} | {:>8} | {:>10} | {:>10} | {}", "f_tx", "d_eff", "F (cm)", "J (m/s³)", "verdict");
+    for &ftx in &[10.0_f64, 20.0, 30.0] {
+        let paq = emettre(traj, duree, ftx);
+        let mut rng = Rng::new(seed ^ (dur.nom.len() as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let recus = canal(&paq, &dur, &mut rng);
+        let percu = reconstruire(&recus, duree, f_rx, 0.10, 0.0, Ordre::Deux);
+        let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.9);
+        let j = jerk_rms(&percu, f_rx, warmup);
+        let sauts = n_sauts(&percu, warmup, seuil_saut);
+        println!(
+            "   {:>4.0}Hz | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+            ftx, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+        );
+    }
+    println!();
+
     // ====== Export des courbes (cas dur, d_interp = 100 ms) pour les VISUALISER — les 3 régimes ======
     let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0, Ordre::Un); // ordre 1 brut → saccadé
     let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06, Ordre::Un); // ordre 1 + ressort fort → flou
