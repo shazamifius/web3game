@@ -1347,13 +1347,12 @@ pub fn run_serve_config(dir: &str, port: u16) {
                 let payload = req[p + 4..].trim();
                 if !payload.is_empty() {
                     use std::io::Write as _;
-                    // Pour la PRÉSENCE seulement : on injecte l'IP publique (1er champ) → le statut
-                    // peut géolocaliser/typer la connexion. L'upload de mesures reste inchangé.
+                    // On injecte l'IP publique (1er champ) dans TOUTE charge JSON — présence ET
+                    // uploads de mesures. Côté serveur = infalsifiable. Pour la présence : géo/type de
+                    // connexion. Pour les uploads : ATTRIBUER chaque mesure à la machine émettrice
+                    // (sinon « observer:agent » est anonyme → impossible de dire qui a mesuré quoi).
                     let enriched;
-                    let to_write: &str = if file == "presence.ndjson"
-                        && !peer_ip.is_empty()
-                        && payload.starts_with('{')
-                    {
+                    let to_write: &str = if !peer_ip.is_empty() && payload.starts_with('{') {
                         enriched = format!("{{\"ip\":\"{peer_ip}\",{}", &payload[1..]);
                         &enriched
                     } else {
