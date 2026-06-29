@@ -119,4 +119,14 @@ continu (D30).
 
 *Faits techniques tenus à jour au fil des mesures. Les chiffres de coût et de débit : [revue de l'état](etat-du-projet.md).*
 
-> **⚙️ Parcours « technique » →** chantier suivant : **[la robustesse](chantier-robustesse.md)**.
+---
+
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Chantier foule dense** — une étape des parcours **⚙️ Le code** et **🧭 Tout comprendre**.
+
+**Continuer le fil :**
+- ⚙️ *Le code* · 🧭 *Tout comprendre* → **[Chantier robustesse](chantier-robustesse.md)**
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)

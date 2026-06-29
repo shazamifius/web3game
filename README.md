@@ -106,14 +106,17 @@ cette collaboration.** Le dire clairement, c'est cohérent avec la règle n°1 d
 
 ## Par où commencer — choisissez votre parcours
 
-Selon qui vous êtes, voici trois chemins de lecture (chaque document renvoie au suivant) :
+Voici quatre chemins de lecture, **selon ce que vous voulez du moment** (pas selon ce que vous sauriez déjà). Chaque
+page renvoie à la suivante et affiche toutes les portes : **où que vous commenciez, vous êtes au bon endroit** — vous
+pouvez sauter, revenir, ou changer de chemin à tout instant. Tout part aussi du [sommaire de la doc](docs/), et un
+[📖 glossaire](docs/glossaire.md) explique chaque terme en une phrase.
 
-**🌱 Vous découvrez le pair-à-pair / le « web3 décentralisé »**
+**🌱 Vous voulez l'idée, sans jargon**
 1. [Le « sans serveur », en clair](docs/comprendre-le-p2p.md) — l'idée, sans jargon
 2. [L'état du projet, chiffré](docs/etat-du-projet.md) — ce qui marche, mesuré
 3. [Le registre des doutes](docs/doutes.md) — les questions encore ouvertes
 
-**⚙️ Vous êtes technique (vous voulez le code et les choix d'architecture)**
+**⚙️ Vous voulez le code et les choix d'architecture**
 1. [L'architecture & l'organisation du code](docs/ARCHITECTURE.md)
 2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [robustesse](docs/chantier-robustesse.md)
 3. [Comment lancer & tester](docs/TESTS.md) — rejouer les mesures vous-même
@@ -121,7 +124,10 @@ Selon qui vous êtes, voici trois chemins de lecture (chaque document renvoie au
 **🔎 Vous voulez juger vite (ce qui est prouvé, ce qui ne l'est pas)**
 1. [L'état du projet, chiffré](docs/etat-du-projet.md) — les mesures et leurs limites
 2. [Le registre des doutes](docs/doutes.md) — la frontière honnête
-3. [Le journal de développement](docs/journal.md) — comment on en est arrivé là
+3. [Les coulisses](docs/coulisses.md) — les enquêtes : comment une mesure a, plusieurs fois, corrigé le plan
+
+**🧭 Vous voulez tout comprendre, dans l'ordre** — du plus accessible au plus pointu : le fil complet est déroulé
+dans le [sommaire de la documentation](docs/).
 
 ---
 

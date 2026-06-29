@@ -96,10 +96,12 @@ limites, c'est une règle du projet — cf. les [murs assumés](etat-du-projet.m
 
 ---
 
-### Pour aller plus loin
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
 
-- [L'état du projet — réalisations, murs, doutes, chiffres](etat-du-projet.md)
-- [L'architecture du code](ARCHITECTURE.md)
-- [Comment lancer & tester](TESTS.md)
+Vous lisez **Le « sans serveur », en clair** — la première étape des parcours **🌱 Découvrir** et **🧭 Tout comprendre**.
 
-> **🌱 Parcours « découverte » →** étape suivante : **[L'état du projet, chiffré](etat-du-projet.md)**.
+**Continuer le fil :**
+- 🌱 *Découvrir* · 🧭 *Tout comprendre* → **[L'état du projet, chiffré](etat-du-projet.md)**
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)

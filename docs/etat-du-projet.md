@@ -121,10 +121,12 @@ tout « fait » liste ce qu'il **ne** fait **pas** (un registre de dettes).
 
 ---
 
-### Comprendre comment ça marche
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
 
-- [Architecture & organisation du code](ARCHITECTURE.md) — les modules, le format d'un paquet, l'archi cible.
-- [Comment lancer & tester](TESTS.md) — toutes les commandes ci-dessus, en détail.
-- [Le « sans serveur », en clair](comprendre-le-p2p.md) — l'idée du projet expliquée en mots simples.
+Vous lisez **L'état du projet, chiffré** — une étape des parcours **🌱 Découvrir**, **🔎 Juger vite** et **🧭 Tout comprendre**.
 
-> **🌱 Parcours « découverte » →** étape suivante : **[Le registre des doutes](doutes.md)**.
+**Continuer le fil :**
+- 🌱 *Découvrir* · 🔎 *Juger vite* · 🧭 *Tout comprendre* → **[Le registre des doutes](doutes.md)**
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)

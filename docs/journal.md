@@ -140,3 +140,15 @@ technique, dans le [chantier réseau](chantier-reseau.md).
 ---
 
 *Histoire tenue à jour au fil du développement.*
+
+---
+
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Le journal de développement** — une étape du parcours **🧭 Tout comprendre** (la suite naturelle des [coulisses](coulisses.md)).
+
+**Continuer le fil :**
+- 🧭 *Tout comprendre* → **[Architecture & code](ARCHITECTURE.md)**
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)

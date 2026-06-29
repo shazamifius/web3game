@@ -92,3 +92,15 @@ nix-shell --run "cargo watch -x 'run -- sidecar'"     # terminal 2 (le pont Unre
 
 ---
 
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Comment lancer & tester** — la **dernière** étape des parcours **⚙️ Le code** et **🧭 Tout comprendre**.
+
+**Continuer le fil :**
+- ✓ Vous êtes au bout de ces deux parcours — bravo, vous avez fait le tour. Revenez à la 🗺️ [vitrine](../README.md), ou explorez 🔎 [Juger vite](etat-du-projet.md).
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)
+
+---
+

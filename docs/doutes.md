@@ -202,4 +202,15 @@
 *Ce registre est vivant : on y ajoute un doute dès qu'on en découvre un, et la réalité — une mesure, un test, un
 vrai joueur — a toujours raison contre ce document.*
 
-> **🔎 Parcours « juger vite » →** étape suivante : **[Le journal de développement](journal.md)**.
+---
+
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Le registre des doutes** — une étape des parcours **🌱 Découvrir**, **🔎 Juger vite** et **🧭 Tout comprendre**.
+
+**Continuer le fil :**
+- 🔎 *Juger vite* · 🧭 *Tout comprendre* → **[Les coulisses](coulisses.md)**
+- 🌱 *Découvrir* → ✓ vous êtes au bout de ce parcours. Pour aller plus loin : ⚙️ [le code](ARCHITECTURE.md) ou 🧭 [tout comprendre](README.md).
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)

@@ -133,7 +133,15 @@ perso. Pareil pour le *signaling* (STUN/TURN) qui aide à percer les NAT.
   de celui qui rediffuse. La vraie réponse : l'**AoI** (tu ne parles qu'à tes ~10–100
   voisins, **indépendamment de N**) + des Owns/relais **locaux**, jamais un hub.
 
-> **⚙️ Parcours « technique » →** suite : les chantiers [réseau](chantier-reseau.md) · [foule dense](chantier-foule.md) · [robustesse](chantier-robustesse.md).
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Architecture & code** — une étape des parcours **⚙️ Le code** et **🧭 Tout comprendre**.
+
+**Continuer le fil :**
+- ⚙️ *Le code* · 🧭 *Tout comprendre* → **[Chantier réseau](chantier-reseau.md)**
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)
 
 ---
 

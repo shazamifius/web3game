@@ -167,3 +167,16 @@ l'allume que là.
 3. **La redondance est un outil ciblé, pas une baguette magique.** Elle sauve un lien à perte aléatoire et nuit à un
    lien saturé : la même action, deux effets opposés selon le terrain. D'où l'importance de **diagnostiquer avant de
    soigner** — et le doute **D36** (la vraie diversité des connexions) reste grand ouvert.
+
+---
+
+### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
+
+Vous lisez **Les coulisses** — une étape des parcours **🔎 Juger vite** et **🧭 Tout comprendre**.
+
+**Continuer le fil :**
+- 🧭 *Tout comprendre* → **[Le journal de développement](journal.md)**
+- 🔎 *Juger vite* → ✓ vous êtes au bout de ce parcours. Et la suite ? ⚙️ [le code](ARCHITECTURE.md) ou 🧭 [tout comprendre](README.md).
+
+**Les portes** (sautez, revenez, changez à tout moment) :
+🌱 [Découvrir](comprendre-le-p2p.md) · ⚙️ [Le code](ARCHITECTURE.md) · 🔎 [Juger vite](etat-du-projet.md) · 🧭 [Tout comprendre](README.md) · 📖 [Glossaire](glossaire.md) · 🗺️ [La vitrine](../README.md)
