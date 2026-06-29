@@ -401,11 +401,18 @@ fn classify_loss_trend(points: &[LossPoint]) -> &'static str {
     if points.len() < 2 {
         return "indéterminé (pas assez de paliers)";
     }
-    let (_, loss_lo, rtt_lo) = points[0];
-    let (_, loss_hi, rtt_hi) = points[points.len() - 1];
-    let rtt_grimpe = rtt_hi as f64 >= (rtt_lo as f64) * 2.0 + 30.0; // bufferbloat net
-    let perte_grimpe = loss_hi >= loss_lo + 10.0; // la perte monte avec le débit
-    let perte_haute_plate = loss_lo > 5.0 && (loss_hi - loss_lo).abs() < 10.0;
+    let (_, loss_base, rtt_base) = points[0];
+    // On compare la BASE (palier le plus bas) au PIC sur TOUS les paliers — pas au dernier : le
+    // bufferbloat culmine souvent AVANT le débit max (au max, le buffer déborde → le RTT retombe et
+    // la perte explose). Regarder le pic, c'est ce qui m'avait manqué sur le 4G+ (108 ms au palier 3).
+    let rtt_max = points.iter().map(|(_, _, r)| *r).max().unwrap_or(rtt_base);
+    let loss_max = points.iter().map(|(_, l, _)| *l).fold(loss_base, f64::max);
+    // Bufferbloat : le RTT GRIMPE nettement avec le débit (pic ≥ 1,5× la base ET +30 ms absolus).
+    let rtt_grimpe = rtt_max as f64 >= rtt_base as f64 * 1.5 && (rtt_max as i64 - rtt_base as i64) >= 30;
+    // La perte APPARAÎT avec le débit (≥ +5 points entre la base et le pic).
+    let perte_grimpe = loss_max - loss_base >= 5.0;
+    // Perte présente MAIS ~constante quel que soit le débit → bruit, pas saturation.
+    let perte_haute_plate = loss_base > 5.0 && (loss_max - loss_base) < 5.0;
     if perte_grimpe || rtt_grimpe {
         "CONGESTION (perte/latence montent avec le débit → le lien sature)"
     } else if perte_haute_plate {
@@ -669,6 +676,18 @@ mod tests {
         assert!(classify_loss_trend(&[(0.3, 0.0, 20), (3.2, 0.0, 120)]).starts_with("CONGESTION"));
         assert!(classify_loss_trend(&[(0.3, 12.0, 20), (3.2, 14.0, 22)]).starts_with("ALÉATOIRE"));
         assert!(classify_loss_trend(&[(0.3, 0.0, 20)]).starts_with("indéterminé"));
+    }
+
+    /// Régression issue du RÉEL (session 203, écho prod) : le pic de bufferbloat est au palier
+    /// INTERMÉDIAIRE, pas au dernier → l'ancienne version (premier vs dernier) classait « SAIN » à tort.
+    #[test]
+    fn tendance_donnees_reelles_session_203() {
+        // 4G+ : RTT 62→85→108 (pic au palier 3) puis 86 + 7,5 % de perte au max → CONGESTION.
+        let g4 = [(0.32, 0.0, 62u32), (0.80, 0.0, 85), (1.60, 0.0, 108), (3.20, 7.5, 86)];
+        assert!(classify_loss_trend(&g4).starts_with("CONGESTION"));
+        // Fibre : RTT plat ~28 ms, perte quasi nulle → SAIN.
+        let fibre = [(0.32, 0.0, 28u32), (0.80, 0.0, 28), (1.60, 0.0, 28), (3.17, 1.5, 31)];
+        assert!(classify_loss_trend(&fibre).starts_with("SAIN"));
     }
 
     /// Le rapport JSON d'un losscheck est bien formé et porte session, verdict et paliers.
