@@ -63,6 +63,7 @@ fn main() {
         Some("vivant") => net::run_vivant(args.get(2).map(String::as_str).unwrap_or("agitee")),
         Some("voix") => net::run_voix(args.get(2).map(String::as_str).unwrap_or("")),
         Some("codec") => dsp::run_codec(args.get(2).map(String::as_str).unwrap_or("")),
+        Some("micro") => dsp::run_micro(args.get(2).map(String::as_str).unwrap_or("")),
         Some("natcheck") => net::run_natcheck(),
         Some("losscheck") => net::run_losscheck(),
         Some("nat-test") => net::run_nat_test(args.get(2).map(String::as_str).unwrap_or("client")),

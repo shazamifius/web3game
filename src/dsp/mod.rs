@@ -11,7 +11,9 @@
 //! (FFT→IFFT et analyse→synthèse reconstruisent le signal à l'epsilon flottant près).
 
 pub mod codec;
+pub mod denoise;
 pub mod fft;
 pub mod psycho;
 
 pub use codec::run_codec;
+pub use denoise::run_micro;
