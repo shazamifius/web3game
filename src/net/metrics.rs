@@ -242,8 +242,15 @@ fn link_stats_by_peer(
 /// POST HTTP/1.0 minimaliste (upload des résultats), SANS dépendance. true si envoyé.
 fn http_post(host: &str, port: u16, path: &str, body: &str) -> bool {
     use std::io::{Read, Write};
+    use std::net::ToSocketAddrs;
     let timeout = std::time::Duration::from_secs(5);
-    let mut stream = match std::net::TcpStream::connect((host, port)) {
+    // CONNECT BORNÉ (même raison que http_get_bytes) : un agent ne doit jamais se figer sur un
+    // serveur muet — il retombe sur `false` et garde sa config courante (self-sufficient).
+    let addr = match (host, port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
+        Some(a) => a,
+        None => return false,
+    };
+    let mut stream = match std::net::TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -440,8 +447,12 @@ fn parse_content_length(headers: &[u8]) -> Option<usize> {
 
 fn http_get_bytes(host: &str, port: u16, path: &str) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
-    let timeout = std::time::Duration::from_secs(10); // un binaire est gros → marge
-    let mut stream = std::net::TcpStream::connect((host, port)).ok()?;
+    use std::net::ToSocketAddrs;
+    let timeout = std::time::Duration::from_secs(10); // un binaire est gros → marge en LECTURE
+    // CONNECT BORNÉ (5 s) : sans ça, un SYN avalé (hairpin cassé, port filtré, serveur muet) fait
+    // PENDRE la commande à l'infini (« jeu stats flotte dans le vide ») au lieu de retomber sur None.
+    let addr = (host, port).to_socket_addrs().ok()?.next()?;
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
@@ -1681,6 +1692,20 @@ mod tests {
         assert_eq!(connection_kind("88.167.242.251"), "publique");
         assert_eq!(connection_kind(""), "?");
         assert_eq!(connection_kind("2a01:e0a::1"), "IPv6/?");
+    }
+
+    /// RÉGRESSION « jeu stats flotte dans le vide » : un serveur INJOIGNABLE doit rendre `None`
+    /// VITE (connect borné), jamais pendre à l'infini. On prend un port éphémère puis on le libère
+    /// → connect refusé/borné → None en bien moins que le timeout.
+    #[test]
+    fn http_get_echoue_vite_si_serveur_injoignable() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        }; // listener droppé → le port n'écoute plus
+        let t = std::time::Instant::now();
+        assert!(http_get("127.0.0.1", port, "/presence.ndjson").is_none(), "serveur muet → None");
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "doit échouer vite, pas pendre : {:?}", t.elapsed());
     }
 
     /// B1 (28 juin) — anti-brick sur lien bas débit : `http_get_bytes` REFUSE un corps tronqué
