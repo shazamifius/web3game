@@ -324,6 +324,62 @@ fn ecrire_csv(chemin: &str, percu: &[(f64, Vec3)], traj: Traj) -> std::io::Resul
     Ok(())
 }
 
+/// Génère un graphe SVG (sans aucune dépendance) : la composante X au cours du temps, vérité (noir) vs chaque
+/// série perçue, sur la fenêtre `[t0, t1]`. Un SVG s'ouvre d'un double-clic (navigateur) ET s'affiche sur GitHub.
+fn ecrire_svg(chemin: &str, traj: Traj, series: &[(&str, &str, &[(f64, Vec3)])], t0: f64, t1: f64) -> std::io::Result<()> {
+    let (w, h) = (920.0_f64, 380.0_f64);
+    let (ml, mr, mt, mb) = (56.0_f64, 180.0_f64, 34.0_f64, 42.0_f64);
+    let (pw, ph) = (w - ml - mr, h - mt - mb);
+    let comp = |v: Vec3| v.x as f64; // on trace la composante X (le retard et les saccades s'y voient bien)
+
+    // Vérité échantillonnée finement sur la fenêtre.
+    let nv = 600usize;
+    let verite: Vec<(f64, f64)> = (0..=nv)
+        .map(|i| { let t = t0 + (t1 - t0) * i as f64 / nv as f64; (t, comp(echantillon_verite(traj, t).0)) })
+        .collect();
+    let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &(_, y) in &verite {
+        ymin = ymin.min(y);
+        ymax = ymax.max(y);
+    }
+    for (_, _, pts) in series {
+        for &(t, p) in *pts {
+            if t >= t0 && t <= t1 {
+                let y = comp(p);
+                ymin = ymin.min(y);
+                ymax = ymax.max(y);
+            }
+        }
+    }
+    let pad = (ymax - ymin) * 0.08 + 1e-6;
+    ymin -= pad;
+    ymax += pad;
+    let sx = |t: f64| ml + (t - t0) / (t1 - t0) * pw;
+    let sy = |y: f64| mt + (1.0 - (y - ymin) / (ymax - ymin)) * ph;
+    let poly = |pts: &[(f64, f64)]| pts.iter().map(|&(t, y)| format!("{:.1},{:.1}", sx(t), sy(y))).collect::<Vec<_>>().join(" ");
+
+    let mut s = String::new();
+    s.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" font-family=\"sans-serif\" font-size=\"13\">\n"));
+    s.push_str(&format!("<rect width=\"{w}\" height=\"{h}\" fill=\"white\"/>\n"));
+    s.push_str(&format!("<text x=\"{ml}\" y=\"20\" fill=\"#333\" font-weight=\"bold\">Banc vivant — X(t) : verite vs percu (4G congestionne, d=100 ms)</text>\n"));
+    // Axes.
+    s.push_str(&format!("<line x1=\"{ml}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#999\"/>\n", mt + ph, ml + pw, mt + ph));
+    s.push_str(&format!("<line x1=\"{ml}\" y1=\"{mt}\" x2=\"{ml}\" y2=\"{}\" stroke=\"#999\"/>\n", mt + ph));
+    s.push_str(&format!("<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" fill=\"#555\">temps (s)</text>\n", ml + pw / 2.0, h - 10.0));
+    // Vérité (noir, épais) puis chaque série.
+    s.push_str(&format!("<polyline fill=\"none\" stroke=\"#222\" stroke-width=\"2.6\" points=\"{}\"/>\n", poly(&verite)));
+    let mut ly = mt + 6.0;
+    s.push_str(&format!("<text x=\"{}\" y=\"{}\" fill=\"#222\">— verite</text>\n", ml + pw + 14.0, ly));
+    for (label, col, pts) in series {
+        let p: Vec<(f64, f64)> = pts.iter().filter(|&&(t, _)| t >= t0 && t <= t1).map(|&(t, v)| (t, comp(v))).collect();
+        s.push_str(&format!("<polyline fill=\"none\" stroke=\"{col}\" stroke-width=\"1.6\" points=\"{}\"/>\n", poly(&p)));
+        ly += 22.0;
+        s.push_str(&format!("<text x=\"{}\" y=\"{}\" fill=\"{col}\">— {label}</text>\n", ml + pw + 14.0, ly));
+    }
+    s.push_str("</svg>\n");
+    std::fs::write(chemin, s)
+}
+
 /// Affiche le balayage : pour chaque profil de lien, et chaque délai d'interpolation, les 3 métriques.
 /// `jeu vivant [calme|agitee]`.
 pub fn run_vivant(traj_name: &str) {
@@ -424,15 +480,21 @@ pub fn run_vivant(traj_name: &str) {
     }
     println!();
 
-    // ====== Export CSV des deux courbes (cas dur, d_interp = 100 ms) pour les VISUALISER ======
-    let f1 = "vivant_courbes_sans_ressort.csv";
-    let f2 = "vivant_courbes_avec_ressort.csv";
-    let ok1 = ecrire_csv(f1, &reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0), traj).is_ok();
-    let ok2 = ecrire_csv(f2, &reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06), traj).is_ok();
-    if ok1 && ok2 {
-        println!("Courbes exportées (4G congestionné, d_interp = 100 ms) → {f1} (brut) · {f2} (ressort 60 ms).");
-        println!("Colonnes : t, vrai_x..z, percu_x..z — à superposer dans un tableur/grapheur.\n");
-    }
+    // ====== Export des deux courbes (cas dur, d_interp = 100 ms) pour les VISUALISER ======
+    let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0);
+    let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06);
+    let _ = ecrire_csv("vivant_courbes_sans_ressort.csv", &sans, traj);
+    let _ = ecrire_csv("vivant_courbes_avec_ressort.csv", &avec, traj);
+    let _ = ecrire_svg(
+        "vivant_courbes.svg",
+        traj,
+        &[("percu brut (rouge)", "#d62728", &sans), ("percu + ressort (bleu)", "#1f77b4", &avec)],
+        4.0,
+        9.0,
+    );
+    println!("Courbes exportées (4G congestionné, d_interp = 100 ms) :");
+    println!("  • vivant_courbes.svg → OUVRIR d'un double-clic (navigateur) : vérité (noir) vs brut (rouge) vs ressort (bleu).");
+    println!("  • vivant_courbes_sans_ressort.csv / _avec_ressort.csv → données (séparateur VIRGULE).\n");
 
     println!("Lecture : le BON d_interp est le plus PETIT qui reste « ✓ vivant ». Le ressort lisse les saccades");
     println!("(J baisse) à bas délai, au prix d'un peu de retard (d_eff monte) — le compromis, tracé par la mesure.");
