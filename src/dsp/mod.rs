@@ -10,4 +10,7 @@
 //! Zéro dépendance externe : un FFT radix-2 fait main. La preuve qui ne ment pas = le **round-trip exact**
 //! (FFT→IFFT et analyse→synthèse reconstruisent le signal à l'epsilon flottant près).
 
+pub mod codec;
 pub mod fft;
+
+pub use codec::run_codec;
