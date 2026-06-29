@@ -24,7 +24,7 @@
 
 use super::bot::Bot;
 use super::crypto::PeerId;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Instant;
 
 /// Un événement d'ARRIVÉE d'état distant, vu par un observateur : QUAND on l'a reçu
@@ -434,16 +434,26 @@ fn heartbeat_json(ts: u64, host: &str, ver: &str, ev: &str, diag: &str) -> Strin
     format!("{{\"ts\":{ts},\"host\":\"{host}\",\"ver\":\"{ver}\",\"ev\":\"{ev}\"{diag}}}")
 }
 
-/// CACHE de la SONDE DE LIEN (fragment JSON `,"nat":"…","rtt":N,"jitter":N`), calculé UNE fois en
-/// arrière-plan au démarrage de l'agent. `OnceLock` = std pur, thread-safe, zéro dépendance.
-static LINK_DIAG: OnceLock<String> = OnceLock::new();
+/// CACHE de la SONDE DE LIEN (fragment JSON `,"nat":"…","rtt":N,"jitter":N`), RE-calculé en arrière-
+/// plan périodiquement. `Mutex<String>` = std pur, thread-safe, init `const` → toujours zéro dépendance.
+static LINK_DIAG: Mutex<String> = Mutex::new(String::new());
 
-/// Lance la SONDE DE LIEN dans un THREAD (non-bloquant) : l'agent démarre et bat tout de suite ;
-/// dès que la sonde STUN aboutit (~1-2 s), tout battement suivant porte `nat`/`rtt`/`jitter`.
-/// Cohérent avec l'agent « respectueux » — on ne fige jamais le démarrage sur un aller-retour réseau.
+/// Période de RE-SONDE du lien (s). Un lien mobile (4G/5G en tethering, campagne) CHANGE de nature
+/// dans le temps — le même pair peut basculer cône↔symétrique selon la couverture (découverte du
+/// 29 juin). On re-mesure régulièrement pour que le statut SUIVE les bascules, sans redémarrer l'agent.
+/// Coût négligeable (~10 petits paquets STUN par cycle), poli envers les serveurs publics.
+const LINK_PROBE_PERIOD_SECS: u64 = 300;
+
+/// Lance la SONDE DE LIEN dans un THREAD qui la RE-fait toutes les `LINK_PROBE_PERIOD_SECS` (non-
+/// bloquant : l'agent démarre et bat tout de suite ; la 1re sonde aboutit en ~1-2 s, puis tout
+/// battement porte un `nat`/`rtt`/`jitter` à jour). Capte les bascules 4G↔5G SANS redémarrer l'agent.
 fn spawn_link_probe() {
-    std::thread::spawn(|| {
-        let _ = LINK_DIAG.set(super::linkprobe::link_diag());
+    std::thread::spawn(|| loop {
+        let d = super::linkprobe::link_diag();
+        if let Ok(mut g) = LINK_DIAG.lock() {
+            *g = d;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(LINK_PROBE_PERIOD_SECS));
     });
 }
 
@@ -466,7 +476,7 @@ fn send_heartbeat_diag(host_addr: &str, port: u16, ev: &str, diag: &str) {
     // On PRÉFIXE les champs de sonde de lien mis en cache (nat/rtt/jitter) à tout battement → le
     // statut connaît la nature du lien de chaque machine dès que la sonde a abouti. Vide tant que
     // la sonde tourne encore, ou hors agent (jeu stats n'appelle pas ça) → comportement inchangé.
-    let probe = LINK_DIAG.get().map(String::as_str).unwrap_or("");
+    let probe = LINK_DIAG.lock().ok().map(|g| g.clone()).unwrap_or_default();
     let body = heartbeat_json(ts, &host_label(), &agent_version(), ev, &format!("{probe}{diag}"));
     let _ = http_post(host_addr, port, "/heartbeat", &body);
 }
