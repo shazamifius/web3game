@@ -639,6 +639,35 @@ pub fn run_vivant(traj_name: &str) {
     }
     println!();
 
+    // ====== PROFILS RÉELS DE LA FLOTTE (Chantier 1.2) — l'ordre 2 tient-il sur les VRAIS liens ? ======
+    // rtt/gigue MESURÉS par la sonde STUN de l'agent (flotte du 29 juin, ~20h30) ; latence one-way = rtt/2 ;
+    // perte au débit de JEU ≈ 0–2 % (le losscheck montre 0 % jusqu'à 1,6 Mb/s, or le jeu ≈ 0,05 Mb/s). Donc
+    // sur ces liens le vrai facteur n'est pas la perte mais la GIGUE (et la cadence AoI, cf. section 2 Hz).
+    // ⚠ Snapshot : les machines changent de réseau ; la session live (losscheck) raffinera ces profils.
+    println!("── 🛰️ PROFILS RÉELS de la flotte (rtt/gigue mesurés) — ordre 1 vs 2 à d_interp=100 ms");
+    println!("   {:>20} | {:>5} | {:>8} | {:>10} | {:>10} | {}", "lien (mesuré)", "ordre", "d_eff", "F (cm)", "J (m/s³)", "verdict");
+    let flotte = [
+        Profil { nom: "nixos LAN 8ms/0",    latence_s: 0.004, gigue_s: 0.000, perte: 0.00 },
+        Profil { nom: "Nagashima 21ms/2",   latence_s: 0.010, gigue_s: 0.002, perte: 0.01 },
+        Profil { nom: "DESKTOP 39ms/8",     latence_s: 0.020, gigue_s: 0.008, perte: 0.02 },
+        Profil { nom: "MSI 29ms/20 gigue",  latence_s: 0.015, gigue_s: 0.020, perte: 0.02 },
+    ];
+    for p in flotte {
+        let mut rng = Rng::new(seed ^ (p.nom.len() as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let recus = canal(&paquets, &p, &mut rng);
+        for (lbl, ordre) in [("1", Ordre::Un), ("2", Ordre::Deux)] {
+            let percu = reconstruire(&recus, duree, f_rx, 0.10, 0.0, ordre);
+            let (f, d_eff) = fidelite(&percu, pos_vraie, warmup, 0.7);
+            let j = jerk_rms(&percu, f_rx, warmup);
+            let sauts = n_sauts(&percu, warmup, seuil_saut);
+            println!(
+                "   {:>20} | {:>5} | {:>6.0}ms | {:>10.2} | {:>10.1} | {}",
+                p.nom, lbl, d_eff * 1000.0, f * 100.0, j, verdict_de(f, j, sauts, d_eff)
+            );
+        }
+    }
+    println!();
+
     // ====== Export des courbes (cas dur, d_interp = 100 ms) pour les VISUALISER — les 3 régimes ======
     let sans = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.0, Ordre::Un); // ordre 1 brut → saccadé
     let avec = reconstruire(&recus_dur, duree, f_rx, 0.10, 0.06, Ordre::Un); // ordre 1 + ressort fort → flou
