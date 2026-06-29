@@ -490,6 +490,10 @@ pub fn run_vivant(traj_name: &str) {
         Profil { nom: "fixe lointain (CH)", latence_s: 0.010, gigue_s: 0.003, perte: 0.005 },
         Profil { nom: "4G correct", latence_s: 0.019, gigue_s: 0.008, perte: 0.03 },
         Profil { nom: "4G congestionné", latence_s: 0.030, gigue_s: 0.030, perte: 0.08 },
+        // LIEN LENT (mobile saturé / satellite / roaming) — calibré sur un vrai pic mesuré (MSI à 445 ms
+        // RTT, gigue ~45 ms). Régime « haute latence » : la fraîcheur est bornée par le lien (physique),
+        // mais on peut rester LISSE et EXACT (« 500 ms de retard mais fluide = parfait »). Cf. D36.
+        Profil { nom: "lent (satellite/mobile)", latence_s: 0.222, gigue_s: 0.040, perte: 0.02 },
     ];
     let grille_d = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50];
 
