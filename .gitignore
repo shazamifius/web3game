@@ -12,3 +12,5 @@ REPRISE-PRIVEE.md
 vivant_courbes*
 # WAV écrits par `jeu separe wav` (audition des bruits isolés : artefacts locaux, régénérables).
 /voix_wav/
+# Spectrogrammes PNG écrits par `jeu spectre` (visualisation locale, régénérables).
+/voix_spectres/

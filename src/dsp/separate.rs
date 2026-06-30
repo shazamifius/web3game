@@ -28,11 +28,10 @@ const TONAL_SKIRT_MAX: usize = 2; // jupe BORNÉE (± 2 bins) — ne pas dévore
 const HARM_TOL_BINS: f64 = 0.5; // un harmonique = position ≈ multiple entier du fondamental, à ½ bin près
 const BB_FRAC_MIN: f64 = 0.003; // on ne crée une source que si elle pèse > 0.3 % de l'énergie totale
 const CLIC_HF_HZ: f64 = 1500.0; // les transitoires/clics ont du contenu HAUTE-FRÉQUENCE ; la voix voisée non
-const CLIC_SEUIL_SIGMA: f64 = 2.0; // un pic de flux = env > médiane + 2σ (σ robuste via MAD)
-const CLIC_D: usize = 3; // demi-largeur (trames) pour juger la NETTETÉ d'un pic
-const CLIC_NETTETE: f64 = 2.0; // un clic = pic > 2× ses voisins à ±D (≠ bosse syllabique large)
-const CLIC_MIN: usize = 3; // au moins 3 occurrences pour parler de « périodique »
-const CLIC_CV_MAX: f64 = 0.40; // espacements réguliers : coefficient de variation borné
+const CLIC_TAU_MIN_S: f64 = 0.08; // période minimale cherchée (≤ ~12 clics/s)
+const CLIC_R_MIN: f64 = 0.15; // autocorrélation HF normalisée : un pic > 0.15 ⇒ VRAIMENT périodique (robuste au bruit)
+const CLIC_PEAK_FRAC: f64 = 0.8; // période = plus petit τ atteignant 80 % du pic (le FONDAMENTAL, pas un multiple)
+const CLIC_MIN: usize = 3; // au moins 3 occurrences marquées pour créer la source
 
 fn n_bins_uniques(n: usize) -> usize {
     n / 2 + 1
@@ -194,7 +193,7 @@ fn detecter_transitoire(
     sr: f64,
 ) -> Option<(Vec<bool>, f64, usize)> {
     let t = a.len();
-    if t < 2 * CLIC_D + 2 {
+    if t < 8 {
         return None;
     }
     let n = (m - 1) * 2;
@@ -207,37 +206,44 @@ fn detecter_transitoire(
             .map(|k| (a[i][k] - a[i - 1][k]).max(0.0))
             .sum();
     }
-    // Seuil robuste : médiane + 2σ (σ ≈ 1.4826·MAD).
-    let med = mediane(env.clone());
-    let mad = mediane(env.iter().map(|&x| (x - med).abs()).collect());
-    let seuil = med + CLIC_SEUIL_SIGMA * 1.4826 * mad;
-    // Pics NETS (brefs) : max local au-dessus du seuil, dominant ses voisins à ±D (une bosse syllabique large échoue).
-    let mut frames: Vec<usize> = Vec::new();
-    for i in CLIC_D..t - CLIC_D {
-        if env[i] < seuil || env[i] < env[i - 1] || env[i] < env[i + 1] {
-            continue;
-        }
-        let voisin = env[i - CLIC_D].max(env[i + CLIC_D]).max(1e-12);
-        if env[i] > CLIC_NETTETE * voisin {
-            frames.push(i);
-        }
-    }
-    if frames.len() < CLIC_MIN {
+    // AUTOCORRÉLATION normalisée de l'enveloppe (centrée) : intègre sur TOUT le signal → un train périodique
+    // ressort même quand chaque pic individuel est noyé dans un plancher de bruit élevé.
+    let moy = env.iter().sum::<f64>() / t as f64;
+    let centre: Vec<f64> = env.iter().map(|&x| x - moy).collect();
+    let n0: f64 = centre.iter().map(|&x| x * x).sum();
+    if n0 < 1e-12 {
         return None;
     }
-    // Régularité : coefficient de variation des espacements borné.
-    let spac: Vec<f64> = frames.windows(2).map(|w| (w[1] - w[0]) as f64).collect();
-    let moy = spac.iter().sum::<f64>() / spac.len() as f64;
-    let var = spac.iter().map(|&x| (x - moy).powi(2)).sum::<f64>() / spac.len() as f64;
-    if var.sqrt() / moy.max(1e-9) > CLIC_CV_MAX {
+    let tau_min = ((CLIC_TAU_MIN_S * sr / hop as f64).round() as usize).max(2);
+    let tau_max = t / 2;
+    if tau_max <= tau_min {
         return None;
     }
+    let r: Vec<f64> = (tau_min..=tau_max)
+        .map(|tau| (0..t - tau).map(|i| centre[i] * centre[i + tau]).sum::<f64>() / n0)
+        .collect();
+    let r_max = r.iter().cloned().fold(0.0_f64, f64::max);
+    if r_max < CLIC_R_MIN {
+        return None; // pas de périodicité franche → pas de source transitoire
+    }
+    // Période = le PLUS PETIT τ atteignant 80 % du pic (le fondamental, pas un multiple).
+    let tau = tau_min + r.iter().position(|&x| x >= CLIC_PEAK_FRAC * r_max).unwrap_or(0);
+
+    // Trames-clic (pour le masque) = maxima locaux de l'enveloppe au-dessus de moy + 1.5σ.
+    let sigma = (n0 / t as f64).sqrt();
+    let seuil = moy + 1.5 * sigma;
     let mut clic = vec![false; t];
-    for &i in &frames {
-        clic[i] = true;
+    let mut nb = 0;
+    for i in 1..t - 1 {
+        if env[i] >= seuil && env[i] >= env[i - 1] && env[i] >= env[i + 1] {
+            clic[i] = true;
+            nb += 1;
+        }
     }
-    // Période = MÉDIANE des espacements (robuste : un clic manqué double un intervalle sans fausser la médiane).
-    Some((clic, mediane(spac) * hop as f64 / sr, hf0))
+    if nb < CLIC_MIN {
+        return None;
+    }
+    Some((clic, tau as f64 * hop as f64 / sr, hf0))
 }
 
 // ---- Le modèle de séparation -------------------------------------------------------------------------------------
@@ -467,7 +473,7 @@ fn voix_syllabique(sr: f64, n_ech: usize) -> Vec<f32> {
             let t = k as f64 / sr;
             let env = enveloppe((t * 3.0).fract());
             let s: f64 = (1..=5).map(|h| (1.0 / h as f64) * (2.0 * PI * 165.0 * h as f64 * t).sin()).sum();
-            (0.5 * env * s) as f32
+            (0.40 * env * s) as f32 // un peu en retrait pour laisser les bruits AUDIBLES (et garder du headroom)
         })
         .collect()
 }
@@ -476,17 +482,19 @@ fn voix_syllabique(sr: f64, n_ech: usize) -> Vec<f32> {
 fn composantes(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>) {
     use std::f64::consts::PI;
     let t = |k: usize| k as f64 / sr;
+    // Niveaux RÉALISTES : un vrai ventilo / souffle GÊNE autant que la voix → le retrait doit s'ENTENDRE (pas un
+    // bruit minuscule noyé sous une voix dominante, qui rendait mélange/sans_B*/voix_seule indistincts à l'oreille).
     let ventilo: Vec<f32> = (0..n_ech)
-        .map(|k| (0.15 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
+        .map(|k| (0.30 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
         .collect();
     let mut rng = Rng(0xBADCAFE);
-    let souffle: Vec<f32> = (0..n_ech).map(|_| 0.12 * rng.next_f32()).collect();
+    let souffle: Vec<f32> = (0..n_ech).map(|_| 0.18 * rng.next_f32()).collect();
     let clics: Vec<f32> = (0..n_ech)
         .map(|k| {
             let periode = (sr * 0.5) as usize;
             let phase = k % periode.max(1);
             let env = (-(phase as f64) / (sr * 0.004)).exp();
-            (0.5 * env * (2.0 * PI * 2000.0 * t(k)).sin()) as f32
+            (0.6 * env * (2.0 * PI * 2000.0 * t(k)).sin()) as f32
         })
         .collect();
     let voix = voix_syllabique(sr, n_ech);

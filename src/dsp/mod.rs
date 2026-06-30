@@ -18,6 +18,7 @@ pub mod fft;
 pub mod optim;
 pub mod psycho;
 pub mod separate;
+pub mod spectro;
 pub mod stoi;
 
 pub use adaptive::run_adaptatif;
@@ -26,3 +27,4 @@ pub use codec::run_codec;
 pub use denoise::run_micro;
 pub use optim::run_optim;
 pub use separate::run_separe;
+pub use spectro::run_spectre;
