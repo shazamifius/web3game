@@ -62,6 +62,7 @@ fn main() {
         ),
         Some("vivant") => net::run_vivant(args.get(2).map(String::as_str).unwrap_or("agitee")),
         Some("aoi") => net::run_aoi(args.get(2).map(String::as_str).unwrap_or("")),
+        Some("aoi-live") => net::run_aoi_e2e(),
         Some("voix") => net::run_voix(args.get(2).map(String::as_str).unwrap_or("")),
         Some("codec") => dsp::run_codec(args.get(2).map(String::as_str).unwrap_or("")),
         Some("micro") => dsp::run_micro(args.get(2).map(String::as_str).unwrap_or("")),

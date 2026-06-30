@@ -447,6 +447,19 @@ impl NetLink {
         Self::assemble(socket, rendezvous, color, identity)
     }
 
+    /// Comme `new_on`, mais avec une identité FOURNIE et SANS minage de preuve de travail — pour les
+    /// bancs DÉTERMINISTES qui n'en ont pas besoin (ex. `aoi-live` : on injecte les pairs à la main,
+    /// hors du chemin `learn_peer` qui exige la PoW, et la déclaration d'engagement ne vérifie qu'un
+    /// SCEAU). Évite de miner une PoW par nœud (qui ferait ramer le banc à l'exécution, hors test).
+    pub(crate) fn new_on_with_identity(
+        socket: Socket,
+        rendezvous: SocketAddr,
+        color: (f32, f32, f32),
+        identity: Identity,
+    ) -> NetLink {
+        Self::assemble(socket, rendezvous, color, identity)
+    }
+
     /// Assemble l'état d'un `NetLink` à partir de ses briques (anti-divergence D2 : UNE seule
     /// construction, partagée par `with_identity` (UDP) et `new_on` (bus)).
     fn assemble(socket: Socket, rendezvous: SocketAddr, color: (f32, f32, f32), identity: Identity) -> NetLink {
