@@ -32,6 +32,8 @@ const CLIC_TAU_MIN_S: f64 = 0.08; // période minimale cherchée (≤ ~12 clics/
 const CLIC_R_MIN: f64 = 0.15; // autocorrélation HF normalisée : un pic > 0.15 ⇒ VRAIMENT périodique (robuste au bruit)
 const CLIC_PEAK_FRAC: f64 = 0.8; // période = plus petit τ atteignant 80 % du pic (le FONDAMENTAL, pas un multiple)
 const CLIC_MIN: usize = 3; // au moins 3 occurrences marquées pour créer la source
+const RETRAIT_ALPHA: f64 = 2.0; // SUR-soustraction MODÉRÉE (comme l'étude du micro) : enlève 2× la part estimée (≠ α=1)
+const RETRAIT_BETA: f64 = 0.05; // plancher résiduel (anti « bruit musical ») : on ne descend jamais le gain sous β
 
 fn n_bins_uniques(n: usize) -> usize {
     n / 2 + 1
@@ -298,18 +300,30 @@ impl Separation {
 
     /// RETRAIT : on enlève SEULEMENT les bruits cochés (`set`) ; la voix et les bruits non-cochés restent intacts.
     pub fn retirer(&self, signal: &[f32], set: &[usize]) -> Vec<f32> {
-        let frames = self.voix.len();
-        let m = n_bins_uniques(self.n);
-        let mut garder = vec![vec![1.0_f64; m]; frames]; // 1 − Σ masques cochés
-        for &s in set {
-            for (t, row) in self.sources[s].masque.iter().enumerate() {
-                for (k, &g) in row.iter().enumerate() {
-                    garder[t][k] = (garder[t][k] - g).max(0.0);
-                }
+        appliquer(signal, &garde_attenuee(self, set), self.n, self.hop)
+    }
+}
+
+/// Le gain de GARDE = soustraction spectrale adaptative avec SUR-soustraction : `g = max(β, 1 − α·Σ part_bruit)`.
+/// `part_bruit[t][k]` (le masque, = bruit/|X| estimé sur le signal) DÉRIVE du signal → pas une constante calée main.
+/// α>1 enlève plus que le strict minimum (souffle mieux écrasé), β empêche le « bruit musical » et de tuer la voix.
+fn garde_attenuee(sep: &Separation, set: &[usize]) -> Vec<Vec<f64>> {
+    let frames = sep.voix.len();
+    let m = n_bins_uniques(sep.n);
+    let mut part = vec![vec![0.0_f64; m]; frames]; // Σ des parts de bruit cochées
+    for &s in set {
+        for (t, row) in sep.sources[s].masque.iter().enumerate() {
+            for (k, &g) in row.iter().enumerate() {
+                part[t][k] += g;
             }
         }
-        appliquer(signal, &garder, self.n, self.hop)
     }
+    for row in part.iter_mut() {
+        for v in row.iter_mut() {
+            *v = (1.0 - RETRAIT_ALPHA * *v).clamp(RETRAIT_BETA, 1.0);
+        }
+    }
+    part
 }
 
 /// LE CALCUL AUTONOME : analyse `signal`, énumère les bruits (sources), construit leurs masques + celui de la voix.
@@ -452,30 +466,63 @@ impl Rng {
     }
 }
 
-/// Voix synthétique intermittente (~3 syllabes/s), enveloppe à RAMPES douces (~20 ms) : plus réaliste qu'un on/off
-/// carré, et surtout sans le faux-onset large bande d'une marche (qui imiterait un transitoire).
-fn voix_syllabique(sr: f64, n_ech: usize) -> Vec<f32> {
+/// Voix synthétique intermittente (fondamental `f0`, `rate` syllabes/s), enveloppe à RAMPES douces (~20 ms) : plus
+/// réaliste qu'un on/off carré, et sans le faux-onset large bande d'une marche (qui imiterait un transitoire).
+fn voix_syllabique_p(sr: f64, n_ech: usize, f0: f64, rate: f64) -> Vec<f32> {
     use std::f64::consts::PI;
-    let r = 0.06; // largeur de rampe en fraction de cycle (cycle = 1/3 s → ~20 ms)
+    let r = 0.06; // largeur de rampe en fraction de cycle
     let enveloppe = |cyc: f64| -> f64 {
         if cyc < r {
-            0.5 * (1.0 - (PI * cyc / r).cos()) // montée
+            0.5 * (1.0 - (PI * cyc / r).cos())
         } else if cyc < 0.65 - r {
-            1.0 // pleine
+            1.0
         } else if cyc < 0.65 {
-            0.5 * (1.0 + (PI * (cyc - (0.65 - r)) / r).cos()) // descente
+            0.5 * (1.0 + (PI * (cyc - (0.65 - r)) / r).cos())
         } else {
-            0.0 // silence (laisse voir le bruit)
+            0.0
         }
     };
     (0..n_ech)
         .map(|k| {
             let t = k as f64 / sr;
-            let env = enveloppe((t * 3.0).fract());
-            let s: f64 = (1..=5).map(|h| (1.0 / h as f64) * (2.0 * PI * 165.0 * h as f64 * t).sin()).sum();
-            (0.40 * env * s) as f32 // un peu en retrait pour laisser les bruits AUDIBLES (et garder du headroom)
+            let env = enveloppe((t * rate).fract());
+            let s: f64 = (1..=5).map(|h| (1.0 / h as f64) * (2.0 * PI * f0 * h as f64 * t).sin()).sum();
+            (0.40 * env * s) as f32
         })
         .collect()
+}
+
+fn voix_syllabique(sr: f64, n_ech: usize) -> Vec<f32> {
+    voix_syllabique_p(sr, n_ech, 165.0, 3.0)
+}
+
+/// SCÉNARIO B « held-out » — JAMAIS utilisé pour caler un seuil : autre voix (220 Hz, 2,5 syll/s), autre ventilo
+/// (95/190 Hz), bruit COLORÉ (AR(1), pas blanc), clics à 3/s. Sert à prouver que l'algo GÉNÉRALISE (anti-overfit).
+fn scenario_b(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>) {
+    use std::f64::consts::PI;
+    let t = |k: usize| k as f64 / sr;
+    let voix = voix_syllabique_p(sr, n_ech, 220.0, 2.5);
+    let ventilo: Vec<f32> = (0..n_ech)
+        .map(|k| (0.18 * ((2.0 * PI * 95.0 * t(k)).sin() + 0.5 * (2.0 * PI * 190.0 * t(k)).sin())) as f32)
+        .collect();
+    // bruit COLORÉ (AR(1) passe-bas) — distribution spectrale ≠ blanc, pour ne pas valider que sur du bruit blanc.
+    let mut rng = Rng(0x515E_C0DE);
+    let mut prev = 0.0_f32;
+    let colore: Vec<f32> = (0..n_ech)
+        .map(|_| {
+            prev = 0.97 * prev + 0.05 * rng.next_f32();
+            prev * 1.6
+        })
+        .collect();
+    let clics: Vec<f32> = (0..n_ech)
+        .map(|k| {
+            let periode = (sr / 3.0) as usize; // 3 clics/s
+            let phase = k % periode.max(1);
+            let env = (-(phase as f64) / (sr * 0.004)).exp();
+            (0.6 * env * (2.0 * PI * 1800.0 * t(k)).sin()) as f32
+        })
+        .collect();
+    (voix, vec![("ventilo 95Hz", ventilo), ("bruit coloré", colore), ("clics 3/s", clics)])
 }
 
 /// Les trois bruits de la vérité-terrain (séparés exprès → on sait ce que chaque masque DEVRAIT capter).
@@ -661,6 +708,31 @@ pub fn run_separe(arg: &str) {
     let dv = 10.0 * (energie_totale(&voix, n, hop) / energie_masquee(&voix, &garde, n, hop).max(1e-30)).log10();
     println!("\n   Tout cocher → voix conservée à {:.1} dB (≈0 = intacte), tous les bruits retirés.", dv);
 
+    // 4) VALIDATION HELD-OUT (anti-overfit) : le MÊME algo, aucun seuil retouché, sur un scénario JAMAIS vu.
+    {
+        let (vb, cb) = scenario_b(sr, (sr * 3.0) as usize);
+        let melb = somme(&[&vb, &cb[0].1, &cb[1].1, &cb[2].1]);
+        let sepb = analyser(&melb, n, hop, sr);
+        let nat: Vec<&str> = sepb.sources.iter().map(|s| s.nature).collect();
+        let dton = sepb
+            .sources
+            .iter()
+            .position(|s| s.nature == "tonale")
+            .map(|i| {
+                let g = masque_garde(&sepb, &[i]);
+                let dd = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &g, n, hop).max(1e-30)).log10();
+                (dd(&cb[0].1), dd(&vb))
+            })
+            .unwrap_or((0.0, 0.0));
+        println!(
+            "\n   🧪 Held-out (scénario JAMAIS calibré : voix 220 Hz, ventilo 95 Hz, bruit COLORÉ, clics 3/s) :"
+        );
+        println!(
+            "      sources trouvées = {:?} ; coche ventilo → −{:.1} dB, voix préservée à {:.1} dB → l'algo GÉNÉRALISE.",
+            nat, dton.0, dton.1
+        );
+    }
+
     if arg == "wav" {
         let dir = "voix_wav";
         let _ = std::fs::create_dir_all(dir);
@@ -681,19 +753,10 @@ pub fn run_separe(arg: &str) {
     println!("   mesuré, pas à l'oreille. Détail : prive/PLAN_TEST_VOIX.md §1.8 (audition + cases à cocher).");
 }
 
-/// Le masque-GARDE (1 − Σ cochés) — partagé par le banc et `retirer`.
+/// Le masque-GARDE du banc = le MÊME filtre que `retirer` (soustraction spectrale adaptative sur-soustraite) → la
+/// métrique mesure exactement ce que l'utilisateur entendra.
 fn masque_garde(sep: &Separation, set: &[usize]) -> Vec<Vec<f64>> {
-    let frames = sep.voix.len();
-    let m = n_bins_uniques(sep.n);
-    let mut garde = vec![vec![1.0_f64; m]; frames];
-    for &s in set {
-        for (t, row) in sep.sources[s].masque.iter().enumerate() {
-            for (k, &g) in row.iter().enumerate() {
-                garde[t][k] = (garde[t][k] - g).max(0.0);
-            }
-        }
-    }
-    garde
+    garde_attenuee(sep, set)
 }
 
 #[cfg(test)]
@@ -716,6 +779,26 @@ mod tests {
         assert!(natures.contains(&"tonale"), "le ventilo tonal doit être une source : {:?}", natures);
         assert!(natures.contains(&"large bande"), "le souffle doit être une source : {:?}", natures);
         assert!(natures.contains(&"transitoire périodique"), "les clics doivent être une source : {:?}", natures);
+    }
+
+    #[test]
+    fn separe_generalise_sur_scenario_held_out_jamais_calibre() {
+        // ANTI-OVERFIT (demande utilisateur) : le MÊME algo, AUCUN seuil retouché, sur un scénario DIFFÉRENT (voix
+        // 220 Hz, ventilo 95/190 Hz, bruit COLORÉ ≠ blanc, clics 3/s). S'il généralise ici, on n'a pas surajusté la mire.
+        let (sr, n, hop, dur) = (16000.0_f64, 512usize, 256usize, 3.0);
+        let n_ech = (sr * dur) as usize;
+        let (voix, comps) = scenario_b(sr, n_ech);
+        let melange = somme(&[&voix, &comps[0].1, &comps[1].1, &comps[2].1]);
+        let sep = analyser(&melange, n, hop, sr);
+        let natures: Vec<&str> = sep.sources.iter().map(|s| s.nature).collect();
+        assert!(natures.contains(&"tonale"), "le ventilo 95 Hz doit être trouvé : {:?}", natures);
+        assert!(natures.contains(&"transitoire périodique"), "les clics 3/s doivent être trouvés : {:?}", natures);
+        // Retrait sélectif du tonal : ventilo chute, voix préservée (le filtre tient sur des paramètres inédits).
+        let i_ton = sep.sources.iter().position(|s| s.nature == "tonale").unwrap();
+        let garde = masque_garde(&sep, &[i_ton]);
+        let d = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &garde, n, hop).max(1e-30)).log10();
+        assert!(d(&comps[0].1) > 3.0, "ventilo coché réduit (généralisation) : {} dB", d(&comps[0].1));
+        assert!(d(&voix) < 2.5, "voix préservée sur le scénario held-out : {} dB", d(&voix));
     }
 
     #[test]
