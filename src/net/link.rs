@@ -5,7 +5,9 @@
 //! tant qu'on ne l'a pas), notre couleur, et l'ANNUAIRE des autres joueurs.
 
 use super::accuse::encode_accuse;
-use super::aoi::{cell_of, dist2, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS};
+use super::aoi::{
+    cell_of, dist2, relevance_transitive, relevance_weight, FOCUS_SWAP_MARGIN, K_FOCUS, MAX_ENGAGED,
+};
 use super::cell::{build_cell_summary, sign_summary, summary_sig_ok, CellSummary};
 use super::crypto::{load_or_create_identity, Identity, PeerId, pow_bits};
 use super::message::{decode_canonical, sig_ok};
@@ -24,6 +26,12 @@ pub struct NetLink {
     /// numéro attribué — c'est notre clé, qu'on connaît dès le départ.
     pub(crate) my_id: Option<PeerId>,
     pub(crate) my_color: (f32, f32, f32),
+    /// MES PARTENAIRES déclarés (chap. D29) : les quelques pairs avec qui JE me déclare engagé
+    /// (interaction en cours). Diffusé à basse cadence dans un `KIND_ENGAGED` signé → ceux qui
+    /// m'ont au focus rehaussent ces tiers (pertinence transitive). DÉFAUT VIDE = on n'émet RIEN
+    /// (comportement byte-intact) ; rempli par `set_engaged` (côté UE/sidecar, ou banc). Borné à
+    /// `MAX_ENGAGED`.
+    pub(crate) my_engaged: Vec<PeerId>,
     /// Notre identité cryptographique (paire de clés). On SIGNE nos paquets avec ;
     /// notre clé publique EST notre identité, portée dans chaque paquet.
     pub(crate) identity: Identity,
@@ -79,6 +87,13 @@ pub struct NetLink {
     /// on NE recompose PAS le top-K à chaque tick (ce qui causait le « churn » mesuré au 8.2b),
     /// on garde les membres tant qu'ils restent pertinents. Le reste de la table = la CONSCIENCE.
     pub(crate) focus: Vec<PeerId>,
+    /// ENGAGEMENTS DÉCLARÉS PAR LES AUTRES (chap. D29, T1) : pour chaque pair connu, les quelques
+    /// partenaires qu'il a déclarés (reçu via un `KIND_ENGAGED` SIGNÉ → authentique). Lu par
+    /// `refresh_focus` pour la PERTINENCE TRANSITIVE : un pair LOIN mais ENGAGÉ avec un de mes
+    /// proches est rehaussé (« mon voisin lui parle »), là où la seule distance le reléguait à la
+    /// conscience. VIDE par défaut (personne n'émet) → `refresh_focus` est alors IDENTIQUE à la
+    /// sélection spatiale d'origine. Borné (une entrée par pair connu, purgée à l'éviction).
+    pub(crate) peer_engaged: HashMap<PeerId, Vec<PeerId>>,
     /// RÉSUMÉS DE CELLULE reçus (chap. 8.3) : le dernier résumé connu par cellule. C'est ce qui
     /// nous fait PERCEVOIR une foule lointaine via UN flux par cellule au lieu de N états — fin de
     /// l'effondrement de fraîcheur en 1/N de la conscience. Borné par `MAX_CELLS` (anti-inondation
@@ -440,6 +455,7 @@ impl NetLink {
             rendezvous,
             my_id: None,
             my_color: color,
+            my_engaged: Vec::new(),
             identity,
             peers: HashMap::new(),
             peer_pos: HashMap::new(),
@@ -452,6 +468,7 @@ impl NetLink {
             accused_broadcast: HashSet::new(),
             gossip_credit: HashMap::new(),
             focus: Vec::new(),
+            peer_engaged: HashMap::new(),
             cell_summaries: HashMap::new(),
             summary_seq: 0,
             perceived: HashSet::new(),
@@ -516,6 +533,7 @@ impl NetLink {
                 self.confirmed_pos.remove(&id);
                 self.peer_seen.remove(&id);
                 self.replay.remove(&id);
+                self.peer_engaged.remove(&id);
                 true
             }
             None => false, // tous les pairs sont actifs → on ne sacrifie personne
@@ -696,6 +714,36 @@ impl NetLink {
         by_cell
     }
 
+    /// DÉCLARE MES partenaires engagés (chap. D29) — appelé par l'UE/sidecar (« je parle avec
+    /// untel ») ou un banc. Tronqué à `MAX_ENGAGED` (borne du protocole). Vide → on n'émettra
+    /// aucun `KIND_ENGAGED` (défaut byte-intact). On ne se déclare jamais engagé avec soi-même
+    /// ni avec l'identité nulle (bruit inutile).
+    #[allow(dead_code)] // EN ATTENTE : injecteur côté ÉMISSION ; appelé par l'UE/sidecar (« je parle
+    // avec untel ») ou un banc — les bots headless n'ont pas de vraie source d'interaction. La
+    // RÉCEPTION + la consommation (`note_engaged`, `refresh_focus`) sont, elles, déjà vivantes.
+    pub(crate) fn set_engaged(&mut self, mut engaged: Vec<PeerId>) {
+        engaged.retain(|id| !id.is_none() && Some(*id) != self.my_id);
+        engaged.truncate(MAX_ENGAGED);
+        self.my_engaged = engaged;
+    }
+
+    /// ENREGISTRE les partenaires qu'un AUTRE pair a déclarés (chap. D29), reçus via un
+    /// `KIND_ENGAGED` déjà VÉRIFIÉ (sceau authentique). On ne stocke QUE pour un pair CONNU
+    /// (`peers`) : un inconnu a une pertinence spatiale nulle → sa transitivité serait inerte, et
+    /// on borne ainsi la mémoire (une entrée par pair de la table, purgée à l'éviction). Tronqué
+    /// à `MAX_ENGAGED`. Une liste vide EFFACE l'entrée (le pair n'est plus engagé avec personne).
+    pub(crate) fn note_engaged(&mut self, id: PeerId, mut partners: Vec<PeerId>) {
+        if !self.peers.contains_key(&id) {
+            return; // pair inconnu → transitivité inerte de toute façon ; on ne gonfle pas la mémoire
+        }
+        partners.truncate(MAX_ENGAGED);
+        if partners.is_empty() {
+            self.peer_engaged.remove(&id);
+        } else {
+            self.peer_engaged.insert(id, partners);
+        }
+    }
+
     /// Met à jour l'ensemble FOCUS COLLANT (chap. 8.2a-bis) depuis notre position `my`.
     /// Le focus = les pairs à qui on tient un lien plein débit ; on le STABILISE :
     ///   1. on retire les membres qui ont quitté la table ;
@@ -706,15 +754,26 @@ impl NetLink {
     /// connue a pertinence 0 → il n'accapare PAS de slot de focus. C'est le DÉCOUPLAGE
     /// découverte/focus : un inconnu se fait entendre par la CONSCIENCE, pas en volant le plein débit.
     pub(crate) fn refresh_focus(&mut self, my: (f32, f32)) {
-        // Pertinence par pair connu (snapshot local → pas de double emprunt de self).
-        let rel: HashMap<PeerId, f32> = self
-            .peers
-            .keys()
-            .map(|id| {
-                let r = self.peer_pos.get(id).map(|&p| relevance_weight(dist2(my, p))).unwrap_or(0.0);
-                (*id, r)
-            })
+        // Pertinence par pair connu (snapshot local → pas de double emprunt de self). Base = SPATIALE.
+        let ids: Vec<PeerId> = self.peers.keys().copied().collect();
+        let base: Vec<f32> = ids
+            .iter()
+            .map(|id| self.peer_pos.get(id).map(|&p| relevance_weight(dist2(my, p))).unwrap_or(0.0))
             .collect();
+        // PERTINENCE TRANSITIVE (D29, T1) : dès qu'un pair a DÉCLARÉ des engagements, un tiers LOIN
+        // mais engagé avec un de mes proches est REHAUSSÉ (« mon voisin lui parle ») → il garde le
+        // plein débit là où la seule distance le reléguait. Sans AUCUNE déclaration (cas courant),
+        // on garde EXACTEMENT la pertinence spatiale : chemin rapide, byte-pour-byte l'ancien focus.
+        let eff = if self.peer_engaged.is_empty() {
+            base
+        } else {
+            let engaged: Vec<Vec<PeerId>> = ids
+                .iter()
+                .map(|id| self.peer_engaged.get(id).cloned().unwrap_or_default())
+                .collect();
+            relevance_transitive(&ids, &base, &engaged)
+        };
+        let rel: HashMap<PeerId, f32> = ids.into_iter().zip(eff).collect();
         let rel_of = |id: &PeerId| rel.get(id).copied().unwrap_or(0.0);
 
         // 1) on retire les membres partis (et l'identité nulle par précaution).
@@ -1510,6 +1569,91 @@ mod tests {
         link.peer_pos.insert(pid(20), (0.01, 0.0));
         link.refresh_focus(me);
         assert!(link.is_focus(&pid(20)));
+    }
+
+    /// D29/D30 — PERTINENCE > PROXIMITÉ dans la VRAIE sélection (`refresh_focus`, pas le banc isolé) :
+    /// 3 partenaires partis LOIN (40 m) tombent en conscience sous la distance seule, mais l'engagement
+    /// déclaré par mon ami PROCHE les REHAUSSE au focus. C'est l'étape qui rend la thèse réelle dans le
+    /// cœur réseau : on perçoit « les plus PERTINENTS », pas « les plus PROCHES ».
+    #[test]
+    fn pertinence_transitive_garde_les_partenaires_loin_au_focus() {
+        let me = (0.0, 0.0);
+        let friend = pid(1);
+        let partners = [pid(101), pid(102), pid(103)];
+
+        // Table : ami proche (1 m) + 3 partenaires LOIN (40 m) + foule dense (~10 m).
+        let build = || {
+            let mut link = link_de_test();
+            link.peers.insert(friend, addr(7001));
+            link.peer_pos.insert(friend, (1.0, 0.0));
+            for (k, &p) in partners.iter().enumerate() {
+                link.peers.insert(p, addr(7100 + k as u16));
+                link.peer_pos.insert(p, (40.0, k as f32));
+            }
+            for c in 0..12u8 {
+                let id = pid(10 + c);
+                link.peers.insert(id, addr(7200 + c as u16));
+                let a = c as f32 * 0.5;
+                link.peer_pos.insert(id, (10.0 * a.cos(), 10.0 * a.sin())); // anneau ~10 m
+            }
+            link
+        };
+
+        // (1) PROXIMITÉ (aucun engagement déclaré) : la foule proche vole le focus, les partenaires
+        //     lointains tombent en conscience (pas au focus). L'ami proche, lui, y est.
+        let mut prox = build();
+        prox.refresh_focus(me);
+        assert!(prox.is_focus(&friend));
+        for &p in &partners {
+            assert!(!prox.is_focus(&p), "sous proximité, un partenaire LOIN ne doit PAS être au focus");
+        }
+
+        // (2) PERTINENCE : l'ami proche déclare ses 3 partenaires → ils héritent d'une part de SA
+        //     pertinence et ENTRENT au focus, quel que soit l'éloignement.
+        let mut pert = build();
+        pert.note_engaged(friend, partners.to_vec());
+        pert.refresh_focus(me);
+        assert!(pert.is_focus(&friend));
+        for &p in &partners {
+            assert!(pert.is_focus(&p), "sous pertinence, un partenaire engagé via un proche est REHAUSSÉ au focus");
+        }
+    }
+
+    /// D29 — `note_engaged` est BORNÉ : il ignore un pair INCONNU (mémoire bornée), tronque à
+    /// `MAX_ENGAGED`, et une liste VIDE efface l'entrée (le pair n'est plus engagé avec personne).
+    #[test]
+    fn note_engaged_borne_et_pair_inconnu_ignore() {
+        let mut link = link_de_test();
+        let known = pid(1);
+        link.peers.insert(known, addr(7001));
+
+        // pair INCONNU (pas dans `peers`) → aucune entrée (on ne gonfle pas la mémoire).
+        link.note_engaged(pid(2), vec![pid(50)]);
+        assert!(!link.peer_engaged.contains_key(&pid(2)));
+
+        // pair CONNU : liste tronquée à la borne du protocole.
+        let many: Vec<PeerId> = (50..50 + MAX_ENGAGED as u8 + 2).map(pid).collect();
+        link.note_engaged(known, many);
+        assert_eq!(link.peer_engaged.get(&known).map(|v| v.len()), Some(MAX_ENGAGED));
+
+        // liste VIDE → l'entrée est effacée.
+        link.note_engaged(known, vec![]);
+        assert!(!link.peer_engaged.contains_key(&known));
+    }
+
+    /// D29 — `set_engaged` filtre soi-même et l'identité nulle (bruit inutile) et borne à `MAX_ENGAGED`.
+    #[test]
+    fn set_engaged_filtre_soi_et_borne() {
+        let mut link = link_de_test();
+        link.my_id = Some(pid(9));
+        let mut v = vec![pid(9), PeerId::none(), pid(1), pid(2)];
+        for i in 3..3 + MAX_ENGAGED as u8 {
+            v.push(pid(i));
+        }
+        link.set_engaged(v);
+        assert!(!link.my_engaged.contains(&pid(9)), "soi-même est filtré");
+        assert!(!link.my_engaged.iter().any(|id| id.is_none()), "l'identité nulle est filtrée");
+        assert!(link.my_engaged.len() <= MAX_ENGAGED, "borné à MAX_ENGAGED");
     }
 
     /// 8.1b (a) — une carte de gossip SANS preuve de travail est IGNORÉE (pas de

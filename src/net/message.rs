@@ -312,13 +312,11 @@ pub(crate) fn decode_recv_budget(buf: &[u8]) -> Option<(PeerId, f32)> {
 // `engaged` vide → on N'ÉMET RIEN : aucun paquet, comportement byte-intact (comme l'AoI bilatérale).
 // ----------------------------------------------------------------------------
 /// En-tête d'une déclaration = type (1) + version (1) + id émetteur (32) + count (1) = 35 o.
-#[allow(dead_code)] // EN ATTENTE : wire prouvé (tests) ; émis/reçu à l'étape 2 (refresh_focus).
 const ENGAGED_HEADER: usize = 2 + PUBKEY_LEN + 1;
 
 /// Scelle une déclaration d'engagement : mon id (clé) + mes (≤ `MAX_ENGAGED`) partenaires, SIGNÉE
 /// avec ma clé privée. `engaged` est tronqué à `MAX_ENGAGED` (la borne du protocole). À n'émettre
 /// QUE si `engaged` est non vide (sinon il n'y a rien à dire → on se tait, défaut byte-intact).
-#[allow(dead_code)] // EN ATTENTE : prouvé par test ; appelé à l'étape 2 (émission basse cadence).
 pub(crate) fn encode_engaged(identity: &Identity, engaged: &[PeerId]) -> Vec<u8> {
     let n = engaged.len().min(MAX_ENGAGED);
     let body_len = ENGAGED_HEADER + n * PUBKEY_LEN;
@@ -340,7 +338,6 @@ pub(crate) fn encode_engaged(identity: &Identity, engaged: &[PeerId]) -> Vec<u8>
 /// ne colle pas à la clé embarquée. Contrairement à l'état, on vérifie le sceau ICI (la
 /// déclaration ne passe pas par le chemin de réputation) : un appelant qui reçoit `Some` tient
 /// une déclaration AUTHENTIQUE de l'émetteur lui-même. On REJETTE un id nul comme partenaire.
-#[allow(dead_code)] // EN ATTENTE : prouvé par test ; appelé à l'étape 2 (réception, bot.rs).
 pub(crate) fn decode_engaged(buf: &[u8]) -> Option<(PeerId, Vec<PeerId>)> {
     if buf.len() < ENGAGED_HEADER || buf[0] != KIND_ENGAGED || buf[1] != PROTO_VERSION {
         return None;

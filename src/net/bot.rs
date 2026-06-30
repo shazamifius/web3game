@@ -21,8 +21,9 @@ use super::crypto::{PeerId, pow_bits};
 use super::gossip::{decode_gossip, encode_gossip, sample_cards};
 use super::link::NetLink;
 use super::message::{
-    claimed_id, decode_canonical, decode_recv_budget, decode_state_bundle, encode_recv_budget,
-    encode_relay_fwd, encode_signed, encode_state_bundle, sig_ok, PlayerState,
+    claimed_id, decode_canonical, decode_engaged, decode_recv_budget, decode_state_bundle,
+    encode_engaged, encode_recv_budget, encode_relay_fwd, encode_signed, encode_state_bundle, sig_ok,
+    PlayerState,
 };
 use super::orb::{apply_incoming, claimed_owner, decode_orb, orb_sig_ok, Orb, OrbApply};
 use super::punch::{decode_punch, encode_punch, punch_abandoned, punch_retry_tries};
@@ -31,8 +32,9 @@ use super::cell::{
     decode_cell_summary, decode_cell_summary_v2, encode_cell_summary, encode_cell_summary_v2, CellSummary,
 };
 use super::wire::{
-    kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_GOSSIP, KIND_ORB, KIND_PUNCH,
-    KIND_RECV_BUDGET, KIND_RELAY, KIND_STATE, KIND_STATE_BUNDLE, KIND_WELCOME, PROTO_VERSION,
+    kind, KIND_ACCUSE, KIND_CELL_SUMMARY, KIND_CELL_SUMMARY_V2, KIND_ENGAGED, KIND_GOSSIP, KIND_ORB,
+    KIND_PUNCH, KIND_RECV_BUDGET, KIND_RELAY, KIND_STATE, KIND_STATE_BUNDLE, KIND_WELCOME,
+    PROTO_VERSION,
 };
 use crate::math::Vec3;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -150,6 +152,10 @@ const PUNCH_PERIOD: f32 = 0.25;
 /// un lien du relais lossy dès que le direct redevient possible (échec initial transitoire).
 const PUNCH_RETRY_PERIOD: f32 = 30.0;
 const SUMMARY_PERIOD: f32 = 2.0;
+/// Période d'émission de la DÉCLARATION D'ENGAGEMENT (`KIND_ENGAGED`, chap. D29), en s. Basse
+/// cadence VOULUE : l'engagement social change lentement (≪ 20 Hz de l'état) → 2 s suffit, et le
+/// surcoût est négligeable (un petit paquet toutes les 2 s, et SEULEMENT si on a déclaré quelqu'un).
+const ENGAGED_PERIOD: f32 = 2.0;
 /// Période d'émission du gossip (chap. 8.1) : à chaque tic, on présente un lot de
 /// « cartes de visite » à quelques pairs. 0,5 s = découverte rapide sans bavardage.
 const GOSSIP_PERIOD: f32 = 0.5;
@@ -254,6 +260,8 @@ pub(crate) struct Bot {
     recv_in_window: u32,
     /// COUCHE 2 — accumulateur de la période d'annonce de budget (`BUDGET_PERIOD`).
     budget_acc: f32,
+    /// D29 — accumulateur de la période d'émission de la déclaration d'engagement (`ENGAGED_PERIOD`).
+    engaged_acc: f32,
 }
 
 impl Bot {
@@ -329,6 +337,7 @@ impl Bot {
             recv_caps: HashMap::new(),
             recv_in_window: 0,
             budget_acc: 0.0,
+            engaged_acc: 0.0,
         }
     }
 
@@ -695,6 +704,16 @@ impl Bot {
                         }
                     }
                 }
+                // D29 — DÉCLARATION D'ENGAGEMENT d'un pair. `decode_engaged` a DÉJÀ vérifié le sceau
+                // (auto-certifiant) → la déclaration est authentique (un pair ne déclare que SES
+                // propres partenaires). On l'enregistre pour la pertinence transitive de `refresh_focus`
+                // (`note_engaged` ne garde que pour un pair connu → mémoire bornée). Liste vide = il
+                // n'est plus engagé avec personne (on efface). Aucun effet tant que personne n'émet.
+                Some(KIND_ENGAGED) => {
+                    if let Some((id, partners)) = decode_engaged(&bytes) {
+                        self.link.note_engaged(id, partners);
+                    }
+                }
                 Some(KIND_STATE) => self.ingest_state(&bytes, from, now),
                 // LOT relais (12.3 / D17) : on ÉCLATE le lot et on traite chaque état par le MÊME
                 // chemin que KIND_STATE (du + ancien au + récent) → accept_seq dédoublonne, et un seq
@@ -944,6 +963,23 @@ impl Bot {
                 // Oubli des plafonds périmés (le silence d'un pair = il va bien → ∞). TTL seul suffit
                 // (un pair parti cesse d'annoncer → son entrée expire) : pas de fuite, pas de bride fantôme.
                 self.recv_caps.retain(|_, (_, t)| now - *t < RECV_CAP_TTL);
+            }
+        }
+
+        // 4quater) D29 — DÉCLARATION D'ENGAGEMENT (`KIND_ENGAGED`). Émise UNIQUEMENT si on a déclaré
+        //          des partenaires (`my_engaged` non vide) → défaut INERTE, aucun paquet, comportement
+        //          byte-intact. Basse cadence (ENGAGED_PERIOD) : l'engagement change lentement. Signée
+        //          (auto-certifiante). Diffusée à tous les pairs (petit paquet, rare) → ceux qui m'ont
+        //          au focus rehaussent mes partenaires (pertinence transitive, côté réception).
+        self.engaged_acc += dt;
+        if self.engaged_acc >= ENGAGED_PERIOD {
+            self.engaged_acc = 0.0;
+            if !self.link.my_engaged.is_empty() {
+                let pkt = encode_engaged(&self.link.identity, &self.link.my_engaged);
+                let addrs: Vec<SocketAddr> = self.link.peers.values().copied().collect();
+                for addr in addrs {
+                    let _ = self.link.socket.send_to(addr, &pkt);
+                }
             }
         }
 

@@ -95,7 +95,6 @@ pub(crate) fn relevance_weight(d2: f32) -> f32 {
 /// Fraction de pertinence qu'un pair PROCHE transmet à un pair avec qui il se déclare
 /// ENGAGÉ (D29, T1). Strictement < 1 : le tiers « présenté » compte, mais JAMAIS plus
 /// que l'ami proche qui le présente (on ne s'intéresse pas plus à l'inconnu qu'à son hôte).
-#[allow(dead_code)] // EN ATTENTE : prouvé par son test ; câblé à l'étape 2 (`refresh_focus`).
 pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
 
 /// Nombre MAXIMAL de partenaires qu'un joueur peut DÉCLARER engagés à un instant (chap. D29).
@@ -104,7 +103,6 @@ pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
 /// en-tête + `MAX_ENGAGED × 32` o + sceau ≪ 1 paquet) et le garde-fou anti-inflation à la
 /// réception (un pair ne peut pas prétendre être engagé avec des centaines de tiers pour les
 /// rehausser tous). Aligné sur l'ordre de grandeur d'une interaction sociale réelle.
-#[allow(dead_code)] // EN ATTENTE : borne du wire (utilisée par les tests message) ; câblée à l'étape 2.
 pub(crate) const MAX_ENGAGED: usize = 4;
 
 /// PERTINENCE PAR TRANSITIVITÉ (D29, T1 — « pertinence ≠ proximité »). Un pair LOIN
@@ -121,7 +119,6 @@ pub(crate) const MAX_ENGAGED: usize = 4;
 ///
 /// Invariant voulu : un pair tiré ne dépasse JAMAIS celui qui le tire (fraction < 1) → la
 /// hiérarchie « proches d'abord » est préservée ; on ne fait qu'AJOUTER les pertinents cachés.
-#[allow(dead_code)] // EN ATTENTE : logique prouvée (test) ; branchée dans `refresh_focus` à l'étape 3.
 pub(crate) fn relevance_transitive(ids: &[PeerId], base: &[f32], engaged: &[Vec<PeerId>]) -> Vec<f32> {
     let mut eff = base.to_vec();
     let index: std::collections::HashMap<PeerId, usize> =

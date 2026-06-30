@@ -131,7 +131,8 @@ pub fn run_aoi(_arg: &str) {
     println!("\n📌 Lecture : sous PROXIMITÉ, mes partenaires d'interaction (partis à 40 m) tombent en CONSCIENCE (~2 Hz,");
     println!("   flous) — la foule proche leur vole le focus. Sous PERTINENCE, l'engagement de mon ami proche les");
     println!("   REHAUSSE → ils restent au plein débit (~20 Hz, nets), quel que soit N. « On perçoit les plus PERTINENTS,");
-    println!("   pas les plus PROCHES. » Reste à câbler : porter `engaged` sur le wire d'état, puis brancher dans refresh_focus.");
+    println!("   pas les plus PROCHES. » ✅ CÂBLÉ EN PROD : `engaged` voyage en `KIND_ENGAGED` signé (hors paquet d'état),");
+    println!("   et `refresh_focus` applique la pertinence transitive (test `pertinence_transitive_garde_les_partenaires…`).");
 }
 
 #[cfg(test)]
