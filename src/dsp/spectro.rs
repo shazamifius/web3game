@@ -87,8 +87,8 @@ fn ecrire_png(chemin: &str, w: usize, h: usize, rgb: &[u8]) -> std::io::Result<(
 // ---- Lecture WAV (PCM 16-bit, std-only) — le pont vers de VRAIS échantillons -------------------------------------
 
 /// Lit un WAV PCM 16-bit (mono ou multi-canal → on garde le canal 0). En-tête canonique 44 octets (celui qu'écrit
-/// `separate::ecrire_wav`). Renvoie (échantillons normalisés [-1,1], fréquence d'échantillonnage).
-fn lire_wav(chemin: &str) -> std::io::Result<(Vec<f32>, f64)> {
+/// `separate::ecrire_wav`, et celui d'espeak-ng). Renvoie (échantillons normalisés [-1,1], fréquence d'échantillonnage).
+pub(crate) fn lire_wav(chemin: &str) -> std::io::Result<(Vec<f32>, f64)> {
     let o = std::fs::read(chemin)?;
     if o.len() < 44 {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "WAV trop court"));
@@ -104,6 +104,27 @@ fn lire_wav(chemin: &str) -> std::io::Result<(Vec<f32>, f64)> {
         i += 2 * canaux; // on échantillonne le canal 0
     }
     Ok((samples, sr))
+}
+
+/// Rééchantillonnage linéaire (white-box) `sr_in → sr_out` — suffisant pour amener une voix TTS (22050 Hz) au banc
+/// (16000 Hz). Pas de filtre anti-repliement sophistiqué : on baisse la fréquence, le contenu utile voix est bien en
+/// dessous de Nyquist, l'interpolation linéaire fait un léger passe-bas — acceptable pour un signal de test.
+pub(crate) fn reechantillonner(sig: &[f32], sr_in: f64, sr_out: f64) -> Vec<f32> {
+    if (sr_in - sr_out).abs() < 1.0 || sig.is_empty() {
+        return sig.to_vec();
+    }
+    let ratio = sr_out / sr_in;
+    let n_out = (sig.len() as f64 * ratio) as usize;
+    (0..n_out)
+        .map(|i| {
+            let x = i as f64 / ratio;
+            let i0 = x.floor() as usize;
+            let frac = (x - i0 as f64) as f32;
+            let a = sig.get(i0).copied().unwrap_or(0.0);
+            let b = sig.get(i0 + 1).copied().unwrap_or(a);
+            a + (b - a) * frac
+        })
+        .collect()
 }
 
 // ---- Spectrogramme -----------------------------------------------------------------------------------------------

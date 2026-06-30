@@ -479,16 +479,15 @@ fn voix_syllabique(sr: f64, n_ech: usize) -> Vec<f32> {
 }
 
 /// Les trois bruits de la vérité-terrain (séparés exprès → on sait ce que chaque masque DEVRAIT capter).
-fn composantes(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>) {
+/// Niveaux RÉALISTES : un vrai ventilo / souffle GÊNE autant que la voix → le retrait doit s'ENTENDRE.
+fn bruits_seuls(sr: f64, n_ech: usize) -> Vec<(&'static str, Vec<f32>)> {
     use std::f64::consts::PI;
     let t = |k: usize| k as f64 / sr;
-    // Niveaux RÉALISTES : un vrai ventilo / souffle GÊNE autant que la voix → le retrait doit s'ENTENDRE (pas un
-    // bruit minuscule noyé sous une voix dominante, qui rendait mélange/sans_B*/voix_seule indistincts à l'oreille).
     let ventilo: Vec<f32> = (0..n_ech)
-        .map(|k| (0.30 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
+        .map(|k| (0.20 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
         .collect();
     let mut rng = Rng(0xBADCAFE);
-    let souffle: Vec<f32> = (0..n_ech).map(|_| 0.18 * rng.next_f32()).collect();
+    let souffle: Vec<f32> = (0..n_ech).map(|_| 0.12 * rng.next_f32()).collect();
     let clics: Vec<f32> = (0..n_ech)
         .map(|k| {
             let periode = (sr * 0.5) as usize;
@@ -497,8 +496,28 @@ fn composantes(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)
             (0.6 * env * (2.0 * PI * 2000.0 * t(k)).sin()) as f32
         })
         .collect();
-    let voix = voix_syllabique(sr, n_ech);
-    (voix, vec![("ventilo tonal", ventilo), ("souffle", souffle), ("clics", clics)])
+    vec![("ventilo tonal", ventilo), ("souffle", souffle), ("clics", clics)]
+}
+
+/// Vérité-terrain pour les TESTS (déterministe, sans fichier) : voix SYNTHÉTIQUE + les trois bruits.
+#[cfg(test)]
+fn composantes(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>) {
+    (voix_syllabique(sr, n_ech), bruits_seuls(sr, n_ech))
+}
+
+/// Charge une VRAIE voix (TTS espeak-ng, ou un enregistrement) depuis `voix_wav/voix_source.wav` si présent,
+/// rééchantillonnée au banc et normalisée — sinon None (retombe sur le buzz synthétique). C'est CE qui rend le
+/// retrait AUDIBLE : une voix large bande et modulée est perceptivement distincte d'un ventilo grave, alors que le
+/// buzz 165 Hz le MASQUAIT (d'où « aucune différence » à l'oreille au 1er essai — bug repéré par l'utilisateur).
+fn charger_voix(sr: f64) -> Option<Vec<f32>> {
+    let (sig, sr_in) = super::spectro::lire_wav("voix_wav/voix_source.wav").ok()?;
+    let mut v = super::spectro::reechantillonner(&sig, sr_in, sr);
+    let peak = v.iter().fold(0.0_f32, |m, &x| m.max(x.abs())).max(1e-6);
+    let g = 0.6 / peak; // crête ~0.6 : la voix domine bien, avec du headroom (la parole est peaky → RMS bas)
+    for x in v.iter_mut() {
+        *x *= g;
+    }
+    Some(v)
 }
 
 fn somme(parts: &[&[f32]]) -> Vec<f32> {
@@ -557,16 +576,22 @@ fn ecrire_wav(chemin: &str, signal: &[f32], sr: u32) -> std::io::Result<()> {
 
 /// Point d'entrée `jeu separe` (`jeu separe wav` écrit aussi les WAV à écouter).
 pub fn run_separe(arg: &str) {
-    let (sr, n, hop, dur) = (16000.0_f64, 512usize, 256usize, 3.0);
-    let n_ech = (sr * dur) as usize;
-    let (voix, comps) = composantes(sr, n_ech);
+    let (sr, n, hop) = (16000.0_f64, 512usize, 256usize);
+    let (voix, voix_reelle) = match charger_voix(sr) {
+        Some(v) => (v, true),
+        None => (voix_syllabique(sr, (sr * 3.0) as usize), false),
+    };
+    let n_ech = voix.len();
+    let comps = bruits_seuls(sr, n_ech);
     let melange = somme(&[&voix, &comps[0].1, &comps[1].1, &comps[2].1]);
     let sep = analyser(&melange, n, hop, sr);
 
     println!("🔊  SÉPARATION DE SOURCES — le calcul énumère les bruits, les ISOLE, n'en retire QUE les cochés");
     println!(
-        "    {} Hz · STFT {} · mélange = voix + ventilo(120/240 Hz) + souffle + clics(2/s) · white-box, zéro IA\n",
-        sr as u32, n
+        "    {} Hz · STFT {} · voix {} + ventilo(120/240 Hz) + souffle + clics(2/s) · white-box, zéro IA\n",
+        sr as u32,
+        n,
+        if voix_reelle { "RÉELLE (voix_wav/voix_source.wav)" } else { "synthétique" }
     );
 
     // 1) Les bruits ÉNUMÉRÉS + l'audition isolée (SIR = combien de la vraie source capte chaque masque).
