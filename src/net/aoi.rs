@@ -95,8 +95,17 @@ pub(crate) fn relevance_weight(d2: f32) -> f32 {
 /// Fraction de pertinence qu'un pair PROCHE transmet à un pair avec qui il se déclare
 /// ENGAGÉ (D29, T1). Strictement < 1 : le tiers « présenté » compte, mais JAMAIS plus
 /// que l'ami proche qui le présente (on ne s'intéresse pas plus à l'inconnu qu'à son hôte).
-#[allow(dead_code)] // EN ATTENTE : prouvé par son test ; câblé à l'étape 2 (le wire `engaged`).
+#[allow(dead_code)] // EN ATTENTE : prouvé par son test ; câblé à l'étape 2 (`refresh_focus`).
 pub(crate) const TRANSITIVE_FRACTION: f32 = 0.5;
+
+/// Nombre MAXIMAL de partenaires qu'un joueur peut DÉCLARER engagés à un instant (chap. D29).
+/// Petit exprès : on ne « présente » qu'une poignée d'interlocuteurs (la conversation en cours),
+/// pas toute sa foule. C'est la BORNE du message `KIND_ENGAGED` (sa taille reste minuscule :
+/// en-tête + `MAX_ENGAGED × 32` o + sceau ≪ 1 paquet) et le garde-fou anti-inflation à la
+/// réception (un pair ne peut pas prétendre être engagé avec des centaines de tiers pour les
+/// rehausser tous). Aligné sur l'ordre de grandeur d'une interaction sociale réelle.
+#[allow(dead_code)] // EN ATTENTE : borne du wire (utilisée par les tests message) ; câblée à l'étape 2.
+pub(crate) const MAX_ENGAGED: usize = 4;
 
 /// PERTINENCE PAR TRANSITIVITÉ (D29, T1 — « pertinence ≠ proximité »). Un pair LOIN
 /// mais ENGAGÉ avec un de mes pairs PROCHES devient pertinent (« mon voisin lui parle »),

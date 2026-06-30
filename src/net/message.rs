@@ -12,8 +12,12 @@
 //! sans annuaire de confiance. Personne (pas même le rendez-vous) ne peut usurper
 //! une identité : il faudrait posséder la clé privée correspondante.
 
+use super::aoi::MAX_ENGAGED;
 use super::crypto::{verify, Identity, PeerId, PUBKEY_LEN, SIG_LEN};
-use super::wire::{KIND_RECV_BUDGET, KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, KIND_STATE_BUNDLE, PROTO_VERSION};
+use super::wire::{
+    KIND_ENGAGED, KIND_RECV_BUDGET, KIND_RELAY, KIND_RELAY_FWD, KIND_STATE, KIND_STATE_BUNDLE,
+    PROTO_VERSION,
+};
 
 /// L'état d'un joueur transmis sur le réseau : qui (`id` = sa clé publique), où
 /// (`x,y,z`), à quelle vitesse il va (`vx,vy,vz`), comment il est orienté
@@ -293,6 +297,86 @@ pub(crate) fn decode_recv_budget(buf: &[u8]) -> Option<(PeerId, f32)> {
     Some((id, cap))
 }
 
+// ----------------------------------------------------------------------------
+// DÉCLARATION D'ENGAGEMENT (KIND_ENGAGED) — pertinence TRANSITIVE (D29, T1).
+//   [0] KIND_ENGAGED | [1] version | [2..34] id de l'émetteur (clé, AUTO-CERTIFIANTE)
+//   | [34] count(u8 ≤ MAX_ENGAGED) | [35..35+count*32] les ids des partenaires
+//   | [..+64] SIGNATURE du corps (tout ce qui précède le sceau).
+// « Voici les quelques pairs avec qui je suis en interaction. » Sert à RÉHAUSSER ces tiers chez
+// ceux qui M'ONT au focus (un pair LOIN mais engagé avec mon ami proche redevient pertinent).
+// SIGNÉ comme un état : la clé est embarquée (champ id) et vérifie le sceau → un pair ne peut
+// déclarer QUE SES PROPRES engagements (A ne peut pas prétendre que B est engagé avec C), et son
+// « pouvoir de recommandation » reste borné par SA position (`TRANSITIVE_FRACTION × base[A]` ;
+// un émetteur lointain a une base ~socle → il ne promeut personne). Variable mais MINUSCULE, et
+// basse cadence (l'engagement change lentement) → on N'alourdit PAS le paquet d'état à 20 Hz.
+// `engaged` vide → on N'ÉMET RIEN : aucun paquet, comportement byte-intact (comme l'AoI bilatérale).
+// ----------------------------------------------------------------------------
+/// En-tête d'une déclaration = type (1) + version (1) + id émetteur (32) + count (1) = 35 o.
+#[allow(dead_code)] // EN ATTENTE : wire prouvé (tests) ; émis/reçu à l'étape 2 (refresh_focus).
+const ENGAGED_HEADER: usize = 2 + PUBKEY_LEN + 1;
+
+/// Scelle une déclaration d'engagement : mon id (clé) + mes (≤ `MAX_ENGAGED`) partenaires, SIGNÉE
+/// avec ma clé privée. `engaged` est tronqué à `MAX_ENGAGED` (la borne du protocole). À n'émettre
+/// QUE si `engaged` est non vide (sinon il n'y a rien à dire → on se tait, défaut byte-intact).
+#[allow(dead_code)] // EN ATTENTE : prouvé par test ; appelé à l'étape 2 (émission basse cadence).
+pub(crate) fn encode_engaged(identity: &Identity, engaged: &[PeerId]) -> Vec<u8> {
+    let n = engaged.len().min(MAX_ENGAGED);
+    let body_len = ENGAGED_HEADER + n * PUBKEY_LEN;
+    let mut out = Vec::with_capacity(body_len + SIG_LEN);
+    out.push(KIND_ENGAGED);
+    out.push(PROTO_VERSION);
+    out.extend_from_slice(identity.id().bytes());
+    out.push(n as u8);
+    for id in engaged.iter().take(n) {
+        out.extend_from_slice(id.bytes());
+    }
+    let sig = identity.sign(&out); // signe le CORPS (en-tête + ids)
+    out.extend_from_slice(&sig);
+    out
+}
+
+/// Décode ET VÉRIFIE une déclaration d'engagement → `(émetteur, partenaires)`, ou `None` si
+/// malformée (mauvais type/version, longueur incohérente, `count > MAX_ENGAGED`) ou si le SCEAU
+/// ne colle pas à la clé embarquée. Contrairement à l'état, on vérifie le sceau ICI (la
+/// déclaration ne passe pas par le chemin de réputation) : un appelant qui reçoit `Some` tient
+/// une déclaration AUTHENTIQUE de l'émetteur lui-même. On REJETTE un id nul comme partenaire.
+#[allow(dead_code)] // EN ATTENTE : prouvé par test ; appelé à l'étape 2 (réception, bot.rs).
+pub(crate) fn decode_engaged(buf: &[u8]) -> Option<(PeerId, Vec<PeerId>)> {
+    if buf.len() < ENGAGED_HEADER || buf[0] != KIND_ENGAGED || buf[1] != PROTO_VERSION {
+        return None;
+    }
+    let count = buf[ENGAGED_HEADER - 1] as usize;
+    if count > MAX_ENGAGED {
+        return None; // un pair ne peut pas se déclarer engagé avec plus que la borne du protocole
+    }
+    let body_len = ENGAGED_HEADER + count * PUBKEY_LEN;
+    if buf.len() != body_len + SIG_LEN {
+        return None; // longueur déclarée ≠ longueur réelle → on jette (jamais de lecture partielle)
+    }
+
+    // Clé publique embarquée (champ id) → c'est ELLE qui vérifie le sceau (auto-certification).
+    let mut pubkey = [0u8; PUBKEY_LEN];
+    pubkey.copy_from_slice(&buf[OFF_ID..OFF_ID + PUBKEY_LEN]);
+    let mut sig = [0u8; SIG_LEN];
+    sig.copy_from_slice(&buf[body_len..body_len + SIG_LEN]);
+    if !verify(&buf[..body_len], &sig, &pubkey) {
+        return None; // sceau invalide → ni le bon émetteur, ni un corps intact
+    }
+
+    let sender = PeerId::from_bytes(pubkey);
+    let mut engaged = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = ENGAGED_HEADER + i * PUBKEY_LEN;
+        let mut idb = [0u8; PUBKEY_LEN];
+        idb.copy_from_slice(&buf[off..off + PUBKEY_LEN]);
+        let id = PeerId::from_bytes(idb);
+        if !id.is_none() {
+            engaged.push(id); // on ignore les ids nuls (bourrage), on garde les vrais partenaires
+        }
+    }
+    Some((sender, engaged))
+}
+
 /// Lit l'id (clé) revendiqué dans un paquet d'état, sans rien vérifier. Sert à la
 /// réputation : quand le sceau est valide mais le contenu impossible, on sait QUI accuser.
 pub(crate) fn claimed_id(buf: &[u8]) -> Option<PeerId> {
@@ -441,6 +525,78 @@ mod tests {
         assert!(decode_recv_budget(&pourri).is_none());
         // trop court → rejeté.
         assert!(decode_recv_budget(&buf[..10]).is_none());
+    }
+
+    /// D29 — la déclaration d'ENGAGEMENT fait l'aller-retour : l'émetteur (sa clé) et la liste
+    /// de partenaires ressortent intacts, et le sceau se vérifie (auto-certification).
+    #[test]
+    fn engaged_round_trip_signe() {
+        let moi = Identity::generate();
+        let p1 = pid(11);
+        let p2 = pid(22);
+        let buf = encode_engaged(&moi, &[p1, p2]);
+        assert_eq!(buf[0], KIND_ENGAGED);
+        let (sender, partners) = decode_engaged(&buf).expect("déclaration valide");
+        assert_eq!(sender, moi.id()); // l'émetteur est bien MA clé
+        assert_eq!(partners, vec![p1, p2]); // les partenaires, dans l'ordre
+    }
+
+    /// Liste vide : on n'émet rien d'utile, mais SI on encode quand même, ça reste cohérent
+    /// (en-tête + sceau, zéro partenaire). Le défaut du protocole reste « on se tait ».
+    #[test]
+    fn engaged_vide_est_coherent() {
+        let moi = Identity::generate();
+        let buf = encode_engaged(&moi, &[]);
+        let (sender, partners) = decode_engaged(&buf).expect("déclaration vide valide");
+        assert_eq!(sender, moi.id());
+        assert!(partners.is_empty());
+    }
+
+    /// La liste est TRONQUÉE à `MAX_ENGAGED` à l'émission, et une `count` trafiquée AU-DELÀ
+    /// de la borne est REJETÉE au décodage (un pair ne peut pas rehausser des centaines de tiers).
+    #[test]
+    fn engaged_borne_a_max_engaged() {
+        let moi = Identity::generate();
+        let trop: Vec<PeerId> = (1..=(MAX_ENGAGED as u8 + 3)).map(pid).collect();
+        let buf = encode_engaged(&moi, &trop);
+        let (_, partners) = decode_engaged(&buf).expect("valide");
+        assert_eq!(partners.len(), MAX_ENGAGED); // tronqué à la borne, pas plus
+
+        // count trafiqué à MAX_ENGAGED+1 (longueur incohérente) → rejet net.
+        let mut pourri = encode_engaged(&moi, &[pid(1)]);
+        pourri[2 + PUBKEY_LEN] = (MAX_ENGAGED + 1) as u8;
+        assert!(decode_engaged(&pourri).is_none());
+    }
+
+    /// Le moindre octet du corps modifié casse le sceau → rejet (anti-falsification), et un
+    /// paquet trop court est rejeté nettement.
+    #[test]
+    fn engaged_altere_ou_court_est_rejete() {
+        let moi = Identity::generate();
+        let mut buf = encode_engaged(&moi, &[pid(7)]);
+        buf[2 + PUBKEY_LEN + 1] ^= 0xFF; // on triture le 1er octet d'un id partenaire
+        assert!(decode_engaged(&buf).is_none());
+        let buf = encode_engaged(&moi, &[pid(7)]);
+        assert!(decode_engaged(&buf[..10]).is_none());
+    }
+
+    /// USURPATION : un attaquant met la clé de la VICTIME dans `id` mais signe avec SA clé →
+    /// le sceau (vérifié contre la clé embarquée) ne colle pas → rejet. On ne peut déclarer
+    /// QUE SES PROPRES engagements.
+    #[test]
+    fn engaged_usurpation_est_rejetee() {
+        let victime = Identity::generate();
+        let attaquant = Identity::generate();
+        // On fabrique à la main un corps qui PRÉTEND venir de la victime, signé par l'attaquant.
+        let mut body = Vec::new();
+        body.push(KIND_ENGAGED);
+        body.push(PROTO_VERSION);
+        body.extend_from_slice(victime.id().bytes()); // je PRÉTENDS être la victime…
+        body.push(1);
+        body.extend_from_slice(pid(9).bytes());
+        let sig = attaquant.sign(&body); // … mais je signe avec MA clé
+        body.extend_from_slice(&sig);
+        assert!(decode_engaged(&body).is_none());
     }
 
     /// Un état signé par une vraie identité se vérifie et se décode ; son `id`

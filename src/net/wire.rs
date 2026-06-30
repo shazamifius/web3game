@@ -27,6 +27,8 @@ pub(crate) const KIND_RELAY_FWD: u8 = 11; // A → rendez-vous : « route cet é
 pub(crate) const KIND_STATE_BUNDLE: u8 = 12; // pair → pair (RELAIS) : LOT des K derniers états signés (redondance temporelle budget-free, gaté RELAY_REDUNDANCY≥2)
 pub(crate) const KIND_RECV_BUDGET: u8 = 13; // receveur → ses émetteurs : « ne m'envoie pas plus vite que X Hz » (AoI BILATÉRALE, couche 2, gaté AOI_BILATERAL)
 pub(crate) const KIND_ECHO: u8 = 14; // sonde → rendez-vous → sonde : paquet RENVOYÉ tel quel (1:1, même taille) pour mesurer perte/RTT par débit (sonde de congestion, Phase 2b)
+#[allow(dead_code)] // EN ATTENTE : wire prouvé (tests message) ; émis/reçu à l'étape 2 (refresh_focus)
+pub(crate) const KIND_ENGAGED: u8 = 15; // pair → pairs : « voici les quelques partenaires avec qui je suis ENGAGÉ » (SIGNÉ, basse cadence) → pertinence transitive D29 ; défaut vide = aucun paquet émis
 
 /// Lit le type d'un paquet (son 1er octet), ou `None` s'il est vide.
 pub(crate) fn kind(bytes: &[u8]) -> Option<u8> {
