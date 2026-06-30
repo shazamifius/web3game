@@ -61,6 +61,7 @@ fn main() {
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2000.0),
         ),
         Some("vivant") => net::run_vivant(args.get(2).map(String::as_str).unwrap_or("agitee")),
+        Some("aoi") => net::run_aoi(args.get(2).map(String::as_str).unwrap_or("")),
         Some("voix") => net::run_voix(args.get(2).map(String::as_str).unwrap_or("")),
         Some("codec") => dsp::run_codec(args.get(2).map(String::as_str).unwrap_or("")),
         Some("micro") => dsp::run_micro(args.get(2).map(String::as_str).unwrap_or("")),

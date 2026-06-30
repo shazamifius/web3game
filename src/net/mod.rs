@@ -31,6 +31,7 @@
 mod accuse;
 mod anticheat;
 mod aoi;
+mod aoi_bench;
 mod attack;
 mod bot;
 mod cell;
@@ -62,6 +63,7 @@ mod voice_bench;
 mod wire;
 
 // L'API publique du cœur, utilisée par `main` (aiguillage des modes headless).
+pub use aoi_bench::run_aoi;
 pub use attack::run_attack;
 pub use bot::run_bot;
 pub use coopsim::{run_coopsim, run_coopsim_bus};
