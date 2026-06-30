@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 /// Le ROUTEUR du bus mémoire : une boîte aux lettres (file de paquets `(expéditeur, octets)`) par
 /// adresse d'endpoint. Partagé entre tous les endpoints d'un même banc via `Arc<Mutex<…>>`.
 /// ⚠ BUS_DOUTE — ORIENTATION : on prend `Arc<Mutex>` (et non `Rc<RefCell>`, plus léger mono-thread)
-/// UNIQUEMENT pour que `Socket` reste `Send + Sync` (le jeu le range dans une ressource Bevy partagée).
+/// UNIQUEMENT pour que `Socket` reste `Send + Sync` (la prise peut être partagée entre threads, ex. le sidecar au cœur continu).
 /// `coopsim` est mono-thread → le mutex n'est jamais contendu, le coût est négligeable. À revoir si on
 /// voulait un jour un bus multi-thread (là le mutex deviendrait un vrai point de contention).
 #[derive(Default)]
@@ -54,7 +54,7 @@ enum Backend {
 /// Elle compte aussi (chap. 7.4) le total d'octets ÉMIS et REÇUS, pour mesurer la bande passante
 /// RÉELLE par nœud — la métrique qui décide si le protocole passe à 55 000 joueurs (en P2P le goulot
 /// est l'upload par nœud, pas le CPU). Compteurs atomiques : `send_to`/`poll` ne prennent que
-/// `&self`, et la prise peut vivre dans une ressource Bevy partagée. Le comptage est IDENTIQUE sur
+/// `&self`, et la prise peut être partagée entre threads. Le comptage est IDENTIQUE sur
 /// les deux backends (octets de charge utile) → le débit mesuré sur bus est comparable à l'UDP.
 pub(crate) struct Socket {
     backend: Backend,

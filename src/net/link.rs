@@ -1,4 +1,4 @@
-//! LE LIEN : `NetLink`, la ressource Bevy qui tient le réseau d'un client.
+//! LE LIEN : `NetLink`, l'état réseau d'un client (table de pairs, réputation, cellules…).
 //!
 //! Présente uniquement en mode multijoueur. Elle contient la prise UDP, l'adresse
 //! du rendez-vous, notre identifiant (attribué par le rendez-vous → `Option`
@@ -217,7 +217,7 @@ pub(crate) fn density_floor_mode() -> bool {
 /// Ferme l'inflation du plancher mesurée par le red-team : au lieu de compter tout ID vu dans un échantillon
 /// (forgeable par l'agrégateur), on ne compte au plancher que les personnes dont l'ÉTAT SIGNÉ vérifie — un
 /// menteur ne peut pas forger le sceau d'autrui. Implémenté en RECOPIANT verbatim les états déjà signés
-/// (zéro re-signature ; voir papier C-sécu-2 dans PLAN_AUTONOME). Quand absent → comportement 1b INTACT.
+/// (zéro re-signature ; voir papier C-sécu-2, la couche 2 AoI bilatérale). Quand absent → comportement 1b INTACT.
 pub(crate) fn signed_samples_mode() -> bool {
     static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *S.get_or_init(|| matches!(std::env::var("SIGNED_SAMPLES").as_deref(), Ok("1") | Ok("true")))

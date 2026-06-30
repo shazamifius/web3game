@@ -15,7 +15,7 @@
 //! Le paquet de perçage est un petit PUNCH (type + notre id). On le RÉPÈTE vers
 //! chaque pair tant que le trou n'est pas confirmé ouvert : la répétition absorbe
 //! le décalage de timing entre les deux pairs (pas besoin de tir parfaitement
-//! synchronisé). Dès qu'on reçoit quoi que ce soit du pair (cf. `receive.rs`), le
+//! synchronisé). Dès qu'on reçoit quoi que ce soit du pair, le
 //! trou est « ouvert » et on arrête de percer.
 
 use super::crypto::{PeerId, PUBKEY_LEN};

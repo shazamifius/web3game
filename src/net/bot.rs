@@ -83,7 +83,7 @@ fn relay_redundancy_of(v: Option<&str>) -> usize {
 }
 
 /// 12.3 (sidecar) — DÉCISION D'ÉMISSION par pair, **pure et testable**. C'est le portage EXACT
-/// dans le `Bot` headless de la logique de [netcode/send.rs] : sans elle, le sidecar RECEVAIT un
+/// dans le `Bot` headless de la logique de l'ancien client Bevy (retiré) : sans elle, le sidecar RECEVAIT un
 /// état relayé mais ne RENVOYAIT jamais le sien → sens unique observé en RÉEL le 24 juin (A voit
 /// le sidecar… non, l'inverse : le sidecar voit A, A ne voit rien). Les bancs sur `lo` ne l'ont
 /// jamais vu car le perçage y réussit toujours (trou ouvert → branche relais jamais prise).
@@ -129,7 +129,7 @@ pub(crate) fn bot_send_kind(
     SendKind::Skip
 }
 
-// Miroir des réglages de réception du jeu (cf. netcode/receive.rs et state.rs).
+// Miroir des réglages de réception du jeu (logique de l'ancien client Bevy, retiré).
 const BUCKET_RATE: f32 = 150.0;
 const BUCKET_CAP: f32 = 300.0;
 const MAX_BUCKETS: usize = 4096;
@@ -179,7 +179,7 @@ const K_PROOF: usize = 4;
 const FOCUS_RATE_MIN: f32 = 5.0;
 const TICK: Duration = Duration::from_millis(50);
 const WANDER_RADIUS: f32 = 3.0;
-/// Sans nouvel état d'un distant depuis ce délai (s) on cesse de l'exposer (miroir netcode/state.rs).
+/// Sans nouvel état d'un distant depuis ce délai (s) on cesse de l'exposer (logique de l'ancien client Bevy retiré).
 const REMOTE_TIMEOUT: f32 = 5.0;
 
 /// Un nœud headless : tout l'état d'un client de jeu, SANS le rendu. Réutilisé par le
@@ -212,7 +212,7 @@ pub(crate) struct Bot {
     /// (`KIND_STATE_BUNDLE`) : redondance temporelle budget-free. Borné à `relay_redundancy` (≤ 8).
     recent_self_states: VecDeque<Vec<u8>>,
     /// Crédits d'émission AoI par pair (chap. 7.4b) : même cadencement par water-filling
-    /// que le vrai client ([netcode/send.rs]). Chaque pair accumule `débit × dt` ; à 1,
+    /// que l'ancien client Bevy (retiré). Chaque pair accumule `débit × dt` ; à 1,
     /// on lui envoie un paquet. C'est ce qui fait que le bot mesure DÉSORMAIS le coût
     /// réel du jeu (budget réparti par pertinence), pas un envoi naïf plein débit à tous.
     send_credits: HashMap<PeerId, f32>,
@@ -821,7 +821,7 @@ impl Bot {
         }
 
         // 4) Émission de NOTRE état signé, via l'AoI WATER-FILLING — EXACTEMENT comme le
-        //    vrai client (netcode/send.rs) : un budget d'émission fini (SEND_BUDGET_HZ)
+        //    ancien client Bevy (retiré) : un budget d'émission fini (SEND_BUDGET_HZ)
         //    réparti entre les voisins par pertinence (distance), au lieu d'un envoi naïf
         //    plein débit à tous. C'est ce qui rend la mesure 7.4 FIDÈLE au jeu (7.4b).
         self.send_acc += dt;

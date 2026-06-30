@@ -1,21 +1,21 @@
 //! Banc « voix de proximité » (D35) — mesurer la FAISABILITÉ du transport audio, façon `jeu vivant`.
 //!
 //! Même méthode que `liveness.rs` : un émetteur produit des TRAMES voix horodatées à `f_tx` (50 Hz = 20 ms,
-//! standard Opus) ; un **canal** déterministe applique latence/gigue/perte/réordonnancement (les profils RÉELS
+//! taille de trame standard) ; un **canal** déterministe applique latence/gigue/perte/réordonnancement (les profils RÉELS
 //! de la flotte, calibrés par la sonde) ; un **jitter buffer** côté récepteur joue les trames avec un retard
 //! `d_jit`. On chiffre les métriques OBJECTIVES de la voix :
 //!   1. **Latence bouche-à-oreille** = latence one-way + `d_jit` + durée de trame. À MINIMISER (conversation
 //!      naturelle ≤ ~200 ms ; au-delà de ~400 ms on se coupe la parole — repère ITU G.114).
-//!   2. **% de trames EN RETARD** (arrivées après leur instant de lecture → masquées par le PLC d'Opus = glitch).
-//!      Réductible par `d_jit`. À distinguer de la **perte canal** (irréductible, du ressort de PLC/FEC).
+//!   2. **% de trames EN RETARD** (arrivées après leur instant de lecture → masquées par le PLC = glitch).
+//!      Réductible par `d_jit`. À distinguer de la **perte canal** (irréductible, du ressort du PLC/FEC).
 //!   3. **Octets/s REÇUS** (en-têtes compris) × K locuteurs → le mur D3 (~43 Ko/s déjà pris par le jeu).
 //!
 //! Sortie clé (comme vivant traçait `d_opt` vs lien) : **`d_jit` optimal vs qualité du lien** → « tient-on la
 //! conversation naturelle sur le 4G congestionné / le satellite ? » devient une réponse CHIFFRÉE, par profil RÉEL.
 //!
-//! Tout est SIMULÉ et déterministe (graine fixe), std-only, 0 sudo, rejouable à toute échelle. Le codec (Opus)
-//! et la capture/lecture/spatialisation vivent côté Unreal (cf. `prive/PLAN_TEST_VOIX.md`) ; ICI on ne modélise
-//! que le TRANSPORT (la qualité Opus/PLC est connue + confirmée par le spike humain).
+//! Tout est SIMULÉ et déterministe (graine fixe), std-only, 0 sudo, rejouable à toute échelle. Le codec (FAIT
+//! MAIN white-box, `src/dsp/`) et la capture/lecture/spatialisation vivent hors de ce banc (cf. `prive/PLAN_TEST_VOIX.md`) ;
+//! ICI on ne modélise que le TRANSPORT (la qualité du codec est mesurée à part dans `jeu codec` / `jeu optim`).
 //!
 //! ⚠ Les profils sont les MÊMES que `liveness.rs` (flotte du 29 juin, sonde STUN) — à unifier dans un
 //! `link_profiles.rs` partagé quand on aura un 3e usage (pour l'instant : éviter de toucher le banc vivant prouvé).
@@ -49,7 +49,7 @@ struct Profil {
     perte: f64,
 }
 
-/// Une trame voix : l'instant de CAPTURE (= l'audio qu'elle contient) ; sa taille de payload est fixe (Opus CBR).
+/// Une trame voix : l'instant de CAPTURE (= l'audio qu'elle contient) ; sa taille de payload est fixe (codec à débit constant).
 #[derive(Clone, Copy)]
 struct Trame {
     t_capture: f64,
@@ -150,10 +150,10 @@ fn verdict(bouche_oreille_ms: f64, retard_pct: f64) -> &'static str {
     }
 }
 
-/// Octets par trame : payload Opus (CBR) + en-tête applicatif + en-tête IP/UDP (non maîtrisé).
+/// Octets par trame : payload du codec (débit constant) + en-tête applicatif + en-tête IP/UDP (non maîtrisé).
 /// `id_octets` = taille de l'étiquette émetteur (32 = clé pub brute ; 2 = id de session court → le levier).
 fn octets_par_trame(bitrate_kbps: f64, frame_s: f64, id_octets: usize) -> (usize, usize, usize) {
-    let payload = (bitrate_kbps * 1000.0 / 8.0 * frame_s).round() as usize; // Opus CBR
+    let payload = (bitrate_kbps * 1000.0 / 8.0 * frame_s).round() as usize; // codec à débit constant
     let app = 1 /*KIND_VOICE*/ + 1 /*version*/ + id_octets + 2 /*len u16*/;
     let ip_udp = 28; // IPv4 (20) + UDP (8)
     (payload, app, ip_udp)
@@ -161,10 +161,10 @@ fn octets_par_trame(bitrate_kbps: f64, frame_s: f64, id_octets: usize) -> (usize
 
 /// Banc complet : balayage des profils RÉELS + le budget D3 + l'effet de l'en-tête.
 pub fn run_voix(_arg: &str) {
-    let f_tx = 50.0; // 50 Hz = trames de 20 ms (standard Opus)
+    let f_tx = 50.0; // 50 Hz = trames de 20 ms (taille standard)
     let frame_s = 1.0 / f_tx;
     let duree = 30.0; // 30 s d'audio simulé → stats stables
-    let seuil_retard = 0.5; // on vise < 0,5 % de trames en retard (le PLC d'Opus absorbe l'isolé)
+    let seuil_retard = 0.5; // on vise < 0,5 % de trames en retard (le PLC absorbe l'isolé)
     let frame_ms = frame_s * 1000.0;
 
     println!("🎙️  BANC VOIX DE PROXIMITÉ (D35) — faisabilité du transport audio P2P");
@@ -213,7 +213,7 @@ pub fn run_voix(_arg: &str) {
 
     // ── Le mur D3 : octets reçus × K locuteurs ────────────────────────────────────────────────────────
     println!("\n── 🔴 MUR D3 — octets/s REÇUS (en-têtes compris) vs le budget ~43 Ko/s (déjà pris par le jeu) :");
-    let bitrate = 20.0; // Opus parole = 16–24 kbit/s ; 20 = transparent
+    let bitrate = 20.0; // voix parole ≈ 16–24 kbit/s (repère Opus) ; 20 = transparent
     for (label, id_oct) in [("id PLEINE (clé pub 32 o)", 32usize), ("id SESSION courte (2 o)", 2usize)] {
         let (payload, app, ip_udp) = octets_par_trame(bitrate, frame_s, id_oct);
         let par_trame = payload + app + ip_udp;
@@ -234,7 +234,7 @@ pub fn run_voix(_arg: &str) {
     );
 
     println!("\n📌 Lecture : la GIGUE pilote `d_jit` (donc la latence bouche-à-oreille) ; la PERTE est du ressort du PLC/FEC ;");
-    println!("   le DÉBIT reçu est tenu par VAD + AoI audio + Opus bas débit + id de session courte. Détail : prive/PLAN_TEST_VOIX.md");
+    println!("   le DÉBIT reçu est tenu par VAD + AoI audio + codec bas débit + id de session courte. Détail : prive/PLAN_TEST_VOIX.md");
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@
 //! sur-souscription d'OS-threads), pas le protocole. Les nœuds gardent leur VRAIE prise UDP sur
 //! `lo` : ce banc ne triche pas sur le protocole, il ne change que l'ORDONNANCEMENT.
 //!
-//! # Ce que ce squelette NE fait PAS (honnêteté, cf. PLAN_AUTONOME.md)
+//! # Ce que ce squelette NE fait PAS (honnêteté)
 //! - Il n'a PAS de bus mémoire : il reste sur l'UDP de `lo`. Si le mur devient l'UDP lui-même
 //!   (descripteurs de fichiers, coût syscall) AVANT 50k, c'est un constat honnête — et le bus
 //!   mémoire (qui exigerait de rendre `Socket` permutable = toucher le cœur) ira en FILE
