@@ -33,8 +33,7 @@ const CLIC_R_MIN: f64 = 0.15; // autocorrélation HF normalisée : un pic > 0.15
 const CLIC_PEAK_FRAC: f64 = 0.8; // période = plus petit τ atteignant 80 % du pic (le FONDAMENTAL, pas un multiple)
 const CLIC_MIN: usize = 3; // au moins 3 occurrences marquées pour créer la source
 const RETRAIT_ALPHA: f64 = 2.0; // SUR-soustraction du STRUCTURÉ (tonal/transitoire = chirurgical) : 2× la part estimée
-const RETRAIT_ALPHA_BB: f64 = 3.5; // le LARGE BANDE (diffus, bruit blanc) a besoin de PLUS pour être perçu plus propre
-const RETRAIT_BETA: f64 = 0.05; // plancher résiduel (anti « bruit musical ») : on ne descend jamais le gain sous β
+const RETRAIT_BETA: f64 = 0.05; // plancher résiduel de gain (le large bande passe par un Wiener decision-directed)
 
 fn n_bins_uniques(n: usize) -> usize {
     n / 2 + 1
@@ -264,6 +263,8 @@ pub struct Source {
 pub struct Separation {
     pub sources: Vec<Source>,
     voix: Vec<Vec<f64>>,
+    noise_psd: Vec<f64>,  // PUISSANCE du bruit large bande par bin (pour le Wiener) = moyenne des trames les + calmes
+    est_tonal: Vec<bool>, // bins occupés par une raie tonale (le Wiener large bande ne touche QUE le reste)
     n: usize,
     hop: usize,
 }
@@ -288,6 +289,21 @@ fn appliquer(signal: &[f32], masque: &[Vec<f64>], n: usize, hop: usize) -> Vec<f
     istft(&rec, n, hop, signal.len())
 }
 
+/// Lissage TEMPOREL léger du gain (moyenne ±1 trame) : casse le scintillement trame-à-trame (= le bruit musical),
+/// sans toucher la dimension fréquence → les creux spectraux PERSISTANTS (raies tonales) restent intacts.
+fn lisser_gain_temps(gain: &mut [Vec<f64>]) {
+    let frames = gain.len();
+    if frames < 3 {
+        return;
+    }
+    let orig = gain.to_vec();
+    for t in 1..frames - 1 {
+        for k in 0..orig[t].len() {
+            gain[t][k] = (orig[t - 1][k] + orig[t][k] + orig[t + 1][k]) / 3.0;
+        }
+    }
+}
+
 impl Separation {
     /// AUDITION : on entend UNIQUEMENT le bruit `k` (tout le reste retiré) → l'utilisateur sait ce que c'est.
     pub fn isoler(&self, signal: &[f32], k: usize) -> Vec<f32> {
@@ -300,29 +316,75 @@ impl Separation {
     }
 
     /// ⭐ MIXAGE PILOTÉ — le modèle des futurs SLIDERS (≠ on/off). `niveaux[k] ∈ [0,1]` = combien on GARDE du bruit
-    /// `k` : **1 = intact, 0 = retiré au maximum, 0.5 = mi-atténué (−6 dB env.)**. La voix est toujours gardée.
-    /// C'est l'utilisateur qui DOSE ce qu'il entend, source par source — on prépare juste le code, l'UI viendra dans UE.
+    /// `k` : **1 = intact, 0 = retiré au maximum, 0.5 = mi-atténué**. La voix est toujours gardée. (Code préparé pour
+    /// les curseurs ; l'UI viendra dans UE.)
     pub fn melanger(&self, signal: &[f32], niveaux: &[f64]) -> Vec<f32> {
-        appliquer(signal, &self.gain_pilote(niveaux), self.n, self.hop)
+        appliquer(signal, &self.gain_pour(signal, niveaux), self.n, self.hop)
     }
 
-    /// Le gain par bin pour des niveaux de slider donnés : `g = max(β, 1 − Σ (1−niveau_s)·α_s·part_bruit_s)`.
-    /// `part_bruit_s` (le masque) DÉRIVE du signal (pas une constante calée main) ; α dépend de la NATURE (le large
-    /// bande diffus a besoin de plus que le tonal/transitoire, chirurgicaux) ; β = plancher anti « bruit musical ».
-    fn gain_pilote(&self, niveaux: &[f64]) -> Vec<Vec<f64>> {
-        let frames = self.voix.len();
-        let m = n_bins_uniques(self.n);
+    /// Le gain par bin pour des niveaux donnés. DEUX traitements :
+    /// - **tonal / transitoire** = retrait CHIRURGICAL par masque (`1 − (1−niveau)·α·part`) — ça marchait bien.
+    /// - **large bande (souffle)** = **filtre de WIENER à SNR a-priori DECISION-DIRECTED (Ephraim-Malah)** : la
+    ///   récurrence temporelle LISSE le gain → c'est le remède classique au « bruit musical » (le grain désagréable).
+    /// Puis lissage temporel léger. `niveau` interpole entre garder (1) et plein traitement (0).
+    fn gain_pour(&self, signal: &[f32], niveaux: &[f64]) -> Vec<Vec<f64>> {
+        let (n, hop) = (self.n, self.hop);
+        let m = n_bins_uniques(n);
+        let win = hann(n);
+        let sp = stft(signal, n, hop, &win);
+        let frames = sp.len();
         let mut gain = vec![vec![1.0_f64; m]; frames];
+
+        // 1) tonal + transitoire : retrait chirurgical par masque — gardé NET (PAS de lissage, sinon on rebouche
+        //    le creux d'un clic d'une trame).
         for (s, src) in self.sources.iter().enumerate() {
-            let garder = niveaux.get(s).copied().unwrap_or(1.0).clamp(0.0, 1.0);
-            let retirer = 1.0 - garder; // 0 = on garde tout ; 1 = on enlève au max
-            let alpha = if src.nature == "large bande" { RETRAIT_ALPHA_BB } else { RETRAIT_ALPHA };
+            if src.nature == "large bande" {
+                continue;
+            }
+            let retirer = 1.0 - niveaux.get(s).copied().unwrap_or(1.0).clamp(0.0, 1.0);
             for (t, row) in src.masque.iter().enumerate() {
                 for (k, &mk) in row.iter().enumerate() {
-                    gain[t][k] -= retirer * alpha * mk;
+                    if t < frames {
+                        gain[t][k] -= retirer * RETRAIT_ALPHA * mk;
+                    }
                 }
             }
         }
+
+        // 2) large bande : Wiener decision-directed (matrice SÉPARÉE, lissée dans le temps → anti bruit musical), puis
+        //    multipliée dans le gain aux bins NON tonals seulement.
+        let bb = self.sources.iter().position(|s| s.nature == "large bande");
+        let bb_garder = bb.map(|i| niveaux.get(i).copied().unwrap_or(1.0).clamp(0.0, 1.0)).unwrap_or(1.0);
+        if bb_garder < 1.0 {
+            let dd = 0.98_f64; // lissage decision-directed (clé de l'anti bruit musical)
+            let surestime = 1.5_f64; // sur-estimation modérée de la PSD du bruit (suppression un peu plus franche)
+            let mut gw = vec![vec![1.0_f64; m]; frames];
+            let mut g_prev = vec![1.0_f64; m];
+            let mut gamma_prev = vec![1.0_f64; m];
+            for (t, fx) in sp.iter().enumerate() {
+                for k in 0..m {
+                    if self.est_tonal[k] {
+                        continue;
+                    }
+                    let pwr = fx[k].re * fx[k].re + fx[k].im * fx[k].im;
+                    let gamma = pwr / (surestime * self.noise_psd[k]).max(1e-12); // SNR a posteriori
+                    let xi = (dd * g_prev[k] * g_prev[k] * gamma_prev[k] + (1.0 - dd) * (gamma - 1.0).max(0.0)).max(1e-6);
+                    let g = (xi / (1.0 + xi)).max(RETRAIT_BETA); // gain de Wiener
+                    g_prev[k] = g;
+                    gamma_prev[k] = gamma;
+                    gw[t][k] = bb_garder + (1.0 - bb_garder) * g; // slider : garder ↔ Wiener plein
+                }
+            }
+            lisser_gain_temps(&mut gw); // lisse SEULEMENT le Wiener (le clic chirurgical reste net)
+            for (t, row) in gw.iter().enumerate() {
+                for (k, &g) in row.iter().enumerate() {
+                    if !self.est_tonal[k] {
+                        gain[t][k] *= g;
+                    }
+                }
+            }
+        }
+
         for row in gain.iter_mut() {
             for v in row.iter_mut() {
                 *v = v.clamp(RETRAIT_BETA, 1.0);
@@ -369,6 +431,17 @@ pub fn analyser(signal: &[f32], n: usize, hop: usize, sr: f64) -> Separation {
         Some((c, _, h)) => (c.clone(), *h),
         None => (vec![false; t], m),
     };
+
+    // PSD du bruit par bin = moyenne des trames les plus CALMES (30 % de plus basse puissance) → un estimateur de la
+    // PUISSANCE du bruit stationnaire bien meilleur que le p10 d'amplitude (trop bas) pour piloter un filtre de Wiener.
+    let noise_psd: Vec<f64> = (0..m)
+        .map(|k| {
+            let mut p: Vec<f64> = a.iter().map(|row| row[k] * row[k]).collect();
+            p.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            let take = ((p.len() as f64 * 0.30).ceil() as usize).clamp(1, p.len());
+            p[..take].iter().sum::<f64>() / take as f64
+        })
+        .collect();
 
     // Accumulateurs de masques (fraction de |X| attribuée à chaque source / à la voix).
     let zeros = || vec![vec![0.0_f64; m]; t];
@@ -466,7 +539,7 @@ pub fn analyser(signal: &[f32], n: usize, hop: usize, sr: f64) -> Separation {
     // Bruit 1 = le plus fort.
     sources.sort_by(|x, y| y.energie_frac.partial_cmp(&x.energie_frac).unwrap());
 
-    Separation { sources, voix: mvoix, n, hop }
+    Separation { sources, voix: mvoix, noise_psd, est_tonal, n, hop }
 }
 
 // ---- Banc `jeu separe` : mélange à VÉRITÉ-TERRAIN connue, séparation MESURÉE ------------------------------------
@@ -542,31 +615,39 @@ fn scenario_b(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>
     (voix, vec![("ventilo 95Hz", ventilo), ("bruit coloré", colore), ("clics 3/s", clics)])
 }
 
-/// Les trois bruits de la vérité-terrain (séparés exprès → on sait ce que chaque masque DEVRAIT capter).
-/// Niveaux RÉALISTES : un vrai ventilo / souffle GÊNE autant que la voix → le retrait doit s'ENTENDRE.
-fn bruits_seuls(sr: f64, n_ech: usize) -> Vec<(&'static str, Vec<f32>)> {
+/// Les trois bruits de la vérité-terrain, à amplitudes données (séparés exprès → on sait ce que chaque masque
+/// DEVRAIT capter). `a_vent`/`a_souf`/`a_clic` = niveaux du ventilo tonal / souffle large bande / clics.
+fn bruits_a(sr: f64, n_ech: usize, a_vent: f32, a_souf: f32, a_clic: f32) -> Vec<(&'static str, Vec<f32>)> {
     use std::f64::consts::PI;
     let t = |k: usize| k as f64 / sr;
     let ventilo: Vec<f32> = (0..n_ech)
-        .map(|k| (0.20 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
+        .map(|k| (a_vent as f64 * ((2.0 * PI * 120.0 * t(k)).sin() + 0.5 * (2.0 * PI * 240.0 * t(k)).sin())) as f32)
         .collect();
     let mut rng = Rng(0xBADCAFE);
-    let souffle: Vec<f32> = (0..n_ech).map(|_| 0.12 * rng.next_f32()).collect();
+    let souffle: Vec<f32> = (0..n_ech).map(|_| a_souf * rng.next_f32()).collect();
     let clics: Vec<f32> = (0..n_ech)
         .map(|k| {
             let periode = (sr * 0.5) as usize;
             let phase = k % periode.max(1);
             let env = (-(phase as f64) / (sr * 0.004)).exp();
-            (0.6 * env * (2.0 * PI * 2000.0 * t(k)).sin()) as f32
+            (a_clic as f64 * env * (2.0 * PI * 2000.0 * t(k)).sin()) as f32
         })
         .collect();
     vec![("ventilo tonal", ventilo), ("souffle", souffle), ("clics", clics)]
 }
 
-/// Vérité-terrain pour les TESTS (déterministe, sans fichier) : voix SYNTHÉTIQUE + les trois bruits.
+/// Pour la DÉMO (vraie voix espeak) : niveaux RÉALISTES d'un micro où l'on PARLE — voix DOMINANTE, bruit en fond
+/// audible mais SECONDAIRE (≈ +3 à +8 dB d'entrée). Avant, le bruit était PLUS FORT que la voix (irréaliste) →
+/// aucun débruiteur ne peut récupérer une voix enterrée. (Cf. la consigne « approche-toi des conditions réelles ».)
+fn bruits_seuls(sr: f64, n_ech: usize) -> Vec<(&'static str, Vec<f32>)> {
+    bruits_a(sr, n_ech, 0.06, 0.04, 0.18)
+}
+
+/// Vérité-terrain pour les TESTS (déterministe, sans fichier) : voix SYNTHÉTIQUE (buzz fort) + bruits à niveaux
+/// clairement DÉTECTABLES contre ce buzz (le test vérifie la SÉPARATION de 3 sources présentes, pas le réalisme).
 #[cfg(test)]
 fn composantes(sr: f64, n_ech: usize) -> (Vec<f32>, Vec<(&'static str, Vec<f32>)>) {
-    (voix_syllabique(sr, n_ech), bruits_seuls(sr, n_ech))
+    (voix_syllabique(sr, n_ech), bruits_a(sr, n_ech, 0.15, 0.12, 0.40))
 }
 
 /// Charge une VRAIE voix (TTS espeak-ng, ou un enregistrement) depuis `voix_wav/voix_source.wav` si présent,
@@ -705,8 +786,8 @@ pub fn run_separe(arg: &str) {
         }
     };
     for (i, s) in sep.sources.iter().enumerate() {
-        // Δ dB par vraie source = énergie AVANT / énergie APRÈS, le masque-garde (1 − coché) appliqué au composant.
-        let garde = masque_garde(&sep, &[i]);
+        // Δ dB par vraie source = énergie AVANT / énergie APRÈS, le gain-garde (slider à 0) appliqué au composant.
+        let garde = masque_garde(&sep, &melange, &[i]);
         let d = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &garde, n, hop).max(1e-30)).log10();
         println!(
             "   coche B{} ({:<8}) {:>11.1} {:>12.1} {:>10.1} {:>10.1}",
@@ -732,7 +813,7 @@ pub fn run_separe(arg: &str) {
         let att = |lvl: f64| -> f64 {
             let mut niv = vec![1.0; sep.sources.len()];
             niv[i] = lvl;
-            let g = sep.gain_pilote(&niv);
+            let g = sep.gain_pour(&melange, &niv);
             10.0 * (energie_totale(&comps[idx].1, n, hop) / energie_masquee(&comps[idx].1, &g, n, hop).max(1e-30)).log10()
         };
         println!("   B{} ({:<18}) {:>10.1} {:>11.1} {:>11.1}", i + 1, etiquette(s), att(1.0), att(0.5), att(0.0));
@@ -740,7 +821,7 @@ pub fn run_separe(arg: &str) {
 
     // 3) Tout cocher → la voix SEULE (preuve qu'elle survit au nettoyage complet).
     let tous: Vec<usize> = (0..sep.sources.len()).collect();
-    let garde = masque_garde(&sep, &tous);
+    let garde = masque_garde(&sep, &melange, &tous);
     let dv = 10.0 * (energie_totale(&voix, n, hop) / energie_masquee(&voix, &garde, n, hop).max(1e-30)).log10();
     println!("\n   Tout cocher → voix conservée à {:.1} dB (≈0 = intacte), tous les bruits retirés.", dv);
 
@@ -782,7 +863,7 @@ pub fn run_separe(arg: &str) {
             .iter()
             .position(|s| s.nature == "tonale")
             .map(|i| {
-                let g = masque_garde(&sepb, &[i]);
+                let g = masque_garde(&sepb, &melb, &[i]);
                 let dd = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &g, n, hop).max(1e-30)).log10();
                 (dd(&cb[0].1), dd(&vb))
             })
@@ -818,16 +899,16 @@ pub fn run_separe(arg: &str) {
     println!("   mesuré, pas à l'oreille. Détail : prive/PLAN_TEST_VOIX.md §1.8 (audition + cases à cocher).");
 }
 
-/// Le masque-GARDE du banc = le MÊME filtre que `retirer` (sliders à 0 pour `set`) → la métrique mesure exactement
-/// ce que l'utilisateur entendra à ce réglage de curseurs.
-fn masque_garde(sep: &Separation, set: &[usize]) -> Vec<Vec<f64>> {
+/// Le gain-GARDE du banc = le MÊME filtre que `retirer` (sliders à 0 pour `set`), calculé sur le MÉLANGE (le Wiener
+/// est signal-dépendant) → la métrique mesure exactement ce que l'utilisateur entendra à ce réglage de curseurs.
+fn masque_garde(sep: &Separation, signal: &[f32], set: &[usize]) -> Vec<Vec<f64>> {
     let mut niveaux = vec![1.0; sep.sources.len()];
     for &s in set {
         if s < niveaux.len() {
             niveaux[s] = 0.0;
         }
     }
-    sep.gain_pilote(&niveaux)
+    sep.gain_pour(signal, &niveaux)
 }
 
 #[cfg(test)]
@@ -861,7 +942,7 @@ mod tests {
         let att = |lvl: f64| -> f64 {
             let mut niv = vec![1.0; sep.sources.len()];
             niv[i_ton] = lvl;
-            let g = sep.gain_pilote(&niv);
+            let g = sep.gain_pour(&mel, &niv);
             10.0 * (energie_totale(&comps[0].1, n, hop) / energie_masquee(&comps[0].1, &g, n, hop).max(1e-30)).log10()
         };
         let (a100, a50, a0) = (att(1.0), att(0.5), att(0.0));
@@ -888,7 +969,7 @@ mod tests {
         assert!(natures.contains(&"transitoire périodique"), "les clics 3/s doivent être trouvés : {:?}", natures);
         // Retrait sélectif du tonal : ventilo chute, voix préservée (le filtre tient sur des paramètres inédits).
         let i_ton = sep.sources.iter().position(|s| s.nature == "tonale").unwrap();
-        let garde = masque_garde(&sep, &[i_ton]);
+        let garde = masque_garde(&sep, &melange, &[i_ton]);
         let d = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &garde, n, hop).max(1e-30)).log10();
         assert!(d(&comps[0].1) > 3.0, "ventilo coché réduit (généralisation) : {} dB", d(&comps[0].1));
         assert!(d(&voix) < 2.5, "voix préservée sur le scénario held-out : {} dB", d(&voix));
@@ -924,7 +1005,7 @@ mod tests {
         // LE test du concept : on coche le SEUL bruit tonal → il chute fort, souffle/clics/voix restent ≈ intacts.
         let (mel, comps, sep, n, hop, _sr) = banc();
         let i_ton = sep.sources.iter().position(|s| s.nature == "tonale").expect("source tonale");
-        let garde = masque_garde(&sep, &[i_ton]);
+        let garde = masque_garde(&sep, &mel, &[i_ton]);
         let d = |c: &[f32]| 10.0 * (energie_totale(c, n, hop) / energie_masquee(c, &garde, n, hop).max(1e-30)).log10();
         let (dvent, dsouf, dclic, dvoix) = (d(&comps[0].1), d(&comps[1].1), d(&comps[2].1), d(&mel.iter().zip(&comps[0].1).zip(&comps[1].1).zip(&comps[2].1).map(|(((m,v),s),c)| m-v-s-c).collect::<Vec<f32>>()));
         assert!(dvent > 3.0, "le ventilo coché doit chuter nettement : {} dB", dvent);
