@@ -32,7 +32,8 @@ const CLIC_TAU_MIN_S: f64 = 0.08; // période minimale cherchée (≤ ~12 clics/
 const CLIC_R_MIN: f64 = 0.15; // autocorrélation HF normalisée : un pic > 0.15 ⇒ VRAIMENT périodique (robuste au bruit)
 const CLIC_PEAK_FRAC: f64 = 0.8; // période = plus petit τ atteignant 80 % du pic (le FONDAMENTAL, pas un multiple)
 const CLIC_MIN: usize = 3; // au moins 3 occurrences marquées pour créer la source
-const RETRAIT_ALPHA: f64 = 2.0; // SUR-soustraction MODÉRÉE (comme l'étude du micro) : enlève 2× la part estimée (≠ α=1)
+const RETRAIT_ALPHA: f64 = 2.0; // SUR-soustraction du STRUCTURÉ (tonal/transitoire = chirurgical) : 2× la part estimée
+const RETRAIT_ALPHA_BB: f64 = 3.5; // le LARGE BANDE (diffus, bruit blanc) a besoin de PLUS pour être perçu plus propre
 const RETRAIT_BETA: f64 = 0.05; // plancher résiduel (anti « bruit musical ») : on ne descend jamais le gain sous β
 
 fn n_bins_uniques(n: usize) -> usize {
@@ -298,32 +299,48 @@ impl Separation {
         appliquer(signal, &self.voix, self.n, self.hop)
     }
 
-    /// RETRAIT : on enlève SEULEMENT les bruits cochés (`set`) ; la voix et les bruits non-cochés restent intacts.
-    pub fn retirer(&self, signal: &[f32], set: &[usize]) -> Vec<f32> {
-        appliquer(signal, &garde_attenuee(self, set), self.n, self.hop)
+    /// ⭐ MIXAGE PILOTÉ — le modèle des futurs SLIDERS (≠ on/off). `niveaux[k] ∈ [0,1]` = combien on GARDE du bruit
+    /// `k` : **1 = intact, 0 = retiré au maximum, 0.5 = mi-atténué (−6 dB env.)**. La voix est toujours gardée.
+    /// C'est l'utilisateur qui DOSE ce qu'il entend, source par source — on prépare juste le code, l'UI viendra dans UE.
+    pub fn melanger(&self, signal: &[f32], niveaux: &[f64]) -> Vec<f32> {
+        appliquer(signal, &self.gain_pilote(niveaux), self.n, self.hop)
     }
-}
 
-/// Le gain de GARDE = soustraction spectrale adaptative avec SUR-soustraction : `g = max(β, 1 − α·Σ part_bruit)`.
-/// `part_bruit[t][k]` (le masque, = bruit/|X| estimé sur le signal) DÉRIVE du signal → pas une constante calée main.
-/// α>1 enlève plus que le strict minimum (souffle mieux écrasé), β empêche le « bruit musical » et de tuer la voix.
-fn garde_attenuee(sep: &Separation, set: &[usize]) -> Vec<Vec<f64>> {
-    let frames = sep.voix.len();
-    let m = n_bins_uniques(sep.n);
-    let mut part = vec![vec![0.0_f64; m]; frames]; // Σ des parts de bruit cochées
-    for &s in set {
-        for (t, row) in sep.sources[s].masque.iter().enumerate() {
-            for (k, &g) in row.iter().enumerate() {
-                part[t][k] += g;
+    /// Le gain par bin pour des niveaux de slider donnés : `g = max(β, 1 − Σ (1−niveau_s)·α_s·part_bruit_s)`.
+    /// `part_bruit_s` (le masque) DÉRIVE du signal (pas une constante calée main) ; α dépend de la NATURE (le large
+    /// bande diffus a besoin de plus que le tonal/transitoire, chirurgicaux) ; β = plancher anti « bruit musical ».
+    fn gain_pilote(&self, niveaux: &[f64]) -> Vec<Vec<f64>> {
+        let frames = self.voix.len();
+        let m = n_bins_uniques(self.n);
+        let mut gain = vec![vec![1.0_f64; m]; frames];
+        for (s, src) in self.sources.iter().enumerate() {
+            let garder = niveaux.get(s).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+            let retirer = 1.0 - garder; // 0 = on garde tout ; 1 = on enlève au max
+            let alpha = if src.nature == "large bande" { RETRAIT_ALPHA_BB } else { RETRAIT_ALPHA };
+            for (t, row) in src.masque.iter().enumerate() {
+                for (k, &mk) in row.iter().enumerate() {
+                    gain[t][k] -= retirer * alpha * mk;
+                }
             }
         }
-    }
-    for row in part.iter_mut() {
-        for v in row.iter_mut() {
-            *v = (1.0 - RETRAIT_ALPHA * *v).clamp(RETRAIT_BETA, 1.0);
+        for row in gain.iter_mut() {
+            for v in row.iter_mut() {
+                *v = v.clamp(RETRAIT_BETA, 1.0);
+            }
         }
+        gain
     }
-    part
+
+    /// RETRAIT (cas particulier des sliders à 0) : on enlève les bruits de `set`, le reste garde son niveau 1.
+    pub fn retirer(&self, signal: &[f32], set: &[usize]) -> Vec<f32> {
+        let mut niveaux = vec![1.0; self.sources.len()];
+        for &s in set {
+            if s < niveaux.len() {
+                niveaux[s] = 0.0;
+            }
+        }
+        self.melanger(signal, &niveaux)
+    }
 }
 
 /// LE CALCUL AUTONOME : analyse `signal`, énumère les bruits (sources), construit leurs masques + celui de la voix.
@@ -702,11 +719,57 @@ pub fn run_separe(arg: &str) {
         );
     }
 
+    // 2bis) ⭐ PILOTAGE PAR SLIDER (≠ on/off) : chaque bruit s'atténue EN CONTINU selon le niveau GARDÉ (1→0).
+    //        L'utilisateur DOSE ce qu'il entend. On montre l'atténuation de chaque bruit à 100 % / 50 % / 0 % gardé.
+    println!("\n   🎚️  Pilotage par SLIDER — atténuation (dB) de chaque bruit selon le niveau GARDÉ (continu, pas on/off) :");
+    println!("   {:<24} {:>11} {:>11} {:>11}", "bruit", "100% gardé", "50% gardé", "0% gardé");
+    for (i, s) in sep.sources.iter().enumerate() {
+        let idx = match s.nature {
+            "tonale" => 0,
+            "large bande" => 1,
+            _ => 2,
+        };
+        let att = |lvl: f64| -> f64 {
+            let mut niv = vec![1.0; sep.sources.len()];
+            niv[i] = lvl;
+            let g = sep.gain_pilote(&niv);
+            10.0 * (energie_totale(&comps[idx].1, n, hop) / energie_masquee(&comps[idx].1, &g, n, hop).max(1e-30)).log10()
+        };
+        println!("   B{} ({:<18}) {:>10.1} {:>11.1} {:>11.1}", i + 1, etiquette(s), att(1.0), att(0.5), att(0.0));
+    }
+
     // 3) Tout cocher → la voix SEULE (preuve qu'elle survit au nettoyage complet).
     let tous: Vec<usize> = (0..sep.sources.len()).collect();
     let garde = masque_garde(&sep, &tous);
     let dv = 10.0 * (energie_totale(&voix, n, hop) / energie_masquee(&voix, &garde, n, hop).max(1e-30)).log10();
     println!("\n   Tout cocher → voix conservée à {:.1} dB (≈0 = intacte), tous les bruits retirés.", dv);
+
+    // 3bis) ⭐ LA VRAIE QUALITÉ (recadrage utilisateur) : comparer la voix NETTOYÉE à la voix ORIGINALE PROPRE, par
+    //       les matrices — pas l'œil. SI-SDR = combien la sortie ressemble à la voix propre (échelle-invariant).
+    //       L'amélioration RÉELLE qu'on entend = SI-SDR(sortie) − SI-SDR(entrée), pas le « −24 dB » par bruit.
+    let si_sdr = |est: &[f32]| -> f64 {
+        let nn = voix.len().min(est.len());
+        let (mut dot, mut e_ref) = (0.0_f64, 0.0_f64);
+        for i in 0..nn {
+            dot += est[i] as f64 * voix[i] as f64;
+            e_ref += (voix[i] as f64).powi(2);
+        }
+        let a = dot / e_ref.max(1e-30); // projection de l'estimée sur la voix propre
+        let (mut e_t, mut e_e) = (0.0_f64, 0.0_f64);
+        for i in 0..nn {
+            let cible = a * voix[i] as f64;
+            e_t += cible * cible;
+            let err = cible - est[i] as f64;
+            e_e += err * err;
+        }
+        10.0 * (e_t / e_e.max(1e-30)).log10()
+    };
+    let sdr_in = si_sdr(&melange);
+    let sdr_doux = si_sdr(&sep.voix(&melange));
+    let sdr_fort = si_sdr(&sep.retirer(&melange, &tous));
+    println!("\n   📐 INDICATEUR (PAS l'objectif — l'objectif = TON pilotage) : SI-SDR « tout retiré » vs voix propre :");
+    println!("      entrée (mélange brut)  = {:>5.1} dB   ·   tous sliders à 0 = {:>5.1} dB (gain {:+.1} dB)", sdr_in, sdr_fort, sdr_fort - sdr_in);
+    let _ = sdr_doux;
 
     // 4) VALIDATION HELD-OUT (anti-overfit) : le MÊME algo, aucun seuil retouché, sur un scénario JAMAIS vu.
     {
@@ -743,9 +806,11 @@ pub fn run_separe(arg: &str) {
             let _ = ecrire_wav(&format!("{dir}/B{}_isole.wav", i + 1), &sep.isoler(&melange, i), sr_u);
             let _ = ecrire_wav(&format!("{dir}/sans_B{}.wav", i + 1), &sep.retirer(&melange, &[i]), sr_u);
         }
-        let _ = ecrire_wav(&format!("{dir}/voix_seule.wav"), &sep.voix(&melange), sr_u);
-        println!("\n🎧  WAV écrits dans ./{dir}/ : mélange, chaque bruit ISOLÉ (B*_isole), le mélange SANS le bruit coché");
-        println!("    (sans_B*), et la voix seule — à écouter pour valider l'audition + le retrait sélectif.");
+        // voix_seule = tous les sliders à 0 ; tout_garde50 = tous à 50 % (le DOSAGE intermédiaire, ≠ on/off).
+        let _ = ecrire_wav(&format!("{dir}/voix_seule.wav"), &sep.melanger(&melange, &vec![0.0; sep.sources.len()]), sr_u);
+        let _ = ecrire_wav(&format!("{dir}/tout_garde50.wav"), &sep.melanger(&melange, &vec![0.5; sep.sources.len()]), sr_u);
+        println!("\n🎧  WAV dans ./{dir}/ : mélange, B*_isole (audition), sans_B* (un slider à 0), tout_garde50 (tous");
+        println!("    les sliders à 50 % = dosage intermédiaire), voix_seule (tous à 0) — écoute le DOSAGE, pas un on/off.");
     }
 
     println!("\n📌 Lecture : chaque bruit est SÉPARÉ et auditionnable AVANT de cocher ; cocher n'enlève QUE lui (la voix");
@@ -753,10 +818,16 @@ pub fn run_separe(arg: &str) {
     println!("   mesuré, pas à l'oreille. Détail : prive/PLAN_TEST_VOIX.md §1.8 (audition + cases à cocher).");
 }
 
-/// Le masque-GARDE du banc = le MÊME filtre que `retirer` (soustraction spectrale adaptative sur-soustraite) → la
-/// métrique mesure exactement ce que l'utilisateur entendra.
+/// Le masque-GARDE du banc = le MÊME filtre que `retirer` (sliders à 0 pour `set`) → la métrique mesure exactement
+/// ce que l'utilisateur entendra à ce réglage de curseurs.
 fn masque_garde(sep: &Separation, set: &[usize]) -> Vec<Vec<f64>> {
-    garde_attenuee(sep, set)
+    let mut niveaux = vec![1.0; sep.sources.len()];
+    for &s in set {
+        if s < niveaux.len() {
+            niveaux[s] = 0.0;
+        }
+    }
+    sep.gain_pilote(&niveaux)
 }
 
 #[cfg(test)]
@@ -779,6 +850,28 @@ mod tests {
         assert!(natures.contains(&"tonale"), "le ventilo tonal doit être une source : {:?}", natures);
         assert!(natures.contains(&"large bande"), "le souffle doit être une source : {:?}", natures);
         assert!(natures.contains(&"transitoire périodique"), "les clics doivent être une source : {:?}", natures);
+    }
+
+    #[test]
+    fn slider_attenuation_continue_et_monotone() {
+        // Le modèle SLIDER (≠ on/off) : niveau 1 = bruit intact, baisser le niveau = plus de bruit retiré (monotone),
+        // et garder TOUT (niveaux=1) ne doit RIEN altérer (identité). C'est le code « préparé pour les curseurs ».
+        let (mel, comps, sep, n, hop, _sr) = banc();
+        let i_ton = sep.sources.iter().position(|s| s.nature == "tonale").unwrap();
+        let att = |lvl: f64| -> f64 {
+            let mut niv = vec![1.0; sep.sources.len()];
+            niv[i_ton] = lvl;
+            let g = sep.gain_pilote(&niv);
+            10.0 * (energie_totale(&comps[0].1, n, hop) / energie_masquee(&comps[0].1, &g, n, hop).max(1e-30)).log10()
+        };
+        let (a100, a50, a0) = (att(1.0), att(0.5), att(0.0));
+        assert!(a100 < 0.5, "à 100 % gardé, le ventilo est ~intact : {} dB", a100);
+        assert!(a50 > a100 + 0.5 && a0 > a50 + 0.5, "atténuation MONOTONE et continue : {} < {} < {}", a100, a50, a0);
+        // Tout garder (niveaux = 1) → sortie == mélange (le mixage piloté n'altère rien à plein niveau).
+        let plein = sep.melanger(&mel, &vec![1.0; sep.sources.len()]);
+        let err: f64 = (n..mel.len() - n).map(|k| (mel[k] - plein[k]).abs() as f64).fold(0.0, f64::max);
+        assert!(err < 1e-3, "garder tout (niveaux=1) doit redonner le mélange, err = {}", err);
+        let _ = hop;
     }
 
     #[test]
