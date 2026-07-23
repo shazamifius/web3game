@@ -1,0 +1,81 @@
+name: Demande d'accès — Access request
+description: Demander à lire le code ou à voir une démonstration / Request code access or a live demonstration
+title: "Demande d'accès — "
+labels: ["demande d'accès"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de votre intérêt. Quelques champs suffisent, et je réponds à tout le monde.
+
+        **⚠ Cette demande sera publiquement visible** (c'est une *issue* GitHub). Si vous préférez que
+        votre démarche reste discrète — c'est légitime, surtout au nom d'une entreprise — écrivez plutôt
+        à l'adresse indiquée dans le [README](../blob/main/README.md#demander-à-voir-le-projet). Même
+        traitement, aucune trace publique.
+
+        *This request will be publicly visible. If you would rather keep it private, email instead —
+        same treatment, no public trace. English is perfectly welcome below.*
+
+  - type: input
+    id: qui
+    attributes:
+      label: Qui êtes-vous ? / Who are you?
+      description: Un nom ou un prénom suffit. / A name is enough.
+      placeholder: ""
+    validations:
+      required: true
+
+  - type: input
+    id: organisation
+    attributes:
+      label: Organisation (facultatif) / Organisation (optional)
+      description: Studio, entreprise, laboratoire, école — ou rien du tout.
+      placeholder: ""
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: niveau
+    attributes:
+      label: Ce que vous aimeriez / What you would like
+      description: >
+        Plusieurs choix possibles. La documentation, elle, est déjà en libre accès sur la page d'accueil —
+        rien à demander. / You may pick several. The documentation itself is already freely readable.
+      options:
+        - label: "Lire le code (accès en lecture au dépôt privé) / Read the code (read access to the private repository)"
+        - label: "Une démonstration en direct (le réseau qui tourne, les mesures rejouées) / A live demonstration"
+    validations:
+      required: true
+
+  - type: input
+    id: github
+    attributes:
+      label: Votre identifiant GitHub / Your GitHub handle
+      description: >
+        Nécessaire uniquement si vous voulez lire le code — c'est ce qui me permet de vous ajouter au
+        dépôt privé. / Only needed if you want to read the code.
+      placeholder: ""
+    validations:
+      required: false
+
+  - type: textarea
+    id: contexte
+    attributes:
+      label: Ce qui vous intéresse / What draws your interest
+      description: >
+        Quelques phrases suffisent : ce qui vous a amené ici, et ce que vous cherchez à comprendre ou à
+        évaluer. Ça m'aide à vous montrer la bonne chose plutôt que tout à la fois. /
+        A few sentences: what brought you here and what you are trying to understand or evaluate.
+      placeholder: ""
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        Le code est sous licence « tous droits réservés » : l'accès en lecture est accordé pour évaluation
+        et discussion, pas pour réutilisation. On peut évidemment en parler.
+
+        *The code is under an all-rights-reserved licence: read access is granted for evaluation and
+        discussion, not for reuse. Happy to discuss.*
