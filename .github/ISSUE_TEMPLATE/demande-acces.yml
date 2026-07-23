@@ -34,16 +34,17 @@ body:
     validations:
       required: false
 
-  - type: checkboxes
+  - type: dropdown
     id: niveau
     attributes:
       label: Ce que vous aimeriez / What you would like
       description: >
         Plusieurs choix possibles. La documentation, elle, est déjà en libre accès sur la page d'accueil —
         rien à demander. / You may pick several. The documentation itself is already freely readable.
+      multiple: true
       options:
-        - label: "Lire le code (accès en lecture au dépôt privé) / Read the code (read access to the private repository)"
-        - label: "Une démonstration en direct (le réseau qui tourne, les mesures rejouées) / A live demonstration"
+        - "Lire le code — accès en lecture au dépôt privé / Read the code"
+        - "Une démonstration en direct / A live demonstration"
     validations:
       required: true
 
