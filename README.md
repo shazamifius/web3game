@@ -132,16 +132,18 @@ volontiers — studios, entreprises, chercheurs, curieux du domaine.
 | **Lecture du code** | Accès en lecture au dépôt privé : le cœur réseau en Rust, les tests, l'historique complet. |
 | **Démonstration** | Une session en direct : le réseau qui tourne, la bascule d'un monde à l'autre, les mesures rejouées devant vous. |
 
-**Pour demander :** ouvrez une demande via le formulaire ci-dessous — il tient en quelques champs (qui vous
-êtes, ce que vous voulez voir, votre identifiant GitHub si vous voulez lire le code).
+**Le plus simple : écrivez-moi un mot.**
 
-**→ [Faire une demande d'accès](../../issues/new?template=demande-acces.yml)**
+### → [shazamifius@gmail.com](mailto:shazamifius@gmail.com)
 
-Vous n'avez pas de compte GitHub, ou vous préférez que votre démarche reste discrète ? Écrivez directement à
-**[shazamifius@gmail.com](mailto:shazamifius@gmail.com)** — c'est le même traitement, sans trace publique.
+Dites qui vous êtes, ce que vous aimeriez voir — le code, une démonstration, ou les deux — et, si vous
+voulez lire le code, votre identifiant GitHub (c'est ce qui me permet de vous ajouter au dépôt privé).
+Rien de formel : quelques lignes suffisent, en français ou en anglais. Je réponds à tout le monde ; si
+je n'ai pas répondu sous une semaine, relancez sans hésiter, c'est que ça m'a échappé.
 
-Je réponds à tout le monde. Si votre demande reste sans réponse plus d'une semaine, relancez sans hésiter :
-c'est qu'elle m'a échappé.
+*Vous êtes à l'aise avec GitHub et une demande visible publiquement ne vous dérange pas ? Vous pouvez aussi
+[ouvrir une demande via un formulaire](../../issues/new?template=demande-acces.yml) — c'est le même
+traitement.*
 
 ---
 

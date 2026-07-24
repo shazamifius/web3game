@@ -130,16 +130,17 @@ studios, companies, researchers, curious people in the field.
 | **Code reading** | Read access to the private repository: the Rust network core, the tests, the full history. |
 | **Demonstration** | A live session: the network running, the world-to-world switch, the measurements replayed in front of you. |
 
-**To ask:** open a request with the form below — a few fields (who you are, what you would like to see, your
-GitHub handle if you want to read the code).
+**The simplest way: just email me.**
 
-**→ [Request access](../../issues/new?template=demande-acces.yml)**
+### → [shazamifius@gmail.com](mailto:shazamifius@gmail.com)
 
-No GitHub account, or you would rather keep the approach discreet? Write directly to
-**[shazamifius@gmail.com](mailto:shazamifius@gmail.com)** — same treatment, no public trace.
+Tell me who you are, what you would like to see — the code, a demonstration, or both — and, if you want to
+read the code, your GitHub handle (that is what lets me add you to the private repository). Nothing formal:
+a few lines are enough, in English or French. I reply to everyone; if you have no answer within a week, do
+follow up — it means it slipped past me.
 
-I reply to everyone. If your request goes unanswered for more than a week, do follow up: it means it slipped
-past me.
+*Comfortable with GitHub, and a publicly visible request does not bother you? You can also
+[open a request through a form](../../issues/new?template=demande-acces.yml) — same treatment.*
 
 ---
 
