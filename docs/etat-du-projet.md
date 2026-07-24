@@ -28,7 +28,7 @@
 | **Fraîcheur** sur liens **distants réels** (plusieurs pays, dont CGNAT) | **p95 ~200–335 ms** (< seuil 500 ms « vivant »), **perte réelle ~0** | instrument de mesure (agent) + journal du rendez-vous |
 | **Sonde de lien** (type de NAT, RTT, gigue) | tourne dans l'agent, remontée en continu | `cargo run -- natcheck` |
 | **Gain de la redondance** sur perte *aléatoire* (banc réel) | perte 30 % → **9 %** (2 copies) / **2,8 %** (3 copies), ≈ `pᴷ` | `./tools/netem-bench.sh 30` |
-| **Tests** automatiques | **355**, 0 warning | `cargo test` |
+| **Tests** automatiques | **363**, 0 warning | `cargo test` |
 | Plafond du **banc** de simulation | **~1 500 nœuds** (1 thread OS / nœud, 12 cœurs) | limite matérielle (voir §4) |
 
 > **Ce que ces chiffres NE prouvent PAS** (honnêteté de méthode) : ils sont pris en **simulation / localhost** — le
@@ -76,6 +76,11 @@ L'échelle se fait donc en **ajoutant des machines**, jamais en chargeant une se
   lancent) a relevé, sur de **vrais liens distants** (plusieurs pays, certains derrière le NAT le plus dur), une
   présence **vivante** : fraîcheur **p95 ~200–335 ms** (sous le seuil de 500 ms), **perte réelle ~0**. *(Premier fait
   dur contre la « forteresse vide » — voir §6.)*
+- **Un premier passage de monde à monde.** Un **lanceur natif** (Rust) fait cohabiter plusieurs mondes Unreal :
+  depuis un **hub**, on franchit un portail et on **bascule** vers une **île**. Le régisseur ne ferme jamais
+  l'ancien monde tant que le nouveau n'a pas **prouvé une image** (un invariant tenu même sous 200 000 pas de
+  simulation de bascule). Jugé **fluide** en jeu réel. *(Limites assumées, chantiers en cours et non acquis :
+  l'île est encore un **cul-de-sac** — pas de portail de retour — et son contenu est épars.)*
 
 ## 4. Les combats menés (la méthode)
 

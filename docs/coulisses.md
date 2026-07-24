@@ -213,6 +213,47 @@ sépare deux réalités physiques distinctes. *(La formule exacte du verdict à 
 
 ---
 
+## Enquête n°5 — « 200 000 pas de simulation validaient une garantie fausse » (23 juillet 2026)
+
+### Le symptôme
+Un lanceur natif fait passer d'un monde Unreal à l'autre (d'un **hub** vers une **île**). À l'usage, la
+bascule était **« extrêmement aléatoire »** : parfois parfaite, parfois des **fenêtres fantômes**
+impossibles à fermer autrement que par le gestionnaire des tâches. Inacceptable pour un composant censé
+être irréprochable.
+
+### La fausse assurance
+Après un premier correctif, on a écrit un **fuzz de la machine à états de la bascule** : 4 000 séquences
+aléatoires × 50 pas, soit **200 000 pas**, avec quatre invariants vérifiés à *chaque* pas (« jamais deux
+mondes actifs à la fois », « ne jamais fermer l'ancien avant que le nouveau ait prouvé une image »…).
+Résultat : **0 violation**. On a même prouvé que le filet *mordait* — en réintroduisant les bugs corrigés,
+il tombait en quelques pas. Sur cette base, on a annoncé **« zéro fenêtre fantôme, garanti »**.
+
+### L'enquête — le réel, pas la simulation
+La garantie était **fausse**, et seule une campagne sur la **vraie** machine l'a montré, en deux lignes de
+journal : `LANCE hub pid=3420`, puis `REGISTER hub pid=3500` — **deux PID différents pour le même monde**.
+Le fuzz supposait que le processus qu'on lançait était le jeu. Or l'exécutable d'un paquet Unreal n'est pas
+le jeu : c'est un **amorceur de 0,2 Mo** qui lance le vrai binaire (~324 Mo)… **puis se termine**. Le
+lanceur « tuait » donc un processus déjà mort, tandis que le vrai jeu survivait — la fenêtre fantôme.
+
+### La révélation
+Un test massif et rigoureux ne valide **que le modèle qu'on lui a donné**. Ses 200 000 cas ne compensent
+pas une **hypothèse fausse sur le monde réel** (« le processus lancé est le jeu ») : ils la **déguisent en
+preuve**. C'est le piège **inverse** des enquêtes précédentes — là, l'instrument *refusait* de confirmer ce
+qu'on attendait, et il avait raison ; ici, il confirmait **trop bien**. Le correctif a été de **posséder le
+vrai binaire** (le lanceur garde la poignée du processus réel, pas celle de l'amorceur) ; la bascule est
+depuis jugée **fluide** en jeu réel.
+
+### Ce que ça nous a appris
+1. **Avant de tirer une garantie d'une simulation, énoncer à voix haute l'hypothèse sur le monde réel
+   qu'elle encode** — et se demander qui l'a *vérifiée*. Si personne : ce n'est pas une garantie, c'est une
+   conjecture bien testée.
+2. **Un fuzz prouve la cohérence interne ; seule une mesure sur le vrai système prouve la correspondance au
+   réel.** Les deux sont nécessaires ; aucune ne remplace l'autre.
+3. **Quatrième rappel de la même règle** : le juge fiable n'est jamais l'enthousiasme, c'est le journal du
+   système réel.
+
+---
+
 ### 🧭 Se repérer — où que vous commenciez, vous êtes au bon endroit
 
 Vous lisez **Les coulisses** — une étape des parcours **🔎 Juger vite** et **🧭 Tout comprendre**.

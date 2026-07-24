@@ -76,7 +76,7 @@ parce que rien n'est parti du tout.
 | **ThreadSanitizer** | courses entre threads | 0 sur 351 tests instrumentés |
 | **Kani** (AWS) | preuve formelle d'absence de panique | **1 défaut trouvé** ; 6 preuves sur 8 (2 sur du texte trop coûteuses, couvertes autrement) |
 | **Wycheproof** (Google) | pièges connus de la vérification de signature | 150 cas, verdict identique à la référence — 62 pièges tous refusés |
-| **CodeQL** (GitHub) | analyse statique sémantique (SAST) du Rust | 63 fichiers sur 63 analysés, 0 alerte |
+| **CodeQL** (GitHub) | analyse statique sémantique (SAST) du Rust | 63 fichiers sur 63 analysés, 0 alerte *(dépôt alors public ; suspendu depuis — voir plus bas)* |
 | **Fuzzing déterministe** | paquets hostiles | 240 000 000 décodages à la main, 0 panique — désormais rejoué en continu (campagne nocturne à graine variable) |
 | **Clippy** | qualité | 0 remarque |
 
@@ -99,8 +99,14 @@ recherche de motifs — et y cherche des schémas de failles connus. Il comprend
 depuis fin 2025. Passé sur le cœur réseau, il a analysé **63 fichiers Rust sur 63** et n'a levé
 **aucune alerte**. Ce « zéro » ne compte que parce que les journaux du run prouvent que l'extraction
 Rust a réellement eu lieu (base de données construite, requêtes exécutées) — la même exigence que
-plus loin : *un « 0 problème » doit prouver que quelque chose a tourné.* L'analyse est rejouée à
-chaque poussée et une fois par semaine.
+plus loin : *un « 0 problème » doit prouver que quelque chose a tourné.*
+
+> **Mise à jour (juillet 2026) — CodeQL est suspendu, honnêtement.** L'analyse était rejouée à chaque
+> poussée tant que le dépôt était **public**. Le dépôt du code est depuis passé en **privé**, et GitHub
+> n'offre CodeQL gratuitement que sur les dépôts publics (sur un dépôt privé il faut *GitHub Advanced
+> Security*, payant) : l'analyse n'est donc **plus rafraîchie**. Le résultat ci-dessus reste vrai pour la
+> version analysée — il n'est simplement plus reconduit à chaque commit. Le **fuzzing déterministe**, lui,
+> continue de tourner en intégration continue.
 
 ### 5. Le banc d'attaque — ce qui a trouvé ce que rien d'autre n'a vu
 
