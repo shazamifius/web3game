@@ -15,6 +15,15 @@ own. Hand-written network infrastructure, attacked by ourselves, and documented 
 **This is neither a product nor a promise.** It is a research project — deep and niche — run by one person.
 What follows consistently separates what has been measured from what has not.
 
+## Where to start
+
+Two paths, depending on what you are after — and nothing stops you taking both:
+
+- **[Read the documentation, freely](#the-documentation-is-freely-readable)** — the idea, the measurements
+  and their limits, the open doubts. Nothing to ask anyone.
+- **[See the code, on request](#requesting-access-to-the-code)** — a few lines by email and I open the
+  private repository for reading (or a live demonstration).
+
 ## The idea
 
 No central game server holding authority: the players themselves form the network. What that changes:

@@ -16,6 +16,15 @@ sans rien arrondir.
 **Ce n'est ni un produit, ni une promesse.** C'est un projet de R&D — poussé et de niche — mené par une
 personne seule. Ce qui suit distingue systématiquement ce qui est mesuré de ce qui ne l'est pas.
 
+## Par où commencer
+
+Deux chemins, selon ce que vous cherchez — et rien n'empêche de faire les deux :
+
+- **[Lire la documentation, librement](#la-documentation-en-libre-accès)** — l'idée, les mesures et leurs
+  limites, les doutes ouverts. Rien à demander à personne.
+- **[Voir le code, sur demande](#demander-à-voir-le-code)** — quelques lignes par courriel, et je vous ouvre
+  le dépôt privé en lecture (ou une démonstration en direct).
+
 ## L'idée
 
 Pas de serveur de jeu central qui fait autorité : les joueurs forment eux-mêmes le réseau. Ce que ça change :
