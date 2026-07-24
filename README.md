@@ -41,6 +41,19 @@ dans un même espace — porté par une infrastructure serveur centralisée d'ex
 même frontière en se privant justement de ce serveur. C'est une direction de recherche, pas une métrique
 atteinte.
 
+## Conçu avec l'IA — et je le dis franchement
+
+Je conçois et je construis ce projet **en binôme avec Claude** (l'IA d'Anthropic). Je ne le cache pas et je
+ne le maquille pas : ça fait partie de l'histoire, et je préfère la raconter honnêtement.
+
+L'IA est le **levier** qui me permet, seul et sans équipe, d'écrire octet par octet une infrastructure de
+cette ambition — et d'apprendre en la construisant. Mais elle ne remplace pas le jugement : **chaque ligne,
+je la relis, je la comprends, je l'assume.** Les décisions, les doutes, le cap tenu, le refus de crier
+victoire trop vite — ça, ça reste moi. L'IA propose et va vite ; moi je tranche, je vérifie, et je signe.
+
+Je le dis simplement : ce projet, dans cette forme et à ce rythme, **n'aurait pas existé sans cette
+collaboration** — et le dire clairement, c'est ma règle numéro un : **l'honnêteté avant tout.**
+
 ## Ce qui est construit, et vérifié
 
 Cœur en **Rust**, fait main, sans boîte noire — la seule dépendance externe est la bibliothèque de
@@ -94,13 +107,6 @@ C'est une règle du projet : on écrit ce qui est prouvé **et** ce qui ne l'est
   l'authenticité, pas le secret. C'est planifié.
 - **Le test décisif est entamé, pas franchi.** On mesure que le substrat transporte une présence vivante
   entre machines distantes réelles — pas encore le ressenti de vrais joueurs qui bougent et jouent ensemble.
-
-## Conçu avec l'IA — assumé
-
-Ce projet est imaginé et construit par son auteur en binôme avec Claude (l'IA d'Anthropic). Ce n'est pas un
-détail caché : c'est le levier qui permet à un fondateur seul d'écrire, octet par octet, une infrastructure
-réseau de cette ambition. Chaque ligne est relue, comprise et assumée par un humain — mais ce projet, dans
-cette forme et à ce rythme, n'aurait pas existé sans cette collaboration.
 
 ---
 

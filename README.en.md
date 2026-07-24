@@ -38,6 +38,19 @@ The scale target is openly distant: the largest coordinated battle in gaming his
 *centralised* server infrastructure. This project explores the same frontier while deliberately giving up
 that server. It is a research direction, not a figure already reached.
 
+## Built with AI — and I say so plainly
+
+I design and build this project **together with Claude** (Anthropic's AI). I don't hide it and I don't dress
+it up: it is part of the story, and I would rather tell that story honestly.
+
+The AI is the **lever** that lets me — alone, with no team — write, byte by byte, infrastructure of this
+ambition, and learn while building it. But it does not replace judgement: **every line, I read it, I
+understand it, I own it.** The decisions, the doubts, the direction held, the refusal to claim victory too
+early — that stays me. The AI proposes and moves fast; I decide, I verify, and I sign.
+
+Put simply: this project, in this form and at this pace, **would not exist without that collaboration** — and
+saying so plainly is my rule number one: **honesty first.**
+
 ## What is built, and verified
 
 Core written in **Rust**, by hand, no black boxes — the only external dependency is the cryptography
@@ -91,13 +104,6 @@ It is a project rule: write down what is proven **and** what is not.
   not secrecy. It is planned.
 - **The decisive test is started, not passed.** We measure that the substrate carries a live presence
   between real remote machines — not yet how it feels for real players moving and playing together.
-
-## Built with AI — openly
-
-This project is imagined and built by its author together with Claude (Anthropic's AI). That is not a hidden
-detail: it is the lever that lets a solo founder write, byte by byte, network infrastructure of this ambition.
-Every line is read, understood and owned by a human — but this project, in this form and at this pace, would
-not exist without that collaboration.
 
 ---
 
