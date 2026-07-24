@@ -133,9 +133,37 @@ perte **aléatoire** contrôlée (perte réseau injectée par le noyau) : **30 %
 Le récit complet de cette double correction vit dans [les coulisses](coulisses.md) (enquête n°3) ; le détail
 technique, dans le [chantier réseau](chantier-reseau.md).
 
+## Chapitre 9 — Le durcissement : casser son propre code exprès
+Le cœur réseau « marchait ». Mais dans un réseau pair-à-pair, chaque nœud reçoit des paquets écrits par
+n'importe qui : *marcher* ne suffit pas, il faut **tenir sous attaque**. On a donc mené, le 22 juillet 2026,
+une passe de durcissement délibérée — non pas « est-ce que ça tourne ? », mais « qu'est-ce qui casse si
+quelqu'un le veut ? ». Elle a trouvé **16 défauts**, dont une fuite de données personnelles et une manière
+de transformer un nœud en **arme d'amplification**. Les 16 sont corrigés, chacun accompagné d'un test qui
+échoue si la correction disparaît.
+
+La leçon n'est pas la liste, c'est la **méthode** : aucune technique ne suffit seule. Un vol d'objet partagé
+est passé à travers 11 tests unitaires, des tests de propriété, un détecteur de courses entre threads et
+**240 millions de paquets de fuzzing** — seul un **banc d'attaque en conditions réelles** l'a vu. À
+l'inverse, une preuve formelle ([Kani](https://model-checking.github.io/kani), d'AWS) a cassé en quelques
+secondes une fonction que ces 240 millions d'essais avaient jugée saine. Le récit complet, chiffré, est dans
+**[la page sécurité](SECURITE.md)**.
+
+## Chapitre 10 — Le launcher : le réseau invisible devient un geste
+Jusqu'ici, tout le travail était **headless** — du réseau qu'on mesure, pas qu'on voit. Ce chapitre lui
+donne un corps : un **launcher** natif qui fait cohabiter deux mondes Unreal (un hub, une île) et orchestre
+le **passage de l'un à l'autre**. On franchit un portail, on change de monde — et l'ancien ne se ferme
+**jamais** avant que le nouveau ait prouvé qu'il affiche une image (le même réflexe que partout : ne pas
+casser ce qui marche avant que le remplaçant ait fait ses preuves). C'est jugé **fluide** en jeu réel.
+
+Ce chapitre a aussi offert la plus belle leçon d'humilité du projet : une simulation de 200 000 pas validait
+la bascule… sur un **modèle faux du monde réel**, et seule la vraie machine l'a démenti. Le mécanisme, ce
+qu'il prouve et ce qui lui manque encore (l'île est un cul-de-sac) : **[chantier launcher](chantier-launcher.md)**,
+et l'enquête complète dans **[les coulisses, n°5](coulisses.md)**.
+
 ## La suite
-À partir de là, le travail se poursuit dans les chantiers dédiés : confronter le tout au [réseau réel](chantier-reseau.md),
-[la foule dense](chantier-foule.md), et [la robustesse](chantier-robustesse.md).
+Le mécanisme du passage tient ; ce qui manque, c'est le **monde au bout** — un portail de retour, des lieux
+où l'on a envie de rester. Le travail se poursuit dans les chantiers dédiés : le [réseau réel](chantier-reseau.md),
+[la foule dense](chantier-foule.md), [la robustesse](chantier-robustesse.md), et le [launcher](chantier-launcher.md).
 
 ---
 

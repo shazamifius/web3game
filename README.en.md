@@ -124,7 +124,7 @@ by which method, and where the limits are.
 **Architecture and technical choices** — [architecture and code layout](docs/ARCHITECTURE.md) ·
 [network](docs/chantier-reseau.md) · [dense crowd](docs/chantier-foule.md) ·
 [liveliness](docs/chantier-vivant.md) · [robustness](docs/chantier-robustesse.md) ·
-[security, and what we broke ourselves](docs/SECURITE.md)
+[launcher, world to world](docs/chantier-launcher.md) · [security, and what we broke ourselves](docs/SECURITE.md)
 
 **To judge quickly** — [measured state](docs/etat-du-projet.md) ·
 [the register of doubts](docs/doutes.md) · [behind the scenes](docs/coulisses.md), where measurement

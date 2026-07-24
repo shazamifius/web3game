@@ -125,7 +125,7 @@ est mesuré, par quelle méthode, et où sont les limites.
 
 **Vous voulez l'architecture et les choix techniques**
 1. [L'architecture et l'organisation du code](docs/ARCHITECTURE.md)
-2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [« vivant »](docs/chantier-vivant.md) · [robustesse](docs/chantier-robustesse.md)
+2. Les chantiers : [réseau](docs/chantier-reseau.md) · [foule dense](docs/chantier-foule.md) · [« vivant »](docs/chantier-vivant.md) · [robustesse](docs/chantier-robustesse.md) · [launcher](docs/chantier-launcher.md)
 3. [La sécurité, et ce qu'on a cassé chez nous](docs/SECURITE.md)
 
 **Vous voulez juger vite**

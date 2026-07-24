@@ -4,6 +4,24 @@
 > (autorité par objet, BFT, relais).
 > *L'idée en mots simples, avant le code : [le « sans serveur », en clair](comprendre-le-p2p.md).*
 
+## Le projet en entier — six parties
+
+Avant de plonger dans `src/`, la forme d'ensemble. Le projet n'est pas un bloc : c'est **~53 000 lignes de
+code écrites à la main** (le reste des chiffres qu'on voit parfois — plus d'un million de lignes — est de la
+**géométrie 3D générée** par script, pas du code), réparties en six dépôts au rôle net.
+
+| Partie | Langage | ~Lignes | Rôle |
+|---|---|---|---|
+| **Le cœur réseau** | Rust | ~29 000 | Le vrai travail de R&D : identité, NAT, foule perçue, mesure. C'est ce que décrit le reste de cette page. |
+| **Le launcher** | Rust | ~13 000 | L'application native : lance les mondes, dessine l'interface, orchestre la [bascule](chantier-launcher.md). |
+| **Le hub** | C++ | ~2 900 | Le monde-carrefour dans Unreal, avec le portail vers l'île. |
+| **L'île** | C++ (+Python) | ~2 800 | Le monde-jeu Unreal ; les scripts Python **génèrent** le terrain (d'où le million de lignes `.obj`). |
+| **La vitrine** | Markdown | — | La présentation publique et cette documentation. La seule partie ouverte à tous. |
+| **Les notes** | Markdown | — | Le carnet de bord privé (reprises de session, audits). Jamais partagé. |
+
+Le **cœur** et le **launcher** parlent par une socket locale (le pont *sidecar*) ; les deux mondes Unreal
+sont des clients de ce cœur. Le reste de cette page zoome sur le **cœur** (`src/`).
+
 ## Organisation du code (`src/`)
 
 Principe : **un fichier = une responsabilité** (plein de petits fichiers plutôt

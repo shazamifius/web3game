@@ -27,8 +27,9 @@
 3. [Chantier foule dense](chantier-foule.md) — percevoir une foule sans plafond ni explosion de débit
 4. [Chantier « vivant »](chantier-vivant.md) — mesurer si un mouvement perçu est vivant, par les maths
 5. [Chantier robustesse](chantier-robustesse.md) — autorité, longévité, traversée des NAT difficiles
-6. [Les mesures, en équations](les-mesures.md) — toutes les formules derrière les verdicts
-7. [Comment lancer & tester](TESTS.md) — rejouer les mesures vous-même
+6. [Chantier launcher](chantier-launcher.md) — passer d'un monde à l'autre sans écran noir
+7. [Les mesures, en équations](les-mesures.md) — toutes les formules derrière les verdicts
+8. [Comment lancer & tester](TESTS.md) — rejouer les mesures vous-même
 
 **🧭 Tout comprendre, dans l'ordre — du plus accessible au plus pointu**
 1. [Le « sans serveur », en clair](comprendre-le-p2p.md)
@@ -41,8 +42,9 @@
 8. [Chantier foule dense](chantier-foule.md)
 9. [Chantier « vivant »](chantier-vivant.md)
 10. [Chantier robustesse](chantier-robustesse.md)
-11. [Les mesures, en équations](les-mesures.md)
-12. [Comment lancer & tester](TESTS.md)
+11. [Chantier launcher](chantier-launcher.md)
+12. [Les mesures, en équations](les-mesures.md)
+13. [Comment lancer & tester](TESTS.md)
 
 ---
 
@@ -60,6 +62,7 @@
 | [Chantier foule dense](chantier-foule.md) | Voir la foule entière sans plafond, à débit borné. |
 | [Chantier « vivant »](chantier-vivant.md) | Une métrique objective du « est-ce vivant ? », et un levier qui aide. |
 | [Chantier robustesse](chantier-robustesse.md) | Autorité par objet, longévité, relais pour les NAT difficiles. |
+| [Chantier launcher](chantier-launcher.md) | Passer d'un monde à l'autre sans écran noir : le launcher, deux mondes Unreal, l'invariant. |
 | [Les mesures, en équations](les-mesures.md) | Toutes les formules : fidélité $F$, fraîcheur, jerk, perte réelle, NAT, redondance. |
 | [Comment lancer & tester](TESTS.md) | Toutes les commandes pour rejouer les mesures soi-même. |
 | [📖 Glossaire](glossaire.md) | Chaque terme technique, expliqué en une phrase. |
