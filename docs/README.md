@@ -1,5 +1,7 @@
 # La documentation — par où vous voulez
 
+*[English version](en/README.md)*
+
 > **Bienvenue.** Cette doc se lit comme une revue : chaque page est une étape, et **où que vous commenciez, vous
 > êtes au bon endroit**. Vous pouvez suivre un parcours de bout en bout, sauter à ce qui vous intéresse, ou revenir
 > ici à tout moment. Aucun prérequis : les termes techniques sont expliqués au passage, et regroupés dans le

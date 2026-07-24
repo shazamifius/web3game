@@ -1,5 +1,7 @@
 # État du projet — une revue honnête (et chiffrée)
 
+*[English version](en/etat-du-projet.md)*
+
 > Une **revue de l'état courant** : ce qui a été construit et vérifié, **avec les mesures** ; les combats menés ;
 > les murs rencontrés ; et — surtout — les **doutes ouverts**. Règle du projet : **une preuve = un chiffre
 > reproductible.** Chaque mesure ci-dessous indique la commande pour la rejouer, et ce qu'elle **ne** prouve **pas**.

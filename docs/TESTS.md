@@ -1,5 +1,7 @@
 # COMMENT LANCER & TESTER
 
+*[English version](en/TESTS.md)*
+
 > Lancer le cœur headless (rendezvous/sidecar/bot/sim), tester un vrai mauvais réseau (`tc netem`), tester les NAT.
 
 ## Tester dans des conditions réseau réelles, sur une seule machine

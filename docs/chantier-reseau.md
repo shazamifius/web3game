@@ -1,5 +1,7 @@
 # Chantier réseau — confronter le réel, durcir la confiance, posséder son identité
 
+*[English version](en/chantier-reseau.md)*
+
 > Le détail technique de trois fronts du cœur réseau : (1) le confronter à de vraies conditions Internet
 > (latence, perte, NAT) ; (2) durcir la confiance contre la triche coordonnée ; (3) une identité persistante et
 > privée. On y montre aussi, **sans les cacher, les hypothèses que la mesure a réfutées** — c'est là que se gagne

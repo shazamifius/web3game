@@ -1,5 +1,7 @@
 # Les doutes — le registre ouvert (et leurs réponses)
 
+*[English version](en/doutes.md)*
+
 > Un projet de R&D honnête se reconnaît à ses **doutes assumés**. Voici l'inventaire complet des risques et
 > questions ouvertes, numérotés et suivis — **avec, pour chacun, la réponse ou la piste précise**. *Un doute n'est
 > pas une faiblesse à cacher : c'est l'objet du travail.* Et un doute n'est « fermé » que lorsqu'une **mesure** le

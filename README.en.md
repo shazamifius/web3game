@@ -114,24 +114,24 @@ It is a project rule: write down what is proven **and** what is not.
 Everything below is open, with nothing to request. It is the project's technical material: what is measured,
 by which method, and where the limits are.
 
-> **These documents are written in French** — they are the project's working notes, kept honest rather than
-> polished for an audience. Machine translation handles them well, and if anything matters to you, ask and
-> I will walk you through it in English.
+> These documents were translated from the French originals (the project's working notes). The **French
+> versions remain the source of reference**: if a translated passage ever reads oddly, the French is
+> authoritative — and you can switch to it from the top of any page. If anything matters to you, just ask.
 
-**The idea, without jargon** — [serverless, in plain words](docs/comprendre-le-p2p.md) ·
-[the project's measured state](docs/etat-du-projet.md) · [the register of doubts](docs/doutes.md)
+**The idea, without jargon** — [serverless, in plain words](docs/en/comprendre-le-p2p.md) ·
+[the project's measured state](docs/en/etat-du-projet.md) · [the register of doubts](docs/en/doutes.md)
 
-**Architecture and technical choices** — [architecture and code layout](docs/ARCHITECTURE.md) ·
-[network](docs/chantier-reseau.md) · [dense crowd](docs/chantier-foule.md) ·
-[liveliness](docs/chantier-vivant.md) · [robustness](docs/chantier-robustesse.md) ·
-[launcher, world to world](docs/chantier-launcher.md) · [security, and what we broke ourselves](docs/SECURITE.md)
+**Architecture and technical choices** — [architecture and code layout](docs/en/ARCHITECTURE.md) ·
+[network](docs/en/chantier-reseau.md) · [dense crowd](docs/en/chantier-foule.md) ·
+[liveliness](docs/en/chantier-vivant.md) · [robustness](docs/en/chantier-robustesse.md) ·
+[launcher, world to world](docs/en/chantier-launcher.md) · [security, and what we broke ourselves](docs/en/SECURITE.md)
 
-**To judge quickly** — [measured state](docs/etat-du-projet.md) ·
-[the register of doubts](docs/doutes.md) · [behind the scenes](docs/coulisses.md), where measurement
+**To judge quickly** — [measured state](docs/en/etat-du-projet.md) ·
+[the register of doubts](docs/en/doutes.md) · [behind the scenes](docs/en/coulisses.md), where measurement
 repeatedly corrected the plan
 
-The [full table of contents](docs/) covers the rest, and a [glossary](docs/glossaire.md) defines each term in
-one sentence. One honest caveat: [docs/TESTS.md](docs/TESTS.md) explains how to replay the measurements
+The [full table of contents](docs/en/) covers the rest, and a [glossary](docs/en/glossaire.md) defines each term in
+one sentence. One honest caveat: [docs/TESTS.md](docs/en/TESTS.md) explains how to replay the measurements
 yourself — those commands assume access to the code, which is requested just below.
 
 ## Requesting access to the code

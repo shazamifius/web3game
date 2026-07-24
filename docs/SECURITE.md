@@ -1,5 +1,7 @@
 # Sécurité — ce qu'on a cassé chez nous, et comment
 
+*[English version](en/SECURITE.md)*
+
 Ce document raconte un audit de sécurité mené sur ce projet le **22 juillet 2026**, les défauts qu'il
 a trouvés, et la méthode employée. Il est publié parce qu'un dépôt qui montre ce qu'il a corrigé est
 plus utile — et plus honnête — qu'un dépôt qui affirme que tout va bien.

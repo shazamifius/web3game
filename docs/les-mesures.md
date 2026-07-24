@@ -1,5 +1,7 @@
 # Les mesures, en équations — comment on chiffre « vivant » et la qualité d'un lien
 
+*[English version](en/les-mesures.md)*
+
 > Le principe du projet : *une preuve = un chiffre reproductible.* On ne dit pas « ça a l'air fluide » ou « le lien
 > est mauvais » — on **mesure**, avec des formules simples, déterministes, rejouables. Cette page rassemble **tous les
 > calculs** derrière les verdicts : la fidélité d'un mouvement perçu, la qualité d'un lien réseau, la nature d'une

@@ -1,5 +1,7 @@
 # Chantier launcher — passer d'un monde à l'autre
 
+*[English version](en/chantier-launcher.md)*
+
 > Un réseau pair-à-pair, ça ne se voit pas. On peut prouver qu'il transporte une présence vivante entre
 > machines distantes (c'est fait) sans avoir encore rien qui **ressemble à une plateforme**. Or la promesse
 > lointaine du projet — un univers de mondes où l'on passe de l'un à l'autre — a besoin, à un moment, d'un

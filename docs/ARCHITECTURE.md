@@ -1,5 +1,7 @@
 # ARCHITECTURE — l'organisation du code & la cible long terme
 
+*[English version](en/ARCHITECTURE.md)*
+
 > Organisation des fichiers (`src/`), l'en-tête de paquet commun, et l'architecture cible « Own + Shields »
 > (autorité par objet, BFT, relais).
 > *L'idée en mots simples, avant le code : [le « sans serveur », en clair](comprendre-le-p2p.md).*

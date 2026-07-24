@@ -1,5 +1,7 @@
 # Journal de développement — comment le cœur a été bâti
 
+*[English version](en/journal.md)*
+
 > L'histoire du projet, étape par étape : du bac à sable 3D au cœur réseau durci. On a avancé **en codant pour de
 > vrai**, du plus simple (deux machines qui se parlent) au plus dur (des centaines de joueurs, l'anti-triche).
 > Chaque étape a été compilée, testée et prouvée avant la suivante.

@@ -1,5 +1,7 @@
 # Le « sans serveur », en clair
 
+*[English version](en/comprendre-le-p2p.md)*
+
 > L'idée centrale du projet, **en mots simples** : on part d'un jeu en ligne classique, on enlève le serveur
 > central, et on regarde — problème par problème — par quoi le remplacer. Sans jargon.
 >

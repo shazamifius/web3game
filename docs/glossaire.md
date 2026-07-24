@@ -1,5 +1,7 @@
 # 📖 Glossaire — chaque terme, en une phrase
 
+*[English version](en/glossaire.md)*
+
 > Une page de secours, à garder sous le coude. **Il n'y a pas de question bête** : si un mot d'une autre page vous
 > arrête, il est probablement ici, expliqué simplement. Les termes sont regroupés par thème, du plus général au plus
 > précis.

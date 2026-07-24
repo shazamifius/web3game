@@ -1,5 +1,7 @@
 # Les coulisses — nos problèmes, et comment on les a résolus
 
+*[English version](en/coulisses.md)*
+
 > **Ce document est un peu inclassable**, et c'est volontaire. Ce n'est ni un mode d'emploi, ni une
 > liste de fonctionnalités. C'est un **carnet de bord** : les murs sur lesquels on a buté, les fausses
 > pistes qu'on a suivies, et **par quoi on est passé pour comprendre ce qui se jouait vraiment**.

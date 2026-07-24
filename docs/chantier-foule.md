@@ -1,5 +1,7 @@
 # Chantier foule dense & inclusivité — voir la foule sans plafond, sans exploser le débit
 
+*[English version](en/chantier-foule.md)*
+
 > Le plus gros morceau d'architecture : faire qu'au milieu d'une foule de 200, 500, 5 000, **chacun perçoive la
 > foule entière** (proches nets, lointains dégradés) **sans plafond dur** et **sans exploser son débit**. On y
 > montre, sans les cacher, **les défauts que la mesure a révélés** et **une décision qu'une mesure a imposée

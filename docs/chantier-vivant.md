@@ -1,5 +1,7 @@
 # Chantier « vivant » — mesurer si un mouvement perçu est vivant, par les maths
 
+*[English version](en/chantier-vivant.md)*
+
 > Un doute revient sans cesse dans ce projet : *« et si on avait bâti une forteresse vide ? »* — une technique
 > solide, mais un monde qui ne donne pas l'impression d'être **habité**. C'est subjectif… alors on a essayé d'en
 > faire une **mesure objective, déterministe, optimisable** : un banc qui compare ce qu'un personnage a *vraiment*

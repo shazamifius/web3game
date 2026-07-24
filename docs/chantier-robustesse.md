@@ -1,5 +1,7 @@
 # Chantier robustesse & longévité — généraliser l'autorité, durer, traverser les NAT difficiles
 
+*[English version](en/chantier-robustesse.md)*
+
 > Au-delà du cœur réseau : généraliser l'autorité d'un objet unique à des milliers, tenir sur de longues sessions,
 > et surtout **faire se rejoindre deux joueurs même quand leurs box refusent la connexion directe**. On y montre,
 > sans le cacher, **un bug qu'aucun test en laboratoire ne pouvait voir — et que seul un vrai joueur dehors a
