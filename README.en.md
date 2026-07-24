@@ -4,8 +4,9 @@
 
 *[Version française](README.md)*
 
-> This project's source code is **private**. This page exists to present it honestly, and to let you
-> **request access**. The process is described below and takes two minutes.
+> **You are on the public showcase of web3game.** The project itself — the Rust code — lives in a separate,
+> **semi-private** repository: it is not open to everyone, but I open it for reading to anyone who asks.
+> This page presents it honestly; **to see the code, just write to me** (right below).
 
 ---
 
@@ -21,8 +22,9 @@ Two paths, depending on what you are after — and nothing stops you taking both
 
 - **[Read the documentation, freely](#the-documentation-is-freely-readable)** — the idea, the measurements
   and their limits, the open doubts. Nothing to ask anyone.
-- **[See the code, on request](#requesting-access-to-the-code)** — a few lines by email and I open the
-  private repository for reading (or a live demonstration).
+- **See the code, on request** — the repository is private, but I gladly open it for reading. Email me at
+  **[shazamifius@gmail.com](mailto:shazamifius@gmail.com)** (who you are, and your GitHub handle) and I add
+  you — or ask for a [live demonstration ↓](#requesting-access-to-the-code).
 
 ## The idea
 

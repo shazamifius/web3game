@@ -4,8 +4,10 @@
 
 *[English version](README.en.md)*
 
-> Le code de ce projet est **privé**. Cette page existe pour le présenter honnêtement, et pour que
-> vous puissiez **demander à le voir**. La démarche est décrite plus bas — elle prend deux minutes.
+> **Vous êtes sur la vitrine publique de web3game.** Le projet lui-même — le code, en Rust — vit dans un
+> dépôt séparé et **semi-privé** : il n'est pas ouvert à tout le monde, mais je l'ouvre en lecture à qui
+> me le demande. Cette page le présente honnêtement ; **pour voir le code, il suffit de m'écrire** (juste
+> en dessous).
 
 ---
 
@@ -22,8 +24,9 @@ Deux chemins, selon ce que vous cherchez — et rien n'empêche de faire les deu
 
 - **[Lire la documentation, librement](#la-documentation-en-libre-accès)** — l'idée, les mesures et leurs
   limites, les doutes ouverts. Rien à demander à personne.
-- **[Voir le code, sur demande](#demander-à-voir-le-code)** — quelques lignes par courriel, et je vous ouvre
-  le dépôt privé en lecture (ou une démonstration en direct).
+- **Voir le code, sur demande** — le dépôt est privé, mais je l'ouvre en lecture volontiers. Écrivez-moi à
+  **[shazamifius@gmail.com](mailto:shazamifius@gmail.com)** (dites qui vous êtes, et votre identifiant
+  GitHub) et je vous ajoute — ou demandez une [démonstration en direct ↓](#demander-à-voir-le-code).
 
 ## L'idée
 
